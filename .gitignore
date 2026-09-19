@@ -1,0 +1,37 @@
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+
+# ---- Python bytecode / build artifacts ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# ---- Generated / benchmark data (never commit large XML) ----
+data/
+*.xml
+*.xml.gz
+*.parquet
+
+# ---- Test & lint caches ----
+.pytest_cache/
+.ruff_cache/
+coverage.xml
+.coverage
+htmlcov/
+
+# ---- Editors / OS ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- Agent workspace metadata (not part of the project) ----
+.workbuddy-ai/
+
+# ---- Exception: small committed test fixtures ----
+!tests/fixtures/**/*.xml
+!tests/fixtures/**/*.xml.gz

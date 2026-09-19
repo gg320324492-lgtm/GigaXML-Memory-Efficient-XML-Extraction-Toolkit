@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gigaxml"
+version = "0.1.0"
+description = "A production-oriented CLI toolkit for profiling, validating and extracting structured data from multi-gigabyte XML files with bounded memory usage."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["xml", "streaming", "etl", "iterparse", "large-files", "cli", "memory-efficient"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Text Processing :: Markup :: XML",
+  "Typing :: Typed",
+]
+dependencies = [
+  "lxml>=5.0",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=14.0"]
+pretty = ["rich>=13.0"]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "psutil>=5.9",
+  "pyarrow>=14.0",
+  "rich>=13.0",
+]
+
+[project.scripts]
+gigaxml = "gigaxml.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+  "performance: memory / throughput measurement (excluded from CI, see ROADMAP A11)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# `docs/` holds the human-authored spec documents. Ruff >= 0.16 reformats fenced
+# Python code blocks inside Markdown, which would rewrite the spec text itself.
+# The spec is an input artifact, not source code, so it is excluded from linting.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PTH", "RUF", "ANN", "ARG"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gigaxml"]
+
+[tool.ruff.format]
+quote-style = "double"
