@@ -8,14 +8,18 @@ from __future__ import annotations
 
 from gigaxml.parser.streaming import (
     RecordPathError,
+    RecordPathSpec,
     StreamingRecordReader,
-    resolve_record_tag,
+    parse_record_path,
+    resolve_record_leaf_tag,
     resolve_record_tags,
 )
 
 __all__ = [
     "RecordPathError",
+    "RecordPathSpec",
     "StreamingRecordReader",
-    "resolve_record_tag",
+    "parse_record_path",
+    "resolve_record_leaf_tag",
     "resolve_record_tags",
 ]

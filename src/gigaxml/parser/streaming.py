@@ -34,10 +34,22 @@ a record path of ``/catalog/products/product`` would happily match the
 ``<product>`` elements under ``<returns>``, silently merging two different
 schemas into one output stream. Nothing would fail; the row count would just be
 wrong. So the reader keeps a stack of the qualified tags of the currently open
-elements and matches the **last N** stack entries against the N resolved tags of
-``record_path`` (see :func:`resolve_record_tags`). Memory cost is O(document
-depth), which is bounded by the parser's own tree and negligible next to the
-record payload.
+elements and compares it against the resolved tags of ``record_path`` (see
+:func:`parse_record_path`). Memory cost is O(document depth), which is bounded by
+the parser's own tree and negligible next to the record payload.
+
+**3. A path is anchored at the root unless it says otherwise.**
+
+``/catalog/products/product`` means "this chain, starting at the document root":
+the open-element stack must equal the chain exactly. ``//products/product`` means
+"these trailing segments, at any depth", which is what you want when you do not
+care what the document root is called.
+
+Without that distinction a *shorter* path silently became a wildcard -- ``/item``
+matched every ``<item>`` anywhere in the document, which is the same class of
+silent over-matching as the leaf-name bug above, just smaller. Root anchoring is
+the default because the path is documented as an *absolute element path*; the
+``//`` prefix is the explicit opt-in to suffix matching.
 
 The same reasoning applies to namespaces: ``lxml`` matches qualified names, so
 handing it a bare local name for an element in a namespace silently matches
@@ -45,7 +57,7 @@ nothing. Each path segment therefore resolves its own prefix and default
 namespace, and a zero-match scan raises :class:`RecordPathError` instead of
 returning an empty result.
 
-**3. Cleanup is verified, not assumed.**
+**4. Cleanup is verified, not assumed.**
 
 ``tests/performance/test_memory.py`` contains a reversed test that disables the
 cleanup entirely and asserts RSS explodes, so the bounded-memory result cannot be
@@ -58,6 +70,7 @@ import gzip
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Final
 
@@ -65,8 +78,10 @@ from lxml import etree
 
 __all__ = [
     "RecordPathError",
+    "RecordPathSpec",
     "StreamingRecordReader",
-    "resolve_record_tag",
+    "parse_record_path",
+    "resolve_record_leaf_tag",
     "resolve_record_tags",
 ]
 
@@ -76,6 +91,9 @@ _PREFIXED_SEGMENT: Final = re.compile(r"^(?P<prefix>[A-Za-z_][A-Za-z0-9_.\-]*):(
 #: A path segment written as a bare XML name, e.g. ``product``.
 _BARE_SEGMENT: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 
+#: Prefix that switches a record path from root-anchored to any-ancestor matching.
+_ANY_ANCESTOR_PREFIX: Final = "//"
+
 #: Suffixes treated as gzip-compressed input.
 _GZIP_SUFFIXES: Final = (".gz", ".gzip")
 
@@ -83,15 +101,41 @@ _GZIP_SUFFIXES: Final = (".gz", ".gzip")
 class RecordPathError(ValueError):
     """Raised when ``record_path`` cannot be resolved or matches nothing.
 
-    Deliberately *not* a silent empty result. Two mistakes land here, and both
-    would otherwise hide behind a plausible-looking "extracted 0 records"
-    report: a namespace that was not supplied, and an ancestor chain that does
-    not exist in this document (the leaf name alone is not enough to match).
+    Deliberately *not* a silent empty result. Three mistakes land here, and all
+    three would otherwise hide behind a plausible-looking "extracted 0 records"
+    report: a namespace that was not supplied, an ancestor chain that does not
+    exist in this document (the leaf name alone is not enough to match), and a
+    root-anchored path whose leading segments do not name the document root.
     """
 
 
+@dataclass(frozen=True, slots=True)
+class RecordPathSpec:
+    """A parsed record path: the resolved chain plus how it should be matched.
+
+    Attributes:
+        chain: one qualified ``{uri}local`` tag per path segment, outermost first.
+        anchored: ``True`` for ``/a/b/c`` -- the open-element stack must equal
+            ``chain`` exactly, i.e. the path names the document root. ``False``
+            for ``//a/b/c`` -- only the trailing ``len(chain)`` stack entries are
+            compared, so any ancestors are accepted.
+    """
+
+    chain: tuple[str, ...]
+    anchored: bool
+
+    @property
+    def leaf_tag(self) -> str:
+        """The qualified tag of the record element itself (the final segment)."""
+        return self.chain[-1]
+
+
 def _split_segments(record_path: str) -> list[str]:
-    """Split an absolute element path into its non-empty segments."""
+    """Split an absolute element path into its non-empty segments.
+
+    The leading ``//`` marker is not a segment, so it disappears here; the
+    anchoring decision is made by :func:`parse_record_path`.
+    """
     if not record_path.startswith("/"):
         raise RecordPathError(
             f"record_path must be an absolute element path starting with '/': {record_path!r}"
@@ -102,33 +146,11 @@ def _split_segments(record_path: str) -> list[str]:
     return segments
 
 
-def resolve_record_tags(
+def _resolve_segments(
     record_path: str,
-    namespaces: Mapping[str, str] | None = None,
+    namespaces: Mapping[str, str] | None,
 ) -> list[str]:
-    """Translate **every** segment of ``record_path`` into a qualified tag.
-
-    Each segment is resolved independently, so a path may mix prefixed and bare
-    segments, and the default namespace (the ``""`` key) applies to every bare
-    segment. The result is ordered outermost-first, matching document order.
-
-    Resolution rules per segment:
-
-    * ``ns:local`` with ``namespaces={"ns": "urn:x"}`` -> ``{urn:x}local``
-    * ``local`` with ``namespaces={"": "urn:x"}``     -> ``{urn:x}local``
-    * ``local`` with no default namespace             -> ``local``
-
-    Args:
-        record_path: absolute element path, e.g. ``"/catalog/products/product"``.
-        namespaces: prefix-to-URI map; the empty string is the default namespace.
-
-    Returns:
-        One qualified tag per segment, outermost first.
-
-    Raises:
-        RecordPathError: the path is malformed, a segment is not a valid XML
-            name, or a prefix used by the path is not present in ``namespaces``.
-    """
+    """Resolve every segment of ``record_path`` into its qualified tag."""
     ns_map: Mapping[str, str] = namespaces or {}
     resolved: list[str] = []
 
@@ -158,19 +180,85 @@ def resolve_record_tags(
     return resolved
 
 
-def resolve_record_tag(
+def parse_record_path(
+    record_path: str,
+    namespaces: Mapping[str, str] | None = None,
+) -> RecordPathSpec:
+    """Parse ``record_path`` into a resolved chain plus its matching mode.
+
+    Each segment is resolved independently, so a path may mix prefixed and bare
+    segments, and the default namespace (the ``""`` key) applies to every bare
+    segment. Resolution rules per segment:
+
+    * ``ns:local`` with ``namespaces={"ns": "urn:x"}`` -> ``{urn:x}local``
+    * ``local`` with ``namespaces={"": "urn:x"}``     -> ``{urn:x}local``
+    * ``local`` with no default namespace             -> ``local``
+
+    Matching mode:
+
+    * a single leading ``/`` -> ``anchored=True``: the open-element stack must
+      equal the chain exactly, so the path has to name the document root
+    * a leading ``//``       -> ``anchored=False``: only the trailing segments are
+      compared, so any ancestors are accepted (XPath-flavoured)
+
+    Args:
+        record_path: element path, e.g. ``"/catalog/products/product"`` or
+            ``"//products/product"``.
+        namespaces: prefix-to-URI map; the empty string is the default namespace.
+
+    Returns:
+        The resolved chain and whether it is anchored at the root.
+
+    Raises:
+        RecordPathError: the path is relative, has no segments (``"/"``, ``"//"``),
+            contains an invalid XML name, or uses a prefix that is not present in
+            ``namespaces``.
+    """
+    anchored = not record_path.startswith(_ANY_ANCESTOR_PREFIX)
+    return RecordPathSpec(
+        chain=tuple(_resolve_segments(record_path, namespaces)),
+        anchored=anchored,
+    )
+
+
+def resolve_record_tags(
+    record_path: str,
+    namespaces: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Resolve every segment of ``record_path`` into a qualified tag.
+
+    The anchoring marker is not part of the chain, so ``"/a/b"`` and ``"//a/b"``
+    resolve to the same list. Use :func:`parse_record_path` when you also need to
+    know which matching mode the path asks for.
+
+    Args:
+        record_path: element path, with or without the ``//`` prefix.
+        namespaces: prefix-to-URI map; the empty string is the default namespace.
+
+    Returns:
+        One qualified tag per segment, outermost first.
+
+    Raises:
+        RecordPathError: the path is malformed, a segment is not a valid XML
+            name, or a prefix used by the path is not present in ``namespaces``.
+    """
+    return _resolve_segments(record_path, namespaces)
+
+
+def resolve_record_leaf_tag(
     record_path: str,
     namespaces: Mapping[str, str] | None = None,
 ) -> str:
     """Resolve the *record element's own* tag, i.e. the final segment.
 
     This is a convenience accessor, **not** the reader's matching rule. The
-    reader matches the whole chain returned by :func:`resolve_record_tags`; a
-    record path whose ancestors are wrong matches nothing even when this
-    function returns a tag that exists in the document.
+    reader matches the whole chain returned by :func:`parse_record_path`; a
+    record path whose ancestors are wrong matches nothing even when this function
+    returns a tag that exists in the document. (Before Phase 1.6 this was called
+    ``resolve_record_tag``, which read as if it were the reader's parser.)
 
     Args:
-        record_path: absolute element path, e.g. ``"/catalog/products/product"``.
+        record_path: element path, with or without the ``//`` prefix.
         namespaces: prefix-to-URI map; the empty string is the default namespace.
 
     Returns:
@@ -180,7 +268,7 @@ def resolve_record_tag(
         RecordPathError: the path is malformed, or a prefix used by the path is
             not present in ``namespaces``.
     """
-    return resolve_record_tags(record_path, namespaces)[-1]
+    return _resolve_segments(record_path, namespaces)[-1]
 
 
 class StreamingRecordReader:
@@ -189,18 +277,22 @@ class StreamingRecordReader:
     Args:
         source: path to the XML file. Paths ending in ``.gz``/``.gzip`` are
             decompressed on the fly.
-        record_path: absolute element path of the record node, e.g.
-            ``"/catalog/products/product"``. Any segment may carry a namespace
-            prefix (``"/c:products/c:product"``).
+        record_path: element path of the record node. Any segment may carry a
+            namespace prefix (``"/c:products/c:product"``).
 
-            **The full chain is matched, not just the final segment.** The
-            reader compares the trailing tags of the currently open element
-            stack against every segment of this path, so a path with the right
-            last segment but wrong ancestors matches nothing and raises
-            ``RecordPathError``. Two branches that end in the same element name
-            are therefore kept apart instead of being silently merged. A
-            trailing sub-path is enough to identify records: ``"/c:product"``
-            matches any ``product`` element whose parent chain ends there.
+            **The full chain is matched, not just the final segment.** The reader
+            compares the currently open element stack against every segment of
+            this path, so a path with the right last segment but wrong ancestors
+            matches nothing and raises ``RecordPathError``. Two branches that end
+            in the same element name are therefore kept apart instead of being
+            silently merged.
+
+            **A single leading ``/`` anchors the path at the document root:** the
+            stack must equal the chain exactly, so ``"/catalog/products/product"``
+            matches ``product`` only at depth 3 with exactly those ancestors.
+            **A leading ``//`` matches the trailing segments at any depth:**
+            ``"//products/product"`` matches whatever the root happens to be
+            called. ``//`` still needs at least one segment.
         namespaces: prefix-to-URI map. Use the empty string as the key for a
             default namespace. Each segment resolves its own prefix.
         _clean: test-only escape hatch. Leave at ``True``. It exists so the
@@ -214,8 +306,7 @@ class StreamingRecordReader:
 
     Raises:
         RecordPathError: the record path is malformed, uses an unknown namespace
-            prefix, or the document contains zero elements matching the full
-            chain.
+            prefix, or the document contains zero elements matching the path.
     """
 
     def __init__(
@@ -230,7 +321,7 @@ class StreamingRecordReader:
         self._record_path = record_path
         self._namespaces: dict[str, str] | None = dict(namespaces) if namespaces else None
         self._clean = _clean
-        self._chain: list[str] = resolve_record_tags(record_path, self._namespaces)
+        self._spec: RecordPathSpec = parse_record_path(record_path, self._namespaces)
 
     @property
     def record_path(self) -> str:
@@ -238,14 +329,24 @@ class StreamingRecordReader:
         return self._record_path
 
     @property
+    def record_spec(self) -> RecordPathSpec:
+        """The parsed record path: resolved chain plus matching mode."""
+        return self._spec
+
+    @property
     def record_chain(self) -> tuple[str, ...]:
         """Every segment of the record path, resolved to a qualified tag."""
-        return tuple(self._chain)
+        return self._spec.chain
 
     @property
     def record_tag(self) -> str:
         """The qualified tag of the record element itself (the final segment)."""
-        return self._chain[-1]
+        return self._spec.chain[-1]
+
+    @property
+    def anchored(self) -> bool:
+        """``True`` when the path must match from the document root."""
+        return self._spec.anchored
 
     def _open(self) -> IO[bytes]:
         if self._source.suffix.lower() in _GZIP_SUFFIXES:
@@ -265,11 +366,19 @@ class StreamingRecordReader:
             del elem.getparent()[0]
 
     def _matches(self, stack: Sequence[str]) -> bool:
-        """True when the open-element stack ends with the configured chain."""
+        """True when the open-element stack satisfies the configured record path.
+
+        ``stack`` holds the qualified tags of the elements currently open,
+        outermost first. An anchored path demands an exact match from the root;
+        an any-ancestor path only compares the trailing segments.
+        """
+        chain = self._spec.chain
         depth = len(stack)
-        if depth < len(self._chain):
+        if self._spec.anchored:
+            return depth == len(chain) and tuple(stack) == chain
+        if depth < len(chain):
             return False
-        return stack[depth - len(self._chain) :] == self._chain
+        return tuple(stack[depth - len(chain) :]) == chain
 
     def __iter__(self) -> Iterator[etree._Element]:
         matched = 0
@@ -327,9 +436,12 @@ class StreamingRecordReader:
                 stack.pop()
 
         if matched == 0:
+            mode = "root-anchored" if self._spec.anchored else "any-ancestor"
             raise RecordPathError(
                 f"record_path {self._record_path!r} matched 0 elements in {self._source} "
-                f"(resolved chain: {self._chain!r}). The full ancestor chain must match, "
-                f"not just the final segment. If the document uses a namespace, pass "
-                f"`namespaces=` (use '' as the key for a default namespace)."
+                f"(resolved chain: {list(self._spec.chain)!r}, mode: {mode}). The full "
+                f"ancestor chain must match, not just the final segment; a path starting "
+                f"with '/' must match from the document root, and '//' means any "
+                f"ancestors. If the document uses a namespace, pass `namespaces=` "
+                f"(use '' as the key for a default namespace)."
             )

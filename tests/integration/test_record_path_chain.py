@@ -12,6 +12,13 @@ The fixtures below reproduce exactly that shape -- ``/root/a/item`` and
 third branch. Note that the document deliberately contains **no** ``<nope>``
 element: ``/root/nope/item`` must fail even though ``<item>`` exists all over the
 document, which is precisely the case leaf-only matching used to get wrong.
+
+**Phase 1.6 anchoring.** A path starting with a single ``/`` is now anchored at
+the document root: the open-element stack must equal the chain exactly, so
+``/a/item`` no longer matches a document whose root is ``<root>``. The ``//``
+prefix means "any ancestors" and falls back to suffix matching. Two tests that
+were written against the old, always-suffix behaviour are migrated below and say
+so in their docstrings.
 """
 
 from __future__ import annotations
@@ -164,42 +171,94 @@ def test_both_gate_paths_fail_loudly_and_the_good_one_succeeds(two_branches: Pat
             list(StreamingRecordReader(two_branches, bad))
 
 
-# --- suffix semantics are explicit, not accidental --------------------------
+# --- root anchoring vs the any-ancestor prefix ------------------------------
+
+# The two tests below were written in Phase 1.5 against the old behaviour, where
+# a path was ALWAYS matched as a suffix and `/a/item` hit anywhere in the
+# document. Phase 1.6 made a single leading `/` mean "anchored at the root", so
+# they now use the `//` prefix to keep expressing the same thing -- deliberately,
+# not as a workaround. Both directions are asserted.
 
 
-def test_a_trailing_sub_path_matches_anywhere_the_chain_ends(two_branches: Path) -> None:
-    """A shorter path is a suffix match; the docs promise this, so assert it."""
-    assert _ids(two_branches, "/a/item") == ["a1", "a2", "a3"]
-    assert _ids(two_branches, "/b/item") == ["b1", "b2"]
+def test_root_anchored_and_any_ancestor_agree_only_when_the_root_is_named(
+    two_branches: Path,
+) -> None:
+    """Phase 1.6: ``/a/item`` is root-anchored, so it must name ``root`` too."""
+    assert _ids(two_branches, "/root/a/item") == ["a1", "a2", "a3"]
+    assert _ids(two_branches, "//root/a/item") == ["a1", "a2", "a3"]
+
+    anchored = StreamingRecordReader(two_branches, "/a/item")
+    assert anchored.anchored is True
+    with pytest.raises(RecordPathError, match="matched 0 elements"):
+        list(anchored)
 
 
-def test_a_single_segment_path_matches_every_branch(two_branches: Path) -> None:
-    """One segment cannot discriminate; this is why the leaf alone is not enough."""
-    assert _ids(two_branches, "/item") == ["a1", "a2", "a3", "b1", "b2", "decoy", "deep"]
+def test_a_path_that_omits_the_root_raises(two_branches: Path) -> None:
+    """Missing root segments are now a loud failure, not a silent suffix match."""
+    for bad in ("/products/product", "/a/item", "/root/a/item/extra"):
+        reader = StreamingRecordReader(two_branches, bad)
+        with pytest.raises(RecordPathError, match="matched 0 elements"):
+            list(reader)
+
+
+def test_any_ancestor_path_matches_wherever_the_chain_ends(two_branches: Path) -> None:
+    """Migrated in Phase 1.6: was ``/a/item``, now ``//a/item``.
+
+    Under the old always-suffix rule a bare ``/a/item`` matched here. Root
+    anchoring removed that, so the suffix case is spelled with ``//``.
+    """
+    assert _ids(two_branches, "//a/item") == ["a1", "a2", "a3"]
+    assert _ids(two_branches, "//b/item") == ["b1", "b2"]
+
+
+def test_a_single_segment_path_needs_the_any_ancestor_prefix(two_branches: Path) -> None:
+    """Migrated in Phase 1.6: was ``/item``, now ``//item``.
+
+    A one-segment path cannot discriminate between branches, so it only makes
+    sense as a suffix match; ``/item`` is now rejected because no document root
+    is named ``item``.
+    """
+    assert _ids(two_branches, "//item") == ["a1", "a2", "a3", "b1", "b2", "decoy", "deep"]
+
+    anchored = StreamingRecordReader(two_branches, "/item")
+    assert anchored.record_chain == ("item",)
+    with pytest.raises(RecordPathError, match="matched 0 elements"):
+        list(anchored)
+
+
+def test_the_any_ancestor_prefix_still_needs_at_least_one_segment(two_branches: Path) -> None:
+    with pytest.raises(RecordPathError, match="no element segments"):
+        StreamingRecordReader(two_branches, "//")
 
 
 # --- namespaces resolve per segment ----------------------------------------
 
 
 def test_prefixed_ancestor_with_default_namespaced_record(namespaced_branches: Path) -> None:
-    assert _ids(namespaced_branches, "/p:a/item", NS) == ["a1", "a2"]
-    assert _ids(namespaced_branches, "/p:b/item", NS) == ["b1"]
+    assert _ids(namespaced_branches, "//p:a/item", NS) == ["a1", "a2"]
+    assert _ids(namespaced_branches, "//p:b/item", NS) == ["b1"]
 
 
 def test_fully_prefixed_chain_resolves_every_segment(namespaced_branches: Path) -> None:
-    assert _ids(namespaced_branches, "/p:c/p:item", NS) == ["c1"]
+    assert _ids(namespaced_branches, "//p:c/p:item", NS) == ["c1"]
+
+
+def test_a_full_prefixed_chain_can_also_be_root_anchored(namespaced_branches: Path) -> None:
+    """The anchored spelling has to resolve the root's own default namespace too."""
+    assert _ids(namespaced_branches, "/root/p:a/item", NS) == ["a1", "a2"]
+    assert _ids(namespaced_branches, "/root/p:c/p:item", NS) == ["c1"]
 
 
 def test_ancestor_in_the_wrong_namespace_raises(namespaced_branches: Path) -> None:
-    """``/a/item`` resolves to the default namespace, but ``a`` lives in ``p``."""
-    reader = StreamingRecordReader(namespaced_branches, "/a/item", NS)
+    """``//a/item`` resolves ``a`` to the default namespace, but ``a`` lives in ``p``."""
+    reader = StreamingRecordReader(namespaced_branches, "//a/item", NS)
     with pytest.raises(RecordPathError, match="matched 0 elements"):
         list(reader)
 
 
 def test_record_in_the_wrong_namespace_raises(namespaced_branches: Path) -> None:
     """``p:c`` holds ``p:item``; the bare ``item`` in the path cannot match it."""
-    reader = StreamingRecordReader(namespaced_branches, "/p:c/item", NS)
+    reader = StreamingRecordReader(namespaced_branches, "//p:c/item", NS)
     with pytest.raises(RecordPathError, match="matched 0 elements"):
         list(reader)
 
@@ -208,7 +267,7 @@ def test_omitting_the_namespace_map_raises_instead_of_reporting_zero(
     namespaced_branches: Path,
 ) -> None:
     """Same path as the positive case, minus the map: bare names match no URIs."""
-    reader = StreamingRecordReader(namespaced_branches, "/a/item")
+    reader = StreamingRecordReader(namespaced_branches, "//a/item")
     assert reader.record_chain == ("a", "item")
     with pytest.raises(RecordPathError, match="matched 0 elements"):
         list(reader)
@@ -219,7 +278,7 @@ def test_an_unknown_prefix_fails_before_the_document_is_opened(
 ) -> None:
     """A path naming a prefix the map does not define is a config error, not a scan."""
     with pytest.raises(RecordPathError, match="not present in the namespace map"):
-        StreamingRecordReader(namespaced_branches, "/p:a/item", {"x": "urn:example:x"})
+        StreamingRecordReader(namespaced_branches, "//p:a/item", {"x": "urn:example:x"})
 
 
 # --- the ancestor stack must not be shifted by non-element nodes ------------
@@ -241,3 +300,9 @@ def test_record_chain_exposes_every_resolved_segment(two_branches: Path) -> None
     assert reader.record_chain == ("root", "a", "item")
     assert reader.record_tag == "item"
     assert reader.record_path == "/root/a/item"
+    assert reader.anchored is True
+
+    suffix = StreamingRecordReader(two_branches, "//a/item")
+    assert suffix.record_chain == ("a", "item")
+    assert suffix.record_tag == "item"
+    assert suffix.anchored is False

@@ -35,13 +35,30 @@ def test_default_namespace_hits_with_map_and_misses_without(fixtures_dir: Path) 
 
 
 def test_prefixed_record_path_hits(fixtures_dir: Path) -> None:
-    reader = StreamingRecordReader(
+    """A prefixed path hits -- and it needs the ``//`` prefix to do so.
+
+    Semantic change in Phase 1.6: a path starting with a single ``/`` is
+    **root-anchored**, so it must name the document root too. This path names
+    only ``products/product``, so it has to say ``//`` (any ancestors) to match
+    a document whose root is ``catalog``. Both spellings below are asserted, so
+    the distinction cannot silently regress.
+    """
+    suffix = StreamingRecordReader(
+        fixtures_dir / "namespaced.xml",
+        "//c:products/c:product",
+        {"c": URI},
+    )
+    assert suffix.record_tag == f"{{{URI}}}product"
+    assert sum(1 for _ in suffix) == 2
+
+    # The same chain without the root segment must NOT match.
+    anchored = StreamingRecordReader(
         fixtures_dir / "namespaced.xml",
         "/c:products/c:product",
         {"c": URI},
     )
-    assert reader.record_tag == f"{{{URI}}}product"
-    assert sum(1 for _ in reader) == 2
+    with pytest.raises(RecordPathError, match="matched 0 elements"):
+        list(anchored)
 
 
 def test_wrong_uri_also_misses(fixtures_dir: Path) -> None:
