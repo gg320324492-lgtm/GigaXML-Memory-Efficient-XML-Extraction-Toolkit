@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns:a="urn:outer">
+  <set2>
+    <item a:x="1"><name>Alpha</name></item>
+    <item a:x="2"><name>Beta</name></item>
+  </set2>
+</root>

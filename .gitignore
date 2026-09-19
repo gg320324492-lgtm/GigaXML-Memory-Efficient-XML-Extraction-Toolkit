@@ -39,4 +39,5 @@ Thumbs.db
 # ---- Local working notes: development journals, kept out of the repository ----
 docs/AGENT_BRIEF_*.md
 docs/PHASE-*-REPORT.md
+docs/PHASE-*-AUDIT.md
 docs/ROADMAP.md

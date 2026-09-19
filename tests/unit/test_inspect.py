@@ -169,6 +169,112 @@ def test_a_nested_repeating_structure_is_marked_as_nested(tmp_path: Path) -> Non
         assert candidate.path.startswith("/catalog/products/product/")
 
 
+def test_nesting_is_found_even_when_the_nested_path_ranks_first(tmp_path: Path) -> None:
+    """The case the annotation exists for, and the one it used to miss entirely.
+
+    A nested path usually repeats more often than the record containing it, so it
+    usually ranks *above* it. The scan used to return as soon as it reached the
+    candidate itself, which meant it only ever saw candidates ranked higher -- so
+    whenever the nested path was first, both were reported as unnested.
+
+    This is one number away from the document in
+    ``test_a_field_that_repeats_more_than_its_record_does_not_outrank_it``: each
+    ``<i>`` gets two ``<tags>`` instead of one.
+    """
+    document = write(
+        tmp_path,
+        "<root>"
+        "<i><tags><tag>a</tag></tags><tags><tag>b</tag></tags></i>"
+        "<i><tags><tag>c</tag></tags><tags><tag>d</tag></tags></i>"
+        "</root>",
+    )
+    report = inspect_document(document)
+    by_path = {candidate.path: candidate for candidate in report.candidates}
+
+    assert report.candidates[0].path == "/root/i/tags", "the nested path ranks first"
+    assert by_path["/root/i/tags"].count == 4
+    assert by_path["/root/i"].count == 2
+
+    assert report.nested_inside(by_path["/root/i/tags"]) == "/root/i"
+    assert report.nested_inside(by_path["/root/i"]) is None, "a container is not nested"
+    assert report.nested_inside(report.candidates[0]) == "/root/i"
+
+
+def test_the_container_side_of_a_tie_is_still_reported_as_unnested(tmp_path: Path) -> None:
+    """Equal counts are the safe side: depth decides, so the container already wins."""
+    document = write(
+        tmp_path,
+        "<root><i><tags><tag>a</tag></tags></i><i><tags><tag>b</tag></tags></i></root>",
+    )
+    report = inspect_document(document)
+
+    assert report.candidates[0].path == "/root/i"
+    assert report.nested_inside(report.candidates[0]) is None
+    assert report.nested_inside(report.candidates[1]) == "/root/i"
+
+
+def test_a_container_of_a_container_is_also_found(tmp_path: Path) -> None:
+    """Nesting is about containment, not about the immediate parent."""
+    document = write(
+        tmp_path,
+        "<root><a><b><c><d>x</d></c></b></a><a><b><c><d>y</d></c></b></a></root>",
+    )
+    report = inspect_document(document)
+    by_path = {candidate.path: candidate for candidate in report.candidates}
+
+    assert "/root/a/b" in by_path
+    assert report.nested_inside(by_path["/root/a/b"]) == "/root/a"
+
+
+def test_the_orders_and_lines_shape_is_annotated_not_reordered(
+    fixtures_dir: Path,
+) -> None:
+    """A real-shaped case: 200 orders, 3 lines each.
+
+    The line is the *inner* structure and repeats three times as often, so it ranks
+    first and the default candidate is the line. The annotation is what tells the
+    reader that ``/orders/order`` exists -- and the ranking is deliberately left
+    alone, because "container first" gives a worse answer on other shapes.
+    """
+    report = inspect_document(fixtures_dir / "orders_lines.xml")
+    by_path = {candidate.path: candidate for candidate in report.candidates}
+
+    assert report.candidates[0].path == "/orders/order/line"
+    assert by_path["/orders/order/line"].count == 600
+    assert by_path["/orders/order"].count == 200
+    assert report.nested_inside(by_path["/orders/order/line"]) == "/orders/order"
+    assert report.nested_inside(by_path["/orders/order"]) is None
+
+
+def test_a_nested_path_with_a_strictly_higher_count_is_annotated(
+    fixtures_dir: Path,
+) -> None:
+    report = inspect_document(fixtures_dir / "nest_hot.xml")
+    by_path = {candidate.path: candidate for candidate in report.candidates}
+
+    assert report.candidates[0].path == "/root/item/tag"
+    assert by_path["/root/item/tag"].count == 6
+    assert report.nested_inside(by_path["/root/item/tag"]) == "/root/item"
+
+
+def test_the_section_shape_keeps_the_inner_path_as_the_default(
+    fixtures_dir: Path,
+) -> None:
+    """The counterexample to "container first": 2 sections, 1000 items each.
+
+    Preferring the container would answer ``/root/section`` with 2 rows where the
+    user almost certainly wants 2000 items. So the ranking stays as it is and the
+    annotation does the explaining.
+    """
+    report = inspect_document(fixtures_dir / "section_many.xml")
+    by_path = {candidate.path: candidate for candidate in report.candidates}
+
+    assert report.candidates[0].path == "/root/section/item"
+    assert by_path["/root/section/item"].count == 2000
+    assert by_path["/root/section"].count == 2
+    assert report.nested_inside(by_path["/root/section/item"]) == "/root/section"
+
+
 def test_a_document_with_no_repeating_structure_offers_no_candidate(tmp_path: Path) -> None:
     document = write(tmp_path, "<root><a>1</a><b>2</b><c>3</c></root>")
     report = inspect_document(document)
@@ -181,10 +287,10 @@ def test_a_bare_leaf_document_yields_no_candidate_and_says_so(tmp_path: Path) ->
     """A documented limitation, not an oversight.
 
     A candidate needs structure. A bare leaf has a trivially perfect sibling
-    consistency and usually repeats more often than the record containing it -- in
-    the project's own generated data ``.../product/tags/tag`` occurs about five
-    times as often as ``.../product`` -- so admitting leaves would put a field at
-    the top of the ranking. The report has to say so rather than leave the reader
+    consistency and usually repeats more often than the record containing it -- on the
+    project's own 10MB dataset ``.../product/tags/tag`` occurs 101,691 times against
+    ``.../product``'s 29,120, about 3.5x as often -- so admitting leaves would put a
+    field at the top of the ranking. The report has to say so rather than leave the reader
     wondering why nothing was proposed.
     """
     document = write(tmp_path, "<root><item>1</item><item>2</item><item>3</item></root>")

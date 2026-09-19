@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import gzip
 import math
+import sys
 from collections.abc import Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass, replace
@@ -87,6 +88,13 @@ _CONSISTENCY_WEIGHT: Final = 0.4
 
 #: An element must repeat at least this often to be a record candidate.
 _MIN_CANDIDATE_COUNT: Final = 2
+
+#: The namespace XML reserves for the ``xml`` prefix. That binding is implicit --
+#: it never appears in an element's ``nsmap`` -- so it has to be seeded explicitly.
+#: Without it ``prefix_for()`` returns ``None`` for ``xml:lang``, the segment
+#: renders as a bare ``lang``, and the generated config parses, matches nothing and
+#: extracts ``None``.
+_XML_NAMESPACE: Final = "http://www.w3.org/XML/1998/namespace"
 
 #: Suffixes treated as gzip-compressed input. Mirrors
 #: :data:`gigaxml.parser.streaming._GZIP_SUFFIXES`; kept local so this module does
@@ -171,10 +179,17 @@ class Candidate:
         Non-empty when a prefix stood for different URIs at different instances of
         this very path -- one flat ``namespaces:`` block cannot describe that, so a
         config for this candidate cannot be generated at all.
+
+        Attribute slots count as uses. Leaving them out made this guard blind to the
+        one case that mattered most: a candidate whose *path* needs no namespace but
+        whose attribute does reported ``missing_namespaces: []`` while the config it
+        produced could not be loaded at all.
         """
         used = _prefixes_in(self.path)
         for child in self.child_tags:
             used |= _prefixes_in(child)
+        for attribute in self.attribute_names:
+            used |= _prefixes_in(attribute)
         return tuple(sorted(prefix for prefix in used if prefix not in self.namespaces))
 
     @property
@@ -242,10 +257,16 @@ class InspectionReport:
         They are genuine candidates and are not hidden, but they are not competing
         records either, so the report says which is which. Candidates are ranked, so
         the first containing one is the highest-ranked.
+
+        The scan covers **every** candidate, not only those ranked above. A nested
+        path usually repeats more often than the record containing it, so it usually
+        ranks *above* it -- and that is precisely the case where the annotation
+        matters. Returning early on ``candidate`` itself made the loop blind to it and
+        reported no nesting at all.
         """
         for other in self.candidates:
             if other is candidate:
-                return None
+                continue
             if candidate.path.startswith(f"{other.path}/"):
                 return other.path
         return None
@@ -368,12 +389,17 @@ class _NamespaceScope:
     prefix inside a subtree: the path rendered for an earlier element would use the
     later binding, and the generated config would silently fail to match. Bindings
     are therefore scoped the way the document scopes them.
+
+    The ``xml`` prefix starts bound to the XML namespace because XML binds it
+    implicitly. A document may also declare it explicitly, and that is legal as long
+    as it names the same URI -- which is why the pre-seeded binding is not treated
+    as shadowing when the declaration repeats it.
     """
 
     __slots__ = ("_bindings", "_history", "_seen", "_shadowed")
 
     def __init__(self) -> None:
-        self._bindings: dict[str, str] = {}
+        self._bindings: dict[str, str] = {"xml": _XML_NAMESPACE}
         self._history: list[tuple[str, str | None]] = []
         self._seen: dict[str, set[str]] = {}
         self._shadowed: set[str] = set()
@@ -622,8 +648,9 @@ def _is_eligible(entry: PathEntry) -> bool:
     Without that rule a bare leaf is always a candidate and usually the *top* one,
     because a leaf has a trivially perfect sibling-structure consistency (every leaf
     has no children) and typically repeats more often than the record that contains
-    it -- in the project's own generated data, ``.../product/tags/tag`` occurs about
-    five times as often as ``.../product``. The cost is that a document whose records
+    it -- on the project's own 10MB dataset, ``.../product/tags/tag`` occurs 101,691
+    times against ``.../product``'s 29,120, so about 3.5x as often. The cost is that
+    a document whose records
     really are bare leaves (``<line>text</line>`` and nothing else) gets no candidate
     at all; :attr:`InspectionReport.to_text` says so and points at the path table,
     and the record path has to be written by hand.
@@ -800,8 +827,13 @@ def inspect_document(
                 accumulator.count += 1
                 accumulator.note_namespace(prefix, uri)
                 for raw_name in payload.attrib:
-                    name, _, _ = _segment(raw_name, scope)
+                    name, attribute_prefix, attribute_uri = _segment(raw_name, scope)
                     accumulator.attributes.add(f"@{name}")
+                    # An attribute's own prefix has to be registered exactly as an
+                    # element's does. `@dc:creator` is only usable in a generated
+                    # config if `dc` reaches the namespaces block, and the attribute
+                    # is the only place that prefix ever appears.
+                    accumulator.note_namespace(attribute_prefix, attribute_uri)
                 continue
 
             # --- end ---
@@ -853,12 +885,18 @@ def inspect_document(
 
 
 def _prefixes_in(rendered: str) -> set[str]:
-    """Every ``prefix:`` used by a rendered path or slot.
+    """Every ``prefix:`` used by a rendered path segment or attribute slot.
 
     A local XML name cannot contain ``:``, so splitting on the first colon is
-    unambiguous.
+    unambiguous. A leading ``@`` marks an attribute slot (``@dc:creator``) and has to
+    come off first, or the "prefix" reads as ``@dc`` and never matches the map.
     """
-    return {segment.partition(":")[0] for segment in rendered.split("/") if ":" in segment}
+    prefixes: set[str] = set()
+    for segment in rendered.split("/"):
+        name = segment.removeprefix("@")
+        if ":" in name:
+            prefixes.add(name.partition(":")[0])
+    return prefixes
 
 
 def _namespaces_for(candidates: Sequence[Candidate]) -> dict[str, str]:
@@ -963,6 +1001,21 @@ def generate_config(
             f"express that, so the record path has to be chosen by hand"
         )
 
+    container = report.nested_inside(candidate)
+    container_index = _index_of(report.candidates, container)
+    if container is not None:
+        # The candidate is a repeating structure *inside* another candidate, which
+        # means the ranking put the inner one first -- it repeats more often. That is
+        # often not what the user wants, and nothing else in the output says so.
+        # Only this direction warns: a candidate that *contains* sub-structures
+        # (``.../product`` over ``.../product/tags``) is the common, correct case.
+        print(
+            f"warning: candidate {candidate_index} ({candidate.path}) is a repeating "
+            f"structure INSIDE candidate {container_index} ({container}). If you meant "
+            f"the record that contains it, pass --candidate {container_index}.",
+            file=sys.stderr,
+        )
+
     fields: dict[str, dict[str, object]] = {}
     taken: set[str] = set()
     for slot in (*candidate.attribute_names, *candidate.child_tags):
@@ -989,6 +1042,13 @@ def generate_config(
         f"# Candidate {candidate_index} of {len(report.candidates)}: {candidate.path}",
         f"#   {candidate.evidence}",
     ]
+    if container is not None:
+        header.append(
+            f"# WARNING: this candidate is a repeating structure INSIDE candidate "
+            f"{container_index} ({container}). It ranks first because it repeats more "
+            f"often, which is not always what you want; use `--candidate "
+            f"{container_index}` for the record that contains it."
+        )
     others = [
         (index, other)
         for index, other in enumerate(report.candidates, start=1)

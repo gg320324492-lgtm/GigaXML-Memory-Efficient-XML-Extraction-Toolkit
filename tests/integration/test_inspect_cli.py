@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 from gigaxml.cli import main
+from gigaxml.inspect import generate_config, inspect_document
 
 TWO_RECORDS = "two_records.xml"
 
@@ -475,3 +476,146 @@ def test_the_console_script_runs_inspect(s10_path: Path) -> None:
     payload = json.loads(completed.stdout)
     assert payload["candidates"][0]["path"] == "/catalog/products/product"
     assert payload["candidates"][0]["count"] == 29_120
+
+
+# --- Gate 12: containment is reported in both directions ---------------------
+
+
+def test_generate_config_warns_when_the_candidate_sits_inside_another(
+    fixtures_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """200 orders with 3 lines each: the line is the inner structure and ranks first.
+
+    It ranks first because it repeats three times as often, which is not always what
+    the user wants, and nothing else in the output says so.
+    """
+    exit_code = main(
+        [
+            "inspect",
+            str(fixtures_dir / "orders_lines.xml"),
+            "--generate-config",
+            str(tmp_path / "c.yaml"),
+        ]
+    )
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "warning:" in err
+    assert "/orders/order/line" in err
+    assert "INSIDE" in err
+    assert "--candidate 2" in err
+    assert "/orders/order" in err
+
+
+def test_the_warning_reaches_the_generated_yaml_header(fixtures_dir: Path, tmp_path: Path) -> None:
+    config = tmp_path / "c.yaml"
+    assert (
+        main(
+            [
+                "inspect",
+                str(fixtures_dir / "orders_lines.xml"),
+                "--generate-config",
+                str(config),
+            ]
+        )
+        == 0
+    )
+    text = config.read_text(encoding="utf-8")
+
+    assert "# WARNING:" in text
+    assert "INSIDE candidate 2 (/orders/order)" in text
+    assert "`--candidate 2`" in text
+
+
+@pytest.mark.parametrize("fixture", ["orders_lines.xml", "nest_hot.xml", "section_many.xml"])
+def test_every_inside_out_shape_warns(
+    fixtures_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], fixture: str
+) -> None:
+    assert (
+        main(
+            [
+                "inspect",
+                str(fixtures_dir / fixture),
+                "--generate-config",
+                str(tmp_path / "c.yaml"),
+            ]
+        )
+        == 0
+    )
+    assert "warning:" in capsys.readouterr().err
+
+
+def test_the_warning_is_silent_when_the_candidate_contains_sub_structures(
+    s10_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``/catalog/products/product`` contains ``.../product/tags``: the common, correct case.
+
+    Warning here would make the main scenario noisy for no reason -- the user asked
+    for the record and got it.
+    """
+    assert main(["inspect", str(s10_path), "--generate-config", str(tmp_path / "c.yaml")]) == 0
+    err = capsys.readouterr().err
+
+    assert "warning:" not in err
+    assert "wrote a config" in err
+
+
+def test_the_annotation_does_not_reorder_the_candidates(fixtures_dir: Path, tmp_path: Path) -> None:
+    """The ranking is deliberately untouched; the annotation does the explaining.
+
+    "Container first" was measured and is worse: on ``section(2)/item(2000)`` it
+    answers ``/root/section`` with 2 rows where 2000 were wanted.
+    """
+    assert (
+        main(
+            [
+                "inspect",
+                str(fixtures_dir / "orders_lines.xml"),
+                "--generate-config",
+                str(tmp_path / "c.yaml"),
+            ]
+        )
+        == 0
+    )
+    text = (tmp_path / "c.yaml").read_text(encoding="utf-8")
+
+    assert "record: /orders/order/line" in text, "the inner path is still the default"
+
+
+def test_the_s10_config_is_byte_for_byte_unchanged(s10_path: Path, fixtures_dir: Path) -> None:
+    """Regression pin for the document the fix must not disturb.
+
+    Method: ``sha256`` of ``generate_config(inspect_document(source), candidate_index=1)``
+    with the ``# Source:`` line removed. That line echoes the caller's spelling of the
+    path -- ``data\\s10.xml`` on Windows, ``data/s10.xml`` elsewhere -- so it is
+    dropped to keep the value portable. Everything else is pinned exactly.
+
+    Raw digests on the development machine, for cross-checking: ``data/s10.xml`` as a
+    POSIX string gives
+    ``1b7d90c8cfa060f7cd38f34aaa6aef3da1679834b608bbbfd3c068d8872fd196``.
+    """
+    import hashlib
+
+    def digest(source: Path) -> str:
+        text = generate_config(inspect_document(source), candidate_index=1)
+        body = "\n".join(line for line in text.splitlines() if not line.startswith("# Source:"))
+        return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    assert digest(s10_path) == "1caac4c3767a6c3de2079dd163bc9ac0e9a77531853fb55d5e17af850e46a535"
+
+    # And the five documents that were already in the tree.
+    assert digest(fixtures_dir / "extract_default_ns.xml") == (
+        "df41f7be2db9f8b3dfa4ceddab1c008365a52ed876c7471258e376acb27b99f8"
+    )
+    assert digest(fixtures_dir / "extract_prefixed_ns.xml") == (
+        "5d5095a8c28a677ab1bd37a5bd027bd2d08a7a3009f79c966ee084168968e7b7"
+    )
+    assert digest(fixtures_dir / "namespaced.xml") == (
+        "1e685fea39b7abd22902b1092dd27b526f06fd1e0a2dcd49ef0e09b97782eb1d"
+    )
+    assert digest(fixtures_dir / "tiny.xml") == (
+        "bfb9b3b6c40ad414e5e2f6bc9c196b51e8bccf92961ea6032250f16e9caf6e5b"
+    )
+    assert digest(fixtures_dir / "two_records.xml") == (
+        "9bf83525570f27aafdb861f6fea0c48a6c658ddd50016b90a1eb980c9f9e4b59"
+    )

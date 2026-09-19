@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <item>
+    <tag id="1">v1</tag>
+    <tag id="2">v2</tag>
+    <tag id="3">v3</tag>
+  </item>
+  <item>
+    <tag id="4">v4</tag>
+    <tag id="5">v5</tag>
+    <tag id="6">v6</tag>
+  </item>
+</root>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog xmlns="urn:example:items" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <items>
+    <item dc:creator="c1"><name>Alpha</name></item>
+    <item dc:creator="c2"><name>Beta</name></item>
+    <item dc:creator="c1"><name>Gamma</name></item>
+  </items>
+</catalog>
