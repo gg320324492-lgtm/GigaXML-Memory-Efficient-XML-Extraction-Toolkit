@@ -16,6 +16,7 @@ module is also runnable directly:
     python -m tests._mem data/s100.xml noclean
     python -m tests._mem --baseline
     python -m tests._mem --pipeline data/s400.xml out.parquet
+    python -m tests._mem --inspect data/s400.xml
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ import psutil
 __all__ = [
     "REPO_ROOT",
     "empty_baseline_mb",
+    "inspect_in_subprocess",
     "measure_peak_rss_mb",
     "peak_rss_mb",
     "pipeline_in_subprocess",
@@ -206,6 +208,38 @@ def _run_pipeline(xml_path: str, out_path: str) -> dict[str, float | int]:
     }
 
 
+def _run_inspect(xml_path: str) -> dict[str, float | int]:
+    """Walk one file with ``inspect_document`` and report this process's memory.
+
+    ``inspect`` cannot know the record path in advance, so it has no ``tag=`` filter
+    to hide behind and must release every element itself. That makes its memory the
+    purest test of the release rule: the path table is the only thing that grows
+    with the document, and it is capped.
+    """
+    from gigaxml.inspect import inspect_document
+
+    size_mb = Path(xml_path).stat().st_size / _MB
+    baseline = rss_mb()
+    started = time.perf_counter()
+    report = inspect_document(xml_path)
+    elapsed = time.perf_counter() - started
+    peak = peak_rss_mb()
+    top = report.candidates[0] if report.candidates else None
+    return {
+        "baseline_mb": round(baseline, 3),
+        "peak_mb": round(peak, 3),
+        "delta_mb": round(max(0.0, peak - baseline), 3),
+        "elements_seen": report.elements_seen,
+        "paths": report.tracked_paths,
+        "candidates": len(report.candidates),
+        "top_candidate": None if top is None else top.path,
+        "top_count": 0 if top is None else top.count,
+        "seconds": round(elapsed, 4),
+        "input_mb": round(size_mb, 3),
+        "mb_per_sec": round(size_mb / elapsed, 2) if elapsed > 0 else 0.0,
+    }
+
+
 def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str, float | int]:
     """Scan ``xml_path`` in a fresh interpreter and return its memory profile.
 
@@ -237,6 +271,18 @@ def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str,
     return payload
 
 
+def inspect_in_subprocess(xml_path: str | Path) -> dict[str, float | int]:
+    """Run ``inspect_document`` in a fresh interpreter and return its memory profile.
+
+    Args:
+        xml_path: dataset to walk.
+
+    Raises:
+        RuntimeError: the measurement subprocess failed.
+    """
+    return _subprocess_profile(["--inspect", str(xml_path)])
+
+
 def pipeline_in_subprocess(
     xml_path: str | Path,
     out_path: str | Path,
@@ -250,9 +296,14 @@ def pipeline_in_subprocess(
     Raises:
         RuntimeError: the measurement subprocess failed.
     """
+    return _subprocess_profile(["--pipeline", str(xml_path), str(out_path)])
+
+
+def _subprocess_profile(arguments: list[str]) -> dict[str, float | int]:
+    """Run one measurement mode in a fresh interpreter and parse its JSON line."""
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
     completed = subprocess.run(
-        [sys.executable, "-m", "tests._mem", "--pipeline", str(xml_path), str(out_path)],
+        [sys.executable, "-m", "tests._mem", *arguments],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -261,7 +312,7 @@ def pipeline_in_subprocess(
     )
     if completed.returncode != 0:
         raise RuntimeError(
-            f"pipeline subprocess exited {completed.returncode}\n"
+            f"measurement subprocess exited {completed.returncode} for {arguments}\n"
             f"--- stdout ---\n{completed.stdout}\n--- stderr ---\n{completed.stderr}"
         )
     line = completed.stdout.strip().splitlines()[-1]
@@ -298,11 +349,15 @@ def _main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[1] == "--pipeline":
         print(json.dumps(_run_pipeline(argv[2], argv[3])))
         return 0
+    if len(argv) == 3 and argv[1] == "--inspect":
+        print(json.dumps(_run_inspect(argv[2])))
+        return 0
     if len(argv) != 3:
         print(
             "usage: python -m tests._mem <xml-path> <clean|noclean>\n"
             "       python -m tests._mem --baseline\n"
-            "       python -m tests._mem --pipeline <xml-path> <out-path>",
+            "       python -m tests._mem --pipeline <xml-path> <out-path>\n"
+            "       python -m tests._mem --inspect <xml-path>",
             file=sys.stderr,
         )
         return 2

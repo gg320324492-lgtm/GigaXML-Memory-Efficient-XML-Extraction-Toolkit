@@ -43,18 +43,36 @@ from gigaxml.errors import WriterError
 from gigaxml.fields import FieldConfig, FieldType
 
 __all__ = [
+    "BATCH_SIZE_WARN_THRESHOLD",
     "DEFAULT_BATCH_SIZE",
     "CsvWriter",
     "JsonlWriter",
     "ParquetWriter",
     "RowWriter",
     "WriterFormat",
+    "batch_size_warning",
     "create_writer",
 ]
 
 #: Rows held before a batch is flushed. Small enough to stay bounded, large enough
 #: that per-batch overhead (a row group, a table build) is negligible.
 DEFAULT_BATCH_SIZE: Final = 5_000
+
+#: Rows per batch above which a warning is worth printing.
+#:
+#: Output-side memory is **linear in the batch size**: a buffered row costs about
+#: **0.95 KB** for a six-field config (measured against ``tests/_mem.py``'s RSS
+#: probe: 5 000 rows ~ 4.2 MiB, 100 000 ~ 89.8 MiB, 500 000 ~ 452.8 MiB). The
+#: project's output-side budget is 32 MiB, which is reached at roughly 34 500
+#: rows; this threshold fires earlier so that wider rows are still covered.
+#:
+#: Exceeding it is *warned about, never refused*: a config with very wide rows may
+#: legitimately need a large batch, and what the user needs is to be told, not
+#: blocked.
+BATCH_SIZE_WARN_THRESHOLD: Final = 20_000
+
+#: Measured resident memory per buffered row, in KB, for a six-field config.
+_KB_PER_BUFFERED_ROW: Final = 0.95
 
 #: Buffer for the text-mode handles, in bytes.
 _WRITE_BUFFER_BYTES: Final = 1 << 16
@@ -124,6 +142,13 @@ class RowWriter(ABC):
     Use as a context manager, or call :meth:`close` yourself -- an unclosed writer
     leaves its last partial batch unwritten.
 
+    **``batch_size`` decides output-side memory.** A batch holds that many rows in
+    memory before it is written, so resident memory grows linearly with it: about
+    **0.95 KB per buffered row** for a six-field config (measured: 5 000 rows
+    ~ 4.2 MiB, 100 000 ~ 89.8 MiB, 500 000 ~ 452.8 MiB). The default of 5 000 keeps
+    a run well inside this project's 32 MiB output budget; raising it to hundreds
+    of thousands does not. See :func:`batch_size_warning`.
+
     Args:
         path: output file. Parent directories are not created.
         fields: the configured fields, in output order. They decide the CSV header,
@@ -185,10 +210,23 @@ class RowWriter(ABC):
             self._flush_batch()
 
     def write_all(self, rows: Iterable[Mapping[str, object]]) -> int:
-        """Add many rows. Returns the total number written, including the last batch."""
+        """Add many rows and return the number of rows **accepted**.
+
+        "Accepted" means handed to :meth:`write`, whether or not the batch they
+        landed in has been flushed: rows still sitting in the current batch are
+        counted, because they are already committed to being written. This is
+        deliberately **not** the same number as :attr:`rows_written`, which counts
+        only what has reached the file.
+
+        Reading those two as interchangeable is exactly what made an earlier
+        version of this method lie: its docstring said "including the last batch"
+        and its test name said the same, while the code returned the flushed count
+        only. The behaviour was right; the name and the docstring were wrong, and
+        a wrong contract is worse than a bug because it is believed.
+        """
         for row in rows:
             self.write(row)
-        return self._rows_written
+        return self._rows_written + len(self._batch)
 
     def close(self) -> None:
         """Flush the final partial batch and release the file. Idempotent.
@@ -426,7 +464,8 @@ def create_writer(
     Args:
         path: output file.
         fields: configured fields, in output order.
-        batch_size: rows per flush.
+        batch_size: rows per flush. See :func:`batch_size_warning` for how this
+            trades against resident memory.
         output_format: force a format instead of inferring it from the extension.
             Accepts a :class:`WriterFormat` or its name.
 
@@ -450,3 +489,22 @@ def create_writer(
         WriterFormat.PARQUET: ParquetWriter,
     }
     return writers[writer_format](path, fields, batch_size=batch_size)
+
+
+def batch_size_warning(batch_size: int) -> str | None:
+    """Return a warning for a batch size that threatens the memory budget, else ``None``.
+
+    A warning rather than an error on purpose: a config whose rows are very wide
+    may legitimately want a large batch, and the useful thing to give that user is
+    information, not a refusal.
+    """
+    if batch_size <= BATCH_SIZE_WARN_THRESHOLD:
+        return None
+    estimated_mb = batch_size * _KB_PER_BUFFERED_ROW / 1024
+    return (
+        f"--batch-size {batch_size} buffers up to {batch_size:,} rows in memory "
+        f"(~{estimated_mb:,.0f} MiB at the measured ~{_KB_PER_BUFFERED_ROW} KB per row for a "
+        f"6-field config), which exceeds this project's 32 MiB output-side target. "
+        f"The default {DEFAULT_BATCH_SIZE:,} is inside it; lower it unless the rows are "
+        f"very wide."
+    )

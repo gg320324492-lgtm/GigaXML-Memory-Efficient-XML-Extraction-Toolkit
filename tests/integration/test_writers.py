@@ -464,13 +464,71 @@ def test_close_is_idempotent_and_flushes_the_last_partial_batch(tmp_path: Path) 
     assert (tmp_path / "out.csv").read_text(encoding="utf-8").splitlines() == ["a", "1"]
 
 
-def test_write_all_reports_the_total_including_the_last_batch(tmp_path: Path) -> None:
+def test_write_all_returns_every_row_it_accepted(tmp_path: Path) -> None:
+    """The guard for a name/docstring/behaviour that used to disagree.
+
+    ``write_all`` returns rows **accepted**, not rows flushed. An earlier version
+    said "including the last batch" in its docstring and carried a test whose name
+    said the same, while the code returned the flushed count only -- so the name
+    and the docstring described behaviour the method did not have. If the return
+    value ever goes back to ``rows_written``, this test fails.
+    """
+    config = build_config({"a": {"path": "a"}})
+    with create_writer(tmp_path / "out.csv", config.fields, batch_size=10) as writer:
+        accepted = writer.write_all([{"a": str(i)} for i in range(3)])
+
+        assert accepted == 3, "all three were accepted, none has been flushed"
+        assert writer.rows_written == 0, "a batch of 10 does not flush at 3 rows"
+
+
+def test_write_all_counts_accepted_rows_across_a_flush(tmp_path: Path) -> None:
+    """With a flush in the middle, accepted == flushed + still buffered."""
     config = build_config({"a": {"path": "a"}})
     with create_writer(tmp_path / "out.csv", config.fields, batch_size=2) as writer:
-        total = writer.write_all([{"a": str(i)} for i in range(5)])
+        accepted = writer.write_all([{"a": str(i)} for i in range(5)])
 
-    assert total == 4, "the 5th row is still in the buffer at that point"
-    assert writer.rows_written == 5
+        assert accepted == 5
+        assert writer.rows_written == 4, "two full batches flushed"
+        assert accepted == writer.rows_written + 1
+
+
+def test_write_all_agrees_with_rows_written_once_closed(tmp_path: Path) -> None:
+    """After close the two numbers must coincide -- nothing is left buffered."""
+    config = build_config({"a": {"path": "a"}})
+    writer = create_writer(tmp_path / "out.csv", config.fields, batch_size=3)
+    accepted = writer.write_all([{"a": str(i)} for i in range(7)])
+    writer.close()
+
+    assert accepted == writer.rows_written == 7
+
+
+def test_a_batch_size_over_the_threshold_is_warned_about() -> None:
+    from gigaxml.writers import BATCH_SIZE_WARN_THRESHOLD, batch_size_warning
+
+    warning = batch_size_warning(BATCH_SIZE_WARN_THRESHOLD + 1)
+    assert warning is not None
+    assert "32 MiB" in warning
+    assert f"{BATCH_SIZE_WARN_THRESHOLD + 1:,}" in warning
+
+
+def test_the_default_batch_size_does_not_warn() -> None:
+    from gigaxml.writers import BATCH_SIZE_WARN_THRESHOLD, batch_size_warning
+
+    assert batch_size_warning(DEFAULT_BATCH_SIZE) is None
+    assert batch_size_warning(BATCH_SIZE_WARN_THRESHOLD) is None
+
+
+def test_a_warned_batch_size_is_still_accepted(tmp_path: Path) -> None:
+    """Warned, never refused: a config with wide rows may legitimately want one."""
+    from gigaxml.writers import BATCH_SIZE_WARN_THRESHOLD
+
+    config = build_config({"a": {"path": "a"}})
+    with create_writer(
+        tmp_path / "out.csv", config.fields, batch_size=BATCH_SIZE_WARN_THRESHOLD + 5
+    ) as writer:
+        writer.write({"a": "1"})
+
+    assert (tmp_path / "out.csv").read_text(encoding="utf-8").splitlines() == ["a", "1"]
 
 
 def test_a_writer_needs_at_least_one_field(tmp_path: Path) -> None:

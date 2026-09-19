@@ -23,6 +23,7 @@ __all__ = [
     "FieldPathError",
     "FieldTypeError",
     "GigaXMLError",
+    "InspectionError",
     "MissingRequiredFieldError",
     "RecordPathError",
     "WriterError",
@@ -106,6 +107,17 @@ class MissingRequiredFieldError(GigaXMLError, ValueError):
     def __init__(self, message: str, *, field: str) -> None:
         super().__init__(message)
         self.field = field
+
+
+class InspectionError(GigaXMLError, ValueError):
+    """``inspect`` cannot produce what was asked of it.
+
+    Raised when a document offers no usable record candidate, when a requested
+    candidate index is out of range, and when a candidate cannot be expressed as a
+    config at all (a namespace prefix rebound to different URIs along the path).
+    Distinct from the path and config errors because nothing here is wrong with
+    the user's input -- the *document* is simply not what the request assumed.
+    """
 
 
 class WriterError(GigaXMLError, ValueError):

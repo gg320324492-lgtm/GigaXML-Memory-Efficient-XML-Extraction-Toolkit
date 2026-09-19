@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog generated-by="gigaxml" seed="0">
+  <metadata><generated>2023-11-14T22:13:20Z</generated><records>5</records></metadata>
+  <products>
+    <product id="1" type="physical">
+      <name>Alpha Lamp</name>
+      <price currency="USD">10.00</price>
+    </product>
+    <product id="2" type="digital">
+      <name>Beta Suite</name>
+      <price currency="EUR">20.00</price>
+    </product>
+    <product id="3" type="physical">
+      <name>Gamma Valve</name>
+      <price currency="USD">30.00</price>
+    </product>
+  </products>
+  <orders>
+    <order id="1"><qty>3</qty><product-ref>1</product-ref></order>
+    <order id="2"><qty>5</qty><product-ref>2</product-ref></order>
+  </orders>
+</catalog>
