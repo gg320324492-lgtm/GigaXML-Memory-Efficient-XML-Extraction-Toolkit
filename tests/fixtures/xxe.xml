@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE catalog [
+  <!ENTITY xxe SYSTEM "http://127.0.0.1:9/gigaxml-xxe-canary">
+]>
+<catalog generated-by="gigaxml" seed="0">
+  <metadata><generated>2023-11-14T22:13:20Z</generated><records>1</records></metadata>
+  <products>
+    <product id="1" type="physical">
+      <name>&xxe;</name>
+      <category>lighting</category>
+      <price currency="USD">1.00</price>
+      <manufacturer><name>Canary</name><country>SE</country></manufacturer>
+      <tags><tag>xxe</tag></tags>
+    </product>
+  </products>
+  <orders/>
+</catalog>

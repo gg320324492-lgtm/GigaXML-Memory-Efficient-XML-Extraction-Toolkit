@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Callable, Sequence
 
 from gigaxml import __version__
+from gigaxml.generate import generate_dataset
 
 __all__ = ["build_parser", "main"]
 
@@ -39,8 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handle_generate(args: argparse.Namespace) -> int:
-    """Handle ``gigaxml generate``. Implemented in Phase 1."""
-    raise NotImplementedError("`gigaxml generate` is implemented in Phase 1")
+    """Handle ``gigaxml generate``."""
+    manifest = generate_dataset(
+        args.output,
+        size=args.size,
+        seed=args.seed,
+        namespace=args.namespace,
+    )
+    print(json.dumps(manifest.to_dict(), indent=2))
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
