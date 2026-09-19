@@ -35,3 +35,8 @@ Thumbs.db
 # ---- Exception: small committed test fixtures ----
 !tests/fixtures/**/*.xml
 !tests/fixtures/**/*.xml.gz
+
+# ---- Local working notes: development journals, kept out of the repository ----
+docs/AGENT_BRIEF_*.md
+docs/PHASE-*-REPORT.md
+docs/ROADMAP.md
