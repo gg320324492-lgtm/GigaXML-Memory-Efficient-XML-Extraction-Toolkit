@@ -17,25 +17,27 @@ measurement:
 **Ratios of ``delta_mb`` are never asserted, anywhere in this file.** At these
 sizes the marginal cost is around 1 MiB -- the same order as CPython's allocator
 warm-up -- so a ratio of two such numbers measures arena noise rather than the
-algorithm. On this machine ``delta_mb`` for the same 100MB file has been observed
-anywhere between **0.000 and 2.074 MiB** across runs, and for the same 400MB file
-between 0.457 and 1.961 MiB.
+algorithm. Across the retained 35-pair campaign (30 probe rounds plus the 5 runs
+of this file recorded in the Phase 1.6 report) ``delta_mb`` for the same 100MB
+file ranged over **0.152 .. 2.227 MiB**, and for the same 400MB file over
+**0.383 .. 2.184 MiB**.
 
-Dividing one noisy number by another therefore fails on noise alone, and it does:
-across 40 measured pairs the old ratio assertion failed **6 times**, including one
-run where the 100MB scan added exactly 0.000 MiB over its own baseline -- a
-division by zero, so the ratio was ``inf`` and the assertion failed while the
-reader had used *no measurable memory at all*. The worst genuine mismatch was
-5.710x, sitting on top of a difference of only +1.234 MiB.
+Dividing one noisy number by another therefore fails on noise alone, and it did:
+the retired ``delta(400) / delta(100) <= 2.0`` gate failed **4 times out of 35**
+-- 11.4% -- on runs where the reader was behaving perfectly. The worst was 0.152
+MiB -> 1.316 MiB, a ratio of 8.658x that reads as an explosion, sitting on a
+difference of +1.164 MiB.
 
 **Boundedness on ``delta_mb`` is therefore asserted as an additive band**, which
 is what the noise actually is::
 
     delta(400MB) <= delta(100MB) + 4 MiB
 
-Across those same 40 samples the difference never left -0.93 .. +1.23 MiB, so the
-band carries a 3.2x margin, while a reader that kept the document resident would
-differ by roughly 300 MiB -- about 75x the band. See ``test_memory_plateaus``.
+Across those same 35 pairs the difference never left -1.070 .. +1.840 MiB, so the
+band carries a 2.2x margin, while a reader that kept the document resident would
+differ by 300 MiB at the very least -- 75x the band, and nearer 950x if the
+measured no-cleanup cost (~1265 MiB for the 100MB file alone) is extrapolated
+linearly. See ``test_memory_plateaus``.
 
 Ratios are still *printed* for transparency, and labelled informational so nobody
 mistakes them for gates.
@@ -66,11 +68,11 @@ NON_RECORD_LIMIT_MB = 5.0
 #:
 #: An additive band, not a ratio. The measurement noise at the ~1 MiB scale is
 #: additive, so a ratio of two noisy numbers can fail on noise alone -- measured
-#: here, it failed 6 times out of 40, once with a 0.000 MiB denominator. A
-#: constant *offset* on a ratio does not fix that either: with delta(100) = 0.66
-#: MiB a linear reader would land at delta(400) ~ 2.64 MiB, which
-#: ``2.0 * 0.66 + 2 = 3.32`` would wave through. The band below cannot: a linear
-#: reader differs by ~300 MiB, some 75x the band.
+#: here, the retired ratio gate failed 4 times out of 35 pairs, worst of all
+#: 8.658x on a difference of only +1.164 MiB. A constant *offset* on a ratio does
+#: not fix that either: with delta(100) = 0.66 MiB a linear reader would land at
+#: delta(400) ~ 2.64 MiB, which ``2.0 * 0.66 + 2 = 3.32`` would wave through. The
+#: band below cannot: a linear reader differs by 300 MiB at minimum, 75x the band.
 PLATEAU_ADDITIVE_LIMIT_MB = 4.0
 
 _MEASUREMENTS: dict[tuple[str, bool], dict[str, float | int]] = {}
@@ -189,12 +191,12 @@ def test_memory_plateaus(s10_path: Path, s100_path: Path, s400_path: Path) -> No
     marginal cost is artificially low. Once past the plateau the curve is flat.
 
     The bound is an **additive band** on the difference, not a ratio. At this
-    scale ``delta_mb`` is dominated by CPython's allocator warm-up: the same
-    100MB file has measured anywhere between 0.000 and 2.074 MiB across runs, so
-    the ratio ``delta(400) / delta(100)`` fails on noise alone -- it did, 6 times
-    out of 40 samples, once because the denominator was exactly 0.000 MiB. The
-    difference is the stable quantity: it stayed inside -0.93 .. +1.23 MiB over
-    all 40 samples, so ``PLATEAU_ADDITIVE_LIMIT_MB`` carries a 3.2x margin.
+    scale ``delta_mb`` is dominated by CPython's allocator warm-up: across the
+    retained 35-pair campaign the same 100MB file ranged over 0.152 .. 2.227 MiB,
+    so the ratio ``delta(400) / delta(100)`` fails on noise alone -- it did, 4
+    times out of 35, worst of all 8.658x on a difference of only +1.164 MiB. The
+    difference is the stable quantity: it stayed inside -1.070 .. +1.840 MiB over
+    all 35 pairs, so ``PLATEAU_ADDITIVE_LIMIT_MB`` carries a 2.2x margin.
     """
     profiles = {
         "s10": _measure(s10_path, clean=True),
