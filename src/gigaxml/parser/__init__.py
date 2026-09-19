@@ -1,7 +1,9 @@
 """Streaming XML parsing primitives.
 
-Phase 1 deliberately ships only :mod:`gigaxml.parser.streaming`. Field extraction,
-writers and validation land in later phases; there are no placeholder modules.
+Phase 1 shipped only :mod:`gigaxml.parser.streaming`. Phase 2 adds configuration
+and field extraction, which live in :mod:`gigaxml.config` and
+:mod:`gigaxml.fields`; there are still no placeholder modules for writers or
+validation.
 """
 
 from __future__ import annotations
@@ -11,7 +13,6 @@ from gigaxml.parser.streaming import (
     RecordPathSpec,
     StreamingRecordReader,
     parse_record_path,
-    resolve_record_leaf_tag,
     resolve_record_tags,
 )
 
@@ -20,6 +21,5 @@ __all__ = [
     "RecordPathSpec",
     "StreamingRecordReader",
     "parse_record_path",
-    "resolve_record_leaf_tag",
     "resolve_record_tags",
 ]

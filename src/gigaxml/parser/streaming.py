@@ -67,7 +67,6 @@ an artefact of a scan that quietly did nothing.
 from __future__ import annotations
 
 import gzip
-import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass
@@ -76,37 +75,19 @@ from typing import IO, Final
 
 from lxml import etree
 
+from gigaxml.errors import RecordPathError
+from gigaxml.paths import ANY_ANCESTOR_PREFIX, resolve_segments, split_segments
+
 __all__ = [
     "RecordPathError",
     "RecordPathSpec",
     "StreamingRecordReader",
     "parse_record_path",
-    "resolve_record_leaf_tag",
     "resolve_record_tags",
 ]
 
-#: A path segment written with an explicit namespace prefix, e.g. ``ns:product``.
-_PREFIXED_SEGMENT: Final = re.compile(r"^(?P<prefix>[A-Za-z_][A-Za-z0-9_.\-]*):(?P<local>[^:]+)$")
-
-#: A path segment written as a bare XML name, e.g. ``product``.
-_BARE_SEGMENT: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
-
-#: Prefix that switches a record path from root-anchored to any-ancestor matching.
-_ANY_ANCESTOR_PREFIX: Final = "//"
-
 #: Suffixes treated as gzip-compressed input.
 _GZIP_SUFFIXES: Final = (".gz", ".gzip")
-
-
-class RecordPathError(ValueError):
-    """Raised when ``record_path`` cannot be resolved or matches nothing.
-
-    Deliberately *not* a silent empty result. Three mistakes land here, and all
-    three would otherwise hide behind a plausible-looking "extracted 0 records"
-    report: a namespace that was not supplied, an ancestor chain that does not
-    exist in this document (the leaf name alone is not enough to match), and a
-    root-anchored path whose leading segments do not name the document root.
-    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,44 +121,10 @@ def _split_segments(record_path: str) -> list[str]:
         raise RecordPathError(
             f"record_path must be an absolute element path starting with '/': {record_path!r}"
         )
-    segments = [segment for segment in record_path.split("/") if segment]
+    segments = split_segments(record_path)
     if not segments:
         raise RecordPathError(f"record_path contains no element segments: {record_path!r}")
     return segments
-
-
-def _resolve_segments(
-    record_path: str,
-    namespaces: Mapping[str, str] | None,
-) -> list[str]:
-    """Resolve every segment of ``record_path`` into its qualified tag."""
-    ns_map: Mapping[str, str] = namespaces or {}
-    resolved: list[str] = []
-
-    for segment in _split_segments(record_path):
-        prefixed = _PREFIXED_SEGMENT.match(segment)
-        if prefixed is not None:
-            prefix = prefixed.group("prefix")
-            local = prefixed.group("local")
-            if prefix not in ns_map:
-                raise RecordPathError(
-                    f"record_path segment {segment!r} uses namespace prefix {prefix!r}, "
-                    f"which is not present in the namespace map "
-                    f"(known prefixes: {sorted(ns_map) or 'none'})"
-                )
-            uri = ns_map[prefix]
-            if not uri:
-                raise RecordPathError(f"namespace prefix {prefix!r} maps to an empty URI")
-            resolved.append(f"{{{uri}}}{local}")
-            continue
-
-        if _BARE_SEGMENT.match(segment) is None:
-            raise RecordPathError(f"record_path segment is not a valid XML name: {segment!r}")
-
-        default_uri = ns_map.get("")
-        resolved.append(f"{{{default_uri}}}{segment}" if default_uri else segment)
-
-    return resolved
 
 
 def parse_record_path(
@@ -214,9 +161,9 @@ def parse_record_path(
             contains an invalid XML name, or uses a prefix that is not present in
             ``namespaces``.
     """
-    anchored = not record_path.startswith(_ANY_ANCESTOR_PREFIX)
+    anchored = not record_path.startswith(ANY_ANCESTOR_PREFIX)
     return RecordPathSpec(
-        chain=tuple(_resolve_segments(record_path, namespaces)),
+        chain=tuple(resolve_record_tags(record_path, namespaces)),
         anchored=anchored,
     )
 
@@ -229,7 +176,9 @@ def resolve_record_tags(
 
     The anchoring marker is not part of the chain, so ``"/a/b"`` and ``"//a/b"``
     resolve to the same list. Use :func:`parse_record_path` when you also need to
-    know which matching mode the path asks for.
+    know which matching mode the path asks for -- that is what it calls.
+
+    The per-segment work is shared with field paths; see :mod:`gigaxml.paths`.
 
     Args:
         record_path: element path, with or without the ``//`` prefix.
@@ -242,33 +191,12 @@ def resolve_record_tags(
         RecordPathError: the path is malformed, a segment is not a valid XML
             name, or a prefix used by the path is not present in ``namespaces``.
     """
-    return _resolve_segments(record_path, namespaces)
-
-
-def resolve_record_leaf_tag(
-    record_path: str,
-    namespaces: Mapping[str, str] | None = None,
-) -> str:
-    """Resolve the *record element's own* tag, i.e. the final segment.
-
-    This is a convenience accessor, **not** the reader's matching rule. The
-    reader matches the whole chain returned by :func:`parse_record_path`; a
-    record path whose ancestors are wrong matches nothing even when this function
-    returns a tag that exists in the document. (Before Phase 1.6 this was called
-    ``resolve_record_tag``, which read as if it were the reader's parser.)
-
-    Args:
-        record_path: element path, with or without the ``//`` prefix.
-        namespaces: prefix-to-URI map; the empty string is the default namespace.
-
-    Returns:
-        The qualified tag of the final segment.
-
-    Raises:
-        RecordPathError: the path is malformed, or a prefix used by the path is
-            not present in ``namespaces``.
-    """
-    return _resolve_segments(record_path, namespaces)[-1]
+    return resolve_segments(
+        _split_segments(record_path),
+        namespaces or {},
+        error_cls=RecordPathError,
+        source="record_path",
+    )
 
 
 class StreamingRecordReader:

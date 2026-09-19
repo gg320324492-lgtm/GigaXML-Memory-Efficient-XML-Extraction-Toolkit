@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<s:catalog xmlns:s="urn:example:shop" generated-by="gigaxml" seed="0">
+  <s:products>
+    <s:product id="1" active="yes">
+      <s:name>Aurora Desk Lamp</s:name>
+      <s:price currency="USD">49.90</s:price>
+      <s:stock>12</s:stock>
+      <s:released>2023-11-14</s:released>
+      <s:manufacturer>
+        <s:name>Northwind Works</s:name>
+        <s:country>SE</s:country>
+      </s:manufacturer>
+      <s:tags>
+        <s:tag>desk</s:tag>
+        <s:tag>led</s:tag>
+      </s:tags>
+    </s:product>
+    <s:product id="2" active="no">
+      <s:name>Pulse Audio Suite</s:name>
+      <s:price currency="EUR">129.00</s:price>
+      <s:stock>0</s:stock>
+      <s:released>2024-02-29</s:released>
+      <s:manufacturer>
+        <s:name>Kestrel Labs</s:name>
+        <s:country>DE</s:country>
+      </s:manufacturer>
+      <s:tags>
+        <s:tag>audio</s:tag>
+      </s:tags>
+    </s:product>
+  </s:products>
+</s:catalog>

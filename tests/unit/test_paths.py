@@ -12,8 +12,8 @@ segment would let a same-named element under a different branch match.
 
 The last section covers **anchoring**: a single leading ``/`` anchors the chain at
 the document root (``stack == chain``), while ``//`` means "any ancestors"
-(``stack[-N:] == chain``). ``resolve_record_leaf_tag`` is only an accessor for the
-record element's own tag; it is not the matching rule.
+(``stack[-N:] == chain``). ``RecordPathSpec.leaf_tag`` is only an accessor for the record
+ element's own tag; it is not the matching rule.
 """
 
 from __future__ import annotations
@@ -24,56 +24,55 @@ from gigaxml.parser.streaming import (
     RecordPathError,
     RecordPathSpec,
     parse_record_path,
-    resolve_record_leaf_tag,
     resolve_record_tags,
 )
 
 
 def test_plain_path_yields_bare_local_name() -> None:
-    assert resolve_record_leaf_tag("/catalog/products/product") == "product"
+    assert parse_record_path("/catalog/products/product").leaf_tag == "product"
 
 
 def test_prefixed_segment_is_expanded() -> None:
-    tag = resolve_record_leaf_tag("/c:products/c:product", {"c": "urn:example:catalog"})
+    tag = parse_record_path("/c:products/c:product", {"c": "urn:example:catalog"}).leaf_tag
     assert tag == "{urn:example:catalog}product"
 
 
 def test_default_namespace_applies_to_bare_segment() -> None:
-    tag = resolve_record_leaf_tag("/catalog/products/product", {"": "urn:example:catalog"})
+    tag = parse_record_path("/catalog/products/product", {"": "urn:example:catalog"}).leaf_tag
     assert tag == "{urn:example:catalog}product"
 
 
 def test_missing_default_key_leaves_bare_name() -> None:
     """A map with only prefixed entries must not imply a default namespace."""
-    tag = resolve_record_leaf_tag("/catalog/products/product", {"c": "urn:example:catalog"})
+    tag = parse_record_path("/catalog/products/product", {"c": "urn:example:catalog"}).leaf_tag
     assert tag == "product"
 
 
 def test_only_the_last_segment_matters() -> None:
-    assert resolve_record_leaf_tag("/a/b/c/product", None) == "product"
-    assert resolve_record_leaf_tag("/x/y/product", {"": "urn:z"}) == "{urn:z}product"
+    assert parse_record_path("/a/b/c/product", None).leaf_tag == "product"
+    assert parse_record_path("/x/y/product", {"": "urn:z"}).leaf_tag == "{urn:z}product"
 
 
 @pytest.mark.parametrize("bad", ["catalog/products/product", "", "/", "//", "/ /"])
 def test_malformed_path_raises(bad: str) -> None:
     with pytest.raises(RecordPathError):
-        resolve_record_leaf_tag(bad, None)
+        parse_record_path(bad, None)
 
 
 def test_unknown_prefix_raises() -> None:
     with pytest.raises(RecordPathError, match="not present in the namespace map"):
-        resolve_record_leaf_tag("/c:product", {"x": "urn:x"})
+        parse_record_path("/c:product", {"x": "urn:x"})
 
 
 def test_empty_uri_raises() -> None:
     with pytest.raises(RecordPathError, match="empty URI"):
-        resolve_record_leaf_tag("/c:product", {"c": ""})
+        parse_record_path("/c:product", {"c": ""})
 
 
 # --- full-chain resolution ---------------------------------------------------
 #
-# ``resolve_record_leaf_tag`` above is a convenience accessor for the record
-# element's own tag. The reader does not use it for matching -- it uses the whole
+# ``parse_record_path(...).leaf_tag`` above is a convenience accessor for the
+# record element's own tag. The reader does not use it for matching -- it uses the whole
 # chain below, because a leaf-only match silently merges sibling branches that end
 # in the same element name.
 
@@ -158,7 +157,7 @@ def test_final_segment_accessor_agrees_with_the_chain(
     path: str,
     namespaces: dict[str, str] | None,
 ) -> None:
-    assert resolve_record_leaf_tag(path, namespaces) == resolve_record_tags(path, namespaces)[-1]
+    assert parse_record_path(path, namespaces).leaf_tag == resolve_record_tags(path, namespaces)[-1]
 
 
 def test_namespace_map_is_not_mutated() -> None:
