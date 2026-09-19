@@ -25,6 +25,7 @@ __all__ = [
     "GigaXMLError",
     "MissingRequiredFieldError",
     "RecordPathError",
+    "WriterError",
 ]
 
 
@@ -105,3 +106,17 @@ class MissingRequiredFieldError(GigaXMLError, ValueError):
     def __init__(self, message: str, *, field: str) -> None:
         super().__init__(message)
         self.field = field
+
+
+class WriterError(GigaXMLError, ValueError):
+    """An output could not be set up or written.
+
+    Raised for an output path whose format cannot be determined, an unusable batch
+    size, a row whose keys do not match the configured fields, and a missing
+    optional dependency -- Parquet needs ``pyarrow``, which is an extra rather
+    than a requirement, so that case gets an actionable message instead of an
+    ImportError traceback.
+
+    Descending from :class:`GigaXMLError` keeps the promise that one ``except``
+    clause can cover everything the library raises deliberately.
+    """

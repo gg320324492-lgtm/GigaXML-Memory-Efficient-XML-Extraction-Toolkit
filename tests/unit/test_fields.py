@@ -353,3 +353,56 @@ def test_every_error_is_catchable_through_the_shared_base() -> None:
         coerce_value("x", FieldType.INT, "stock")
     with pytest.raises(GigaXMLError):
         parse_field_path("/absolute")
+
+
+# --- the descent memo --------------------------------------------------------
+#
+# White-box on purpose. `_matches_for` is a documented internal, and the property
+# that matters -- one scan per (node, tag) per extraction call -- is what keeps a
+# config reading many fields out of one wrapper from rescanning the record's
+# children once per field. Pinning it here means the wide-record timing guard in
+# tests/performance/test_extraction_perf.py is a second line of defence rather
+# than the only one.
+
+
+def test_matches_for_scans_each_node_and_tag_only_once() -> None:
+    from gigaxml.fields import _matches_for
+
+    node = etree.fromstring(b"<r><a>1</a><a>2</a><b>3</b></r>")
+    cache: dict = {}
+
+    first = _matches_for(node, "a", cache)
+    again = _matches_for(node, "a", cache)
+    other = _matches_for(node, "b", cache)
+
+    assert first is again, "the same (node, tag) must not be scanned a second time"
+    assert len(first) == 2
+    assert len(other) == 1
+    assert len(cache) == 2
+
+
+def test_matches_for_is_keyed_by_node_as_well_as_tag() -> None:
+    """Two nodes with the same tag must not share a bucket."""
+    from gigaxml.fields import _matches_for
+
+    parent = etree.fromstring(b"<r><p><a>1</a></p><q><a>2</a><a>3</a></q></r>")
+    first_node, second_node = parent[0], parent[1]
+    cache: dict = {}
+
+    assert len(_matches_for(first_node, "a", cache)) == 1
+    assert len(_matches_for(second_node, "a", cache)) == 2
+    assert len(cache) == 2
+
+
+def test_the_cache_is_supplied_by_the_caller_so_it_cannot_outlive_a_call() -> None:
+    """``_descend`` takes the cache as an argument; nothing is stored on a module.
+
+    A module-level cache would keep element references alive past the record they
+    belong to, which is exactly what the reader's cleanup contract forbids.
+    """
+    import inspect
+
+    from gigaxml.fields import _descend
+
+    parameters = list(inspect.signature(_descend).parameters)
+    assert parameters == ["record", "spec", "cache"], parameters

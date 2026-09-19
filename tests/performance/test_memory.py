@@ -52,6 +52,24 @@ the band** -- and nearer 950x if the measured no-cleanup cost (~1265 MiB for the
 Ratios are still *printed* for transparency, and labelled informational so nobody
 mistakes them for gates.
 
+**How small a leak this suite can see -- do not overstate it.** Both gates bound an
+absolute number of MiB, so they can only detect a leak once it is large enough to
+move that number. Against the two dataset sizes on record:
+
+===========  ==========================  ============================
+gate         budget                      smallest detectable leak
+===========  ==========================  ============================
+4b           ``8 MiB / 873,600``         **~10 bytes per record**
+4a           ``32 MiB / 1,164,800``      ~28 bytes per record
+===========  ==========================  ============================
+
+Below roughly 10 bytes per record this suite is blind: catching 1 byte per record
+would need a record-count difference of ~8.4 million, which is far past what a
+routine test run can afford. The backstop is Phase 7's real 4 GB benchmark, where
+1.16 million extra records at 1 byte each is 11.6 MiB against a ~1.5 MiB baseline
+and therefore visible. Until that benchmark exists, "bounded memory" here means
+"bounded to within ~10 bytes per record", not "no leak at all".
+
 Throughput is reported but never asserted -- see roadmap revision A11.
 """
 

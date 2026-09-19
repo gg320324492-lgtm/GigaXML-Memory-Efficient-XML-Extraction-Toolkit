@@ -14,6 +14,8 @@ module is also runnable directly:
 
     python -m tests._mem data/s100.xml clean
     python -m tests._mem data/s100.xml noclean
+    python -m tests._mem --baseline
+    python -m tests._mem --pipeline data/s400.xml out.parquet
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ __all__ = [
     "empty_baseline_mb",
     "measure_peak_rss_mb",
     "peak_rss_mb",
+    "pipeline_in_subprocess",
     "rss_mb",
     "scan_in_subprocess",
 ]
@@ -44,6 +47,20 @@ __all__ = [
 REPO_ROOT: Final = Path(__file__).resolve().parent.parent
 
 _MB: Final = 1024 * 1024
+
+#: Record path and fields of the generated catalog, for the pipeline measurement.
+_PIPELINE_RECORD_PATH: Final = "/catalog/products/product"
+_PIPELINE_FIELDS: Final = {
+    "product_id": {"path": "@id"},
+    "kind": {"path": "@type"},
+    "name": {"path": "name"},
+    "category": {"path": "category"},
+    "price": {"path": "price", "type": "decimal"},
+    "currency": {"path": "price/@currency"},
+    "manufacturer": {"path": "manufacturer/name"},
+    "country": {"path": "manufacturer/country"},
+    "first_tag": {"path": "tags/tag"},
+}
 
 
 class _ProcessMemoryCounters(ctypes.Structure):
@@ -152,6 +169,43 @@ def _run_measurement(path: str, *, clean: bool) -> dict[str, float | int]:
     }
 
 
+def _run_pipeline(xml_path: str, out_path: str) -> dict[str, float | int]:
+    """Read, extract and write one file, and report this process's memory profile.
+
+    This is the output-side counterpart of :func:`_run_measurement`: the reader
+    keeps memory flat on the way in, and the writer has to keep it flat on the way
+    out. Measuring the whole pipeline in one process is the only way to see the
+    writer's contribution, since the reader alone was already shown to be bounded.
+    """
+    from gigaxml.config import parse_config
+    from gigaxml.fields import extract_record
+    from gigaxml.parser.streaming import StreamingRecordReader
+    from gigaxml.writers import create_writer
+
+    config = parse_config({"record": _PIPELINE_RECORD_PATH, "fields": _PIPELINE_FIELDS})
+    size_mb = Path(xml_path).stat().st_size / _MB
+    baseline = rss_mb()
+    started = time.perf_counter()
+    count = 0
+    with create_writer(out_path, config.fields) as writer:
+        for record in StreamingRecordReader(xml_path, config.record_path):
+            writer.write(extract_record(record, config.fields).values)
+            count += 1
+    elapsed = time.perf_counter() - started
+    peak = peak_rss_mb()
+    return {
+        "baseline_mb": round(baseline, 3),
+        "peak_mb": round(peak, 3),
+        "delta_mb": round(max(0.0, peak - baseline), 3),
+        "records": count,
+        "seconds": round(elapsed, 4),
+        "input_mb": round(size_mb, 3),
+        "output_mb": round(Path(out_path).stat().st_size / _MB, 3),
+        "records_per_sec": round(count / elapsed, 1) if elapsed > 0 else 0.0,
+        "mb_per_sec": round(size_mb / elapsed, 2) if elapsed > 0 else 0.0,
+    }
+
+
 def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str, float | int]:
     """Scan ``xml_path`` in a fresh interpreter and return its memory profile.
 
@@ -176,6 +230,38 @@ def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str,
     if completed.returncode != 0:
         raise RuntimeError(
             f"measurement subprocess exited {completed.returncode}\n"
+            f"--- stdout ---\n{completed.stdout}\n--- stderr ---\n{completed.stderr}"
+        )
+    line = completed.stdout.strip().splitlines()[-1]
+    payload: dict[str, float | int] = json.loads(line)
+    return payload
+
+
+def pipeline_in_subprocess(
+    xml_path: str | Path,
+    out_path: str | Path,
+) -> dict[str, float | int]:
+    """Run read+extract+write in a fresh interpreter and return its memory profile.
+
+    Args:
+        xml_path: dataset to extract from.
+        out_path: output file; the extension picks the writer.
+
+    Raises:
+        RuntimeError: the measurement subprocess failed.
+    """
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    completed = subprocess.run(
+        [sys.executable, "-m", "tests._mem", "--pipeline", str(xml_path), str(out_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"pipeline subprocess exited {completed.returncode}\n"
             f"--- stdout ---\n{completed.stdout}\n--- stderr ---\n{completed.stderr}"
         )
     line = completed.stdout.strip().splitlines()[-1]
@@ -209,8 +295,16 @@ def _main(argv: list[str]) -> int:
 
         print(json.dumps({"baseline_mb": round(peak_rss_mb(), 3)}))
         return 0
+    if len(argv) == 4 and argv[1] == "--pipeline":
+        print(json.dumps(_run_pipeline(argv[2], argv[3])))
+        return 0
     if len(argv) != 3:
-        print("usage: python -m tests._mem <xml-path> <clean|noclean>", file=sys.stderr)
+        print(
+            "usage: python -m tests._mem <xml-path> <clean|noclean>\n"
+            "       python -m tests._mem --baseline\n"
+            "       python -m tests._mem --pipeline <xml-path> <out-path>",
+            file=sys.stderr,
+        )
         return 2
     payload = _run_measurement(argv[1], clean=argv[2] == "clean")
     print(json.dumps(payload))
