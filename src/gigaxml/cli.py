@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -13,7 +14,6 @@ from lxml import etree
 from gigaxml import __version__
 from gigaxml.config import ExtractionConfig, load_config
 from gigaxml.errors import GigaXMLError
-from gigaxml.fields import extract_record
 from gigaxml.generate import generate_dataset
 from gigaxml.inspect import (
     DEFAULT_MAX_DEPTH,
@@ -22,6 +22,14 @@ from gigaxml.inspect import (
     inspect_document,
 )
 from gigaxml.parser.streaming import StreamingRecordReader
+from gigaxml.run import (
+    DEFAULT_REJECTION_FILENAME,
+    DEFAULT_RUN_REPORT_FILENAME,
+    RejectionLog,
+    RunStats,
+    consume_records,
+    elapsed_since,
+)
 from gigaxml.sample import sample_records
 from gigaxml.writers import (
     BATCH_SIZE_WARN_THRESHOLD,
@@ -99,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
             f"{BATCH_SIZE_WARN_THRESHOLD} warns."
         ),
     )
+    extract.add_argument(
+        "--report",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Where to write the machine-readable run report. Defaults to "
+            "run-report.json beside --output. Written on success *and* on failure, so "
+            "a caller can tell a half-written output from a complete one."
+        ),
+    )
     extract.set_defaults(handler=_handle_extract)
 
     inspect = subparsers.add_parser(
@@ -116,7 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument(
         "--json",
         action="store_true",
-        help="Emit the report as JSON instead of human-readable text.",
+        help=(
+            "Emit the report as JSON instead of human-readable text. To tell whether "
+            "the top candidate sits inside another one, read "
+            "`candidates[*].nested_inside` -- it names the containing path, or is null. "
+            "Do not parse the stderr warning: that is written for a human reading a "
+            "terminal, and its wording is not a contract."
+        ),
     )
     inspect.add_argument(
         "--max-paths",
@@ -195,6 +219,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_BATCH_SIZE,
         help=f"Rows per write batch (default {DEFAULT_BATCH_SIZE}).",
     )
+    sample.add_argument(
+        "--report",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Where to write the machine-readable run report. Defaults to "
+            "run-report.json beside --output. Written on success *and* on failure."
+        ),
+    )
     sample.set_defaults(handler=_handle_sample)
 
     return parser
@@ -228,20 +261,49 @@ def _handle_extract(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     _warn_on_format_mismatch(args.output, args.format)
     _warn_on_batch_size(args.batch_size)
+
+    report_path = _run_report_path(args)
+    started = time.perf_counter()
     writer = create_writer(
         args.output,
         config.fields,
         batch_size=args.batch_size,
         output_format=args.format,
     )
-    record_path = config.record_path
-    namespaces = config.namespaces or None
+    rejections = _rejection_log(args.output)
 
-    with writer:
-        for record in StreamingRecordReader(args.source, record_path, namespaces):
-            writer.write(extract_record(record, config.fields).values)
+    try:
+        with rejections, writer:
+            reader = StreamingRecordReader(
+                args.source, config.record_path, config.namespaces or None
+            )
+            stats = consume_records(reader, config, writer, rejections=rejections)
+    except (GigaXMLError, OSError, etree.XMLSyntaxError) as exc:
+        # The report goes out before the error is re-raised. Without it, a caller who
+        # only sees a non-zero exit code has no way to tell a half-written output from
+        # a complete one -- which is the failure this phase exists to remove.
+        _write_report_safely(
+            report_path,
+            args=args,
+            config=config,
+            writer=writer,
+            rejections=rejections,
+            error=exc,
+            started=started,
+        )
+        raise
 
+    _write_run_report(
+        report_path,
+        args=args,
+        config=config,
+        writer=writer,
+        rejections=rejections,
+        error=None,
+        started=started,
+    )
     print(json.dumps(_extract_summary(args, config, writer), indent=2))
+    _report_rejections(stats)
     return 0
 
 
@@ -284,20 +346,149 @@ def _handle_inspect(args: argparse.Namespace) -> int:
 
 
 def _handle_sample(args: argparse.Namespace) -> int:
-    """Handle ``gigaxml sample``."""
+    """Handle ``gigaxml sample``.
+
+    Shares the extraction loop with ``extract``, so ``on_error: quarantine`` means
+    the same thing here. It also writes the same run report, for the same reason: a
+    ``sample`` that aborts leaves the same indistinguishable half-file.
+    """
     config = load_config(args.config)
     _warn_on_format_mismatch(args.output, args.format)
     _warn_on_batch_size(args.batch_size)
-    result = sample_records(
-        args.source,
-        config,
+
+    report_path = _run_report_path(args)
+    started = time.perf_counter()
+    writer = create_writer(
         args.output,
-        limit=args.limit,
+        config.fields,
         batch_size=args.batch_size,
         output_format=args.format,
     )
+    rejections = _rejection_log(args.output)
+
+    try:
+        with rejections:
+            result = sample_records(
+                args.source,
+                config,
+                args.output,
+                limit=args.limit,
+                batch_size=args.batch_size,
+                output_format=args.format,
+                writer=writer,
+                rejections=rejections,
+            )
+    except (GigaXMLError, OSError, etree.XMLSyntaxError) as exc:
+        _write_report_safely(
+            report_path,
+            args=args,
+            config=config,
+            writer=writer,
+            rejections=rejections,
+            error=exc,
+            started=started,
+        )
+        raise
+
+    _write_run_report(
+        report_path,
+        args=args,
+        config=config,
+        writer=writer,
+        rejections=rejections,
+        error=None,
+        started=started,
+    )
     print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     return 0
+
+
+def _rejection_log(output: str | Path) -> RejectionLog:
+    """The rejection log, which sits beside the output file."""
+    return RejectionLog(Path(output).parent / DEFAULT_REJECTION_FILENAME)
+
+
+def _run_report_path(args: argparse.Namespace) -> Path:
+    """Where the run report goes: ``--report`` if given, else beside the output."""
+    if args.report is not None:
+        return Path(args.report)
+    return Path(args.output).parent / DEFAULT_RUN_REPORT_FILENAME
+
+
+def _run_report_payload(
+    args: argparse.Namespace,
+    config: ExtractionConfig,
+    writer: RowWriter,
+    rejections: RejectionLog,
+    error: BaseException | None,
+    started: float,
+) -> dict[str, object]:
+    """The run report, which is written whether the run finished or not.
+
+    ``output_complete`` is the field this exists for. A run that aborts leaves
+    whatever rows had been flushed, and until now that file looked exactly like one
+    from a run that finished; this turns the difference into something a caller can
+    read without parsing stderr.
+    """
+    written_path = rejections.written_path
+    return {
+        "status": "failed" if error is not None else "ok",
+        "source": str(args.source),
+        "output": str(args.output),
+        "format": args.format
+        if args.format is not None
+        else WriterFormat.from_path(args.output).value,
+        "record_path": config.record_path,
+        "fields": list(config.field_names),
+        "rows": writer.rows_written,
+        "rejected": rejections.count,
+        "rejected_path": None if written_path is None else str(written_path),
+        "error": None if error is None else {"type": type(error).__name__, "message": str(error)},
+        "output_complete": error is None,
+        "elapsed_seconds": elapsed_since(started),
+        "tool_version": __version__,
+    }
+
+
+def _write_run_report(
+    report_path: Path,
+    *,
+    args: argparse.Namespace,
+    config: ExtractionConfig,
+    writer: RowWriter,
+    rejections: RejectionLog,
+    error: BaseException | None,
+    started: float,
+) -> None:
+    """Write the run report. Raises ``OSError`` if the path cannot be written."""
+    payload = _run_report_payload(args, config, writer, rejections, error, started)
+    report_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
+def _write_report_safely(report_path: Path, **fields: object) -> None:
+    """Write the report on a failing path, without masking the original error."""
+    try:
+        _write_run_report(report_path, **fields)  # type: ignore[arg-type]
+    except OSError as exc:
+        print(
+            f"warning: could not write the run report to {report_path}: {exc}",
+            file=sys.stderr,
+        )
+
+
+def _report_rejections(stats: RunStats) -> None:
+    """One line about quarantined records -- after the run, never per record.
+
+    Per-record warnings would bury the terminal under a million lines on exactly the
+    input quarantine is for. The per-record detail is in the rejection log.
+    """
+    if stats.rejected:
+        print(
+            f"warning: {stats.rejected:,} record(s) rejected; see {stats.rejected_path}",
+            file=sys.stderr,
+        )
 
 
 def _warn_on_format_mismatch(output: str, requested: str | None) -> None:

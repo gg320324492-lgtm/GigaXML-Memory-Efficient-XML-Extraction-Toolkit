@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from gigaxml.config import ExtractionConfig, load_config, parse_config
+from gigaxml.config import (
+    _TOP_LEVEL_KEYS,
+    ErrorPolicy,
+    ExtractionConfig,
+    load_config,
+    parse_config,
+)
 from gigaxml.errors import ConfigError, FieldPathError, RecordPathError
 from gigaxml.fields import FieldType
 
@@ -326,6 +332,47 @@ def test_load_config_propagates_validation_errors(tmp_path: Path) -> None:
     path.write_text("record: /a\nfields:\n  x:\n    path: N\n    type: nope\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="unsupported type"):
         load_config(path)
+
+
+# --- on_error ---------------------------------------------------------------
+
+
+def test_on_error_defaults_to_abort() -> None:
+    """The default has to stay the behaviour the tool has always had."""
+    assert parse_config(_minimal()).on_error is ErrorPolicy.ABORT
+
+
+def test_on_error_accepts_quarantine() -> None:
+    config = parse_config(_minimal(on_error="quarantine"))
+    assert config.on_error is ErrorPolicy.QUARANTINE
+
+
+def test_on_error_is_case_insensitive_and_stripped() -> None:
+    for spelling in ("QUARANTINE", "Quarantine", "  quarantine  "):
+        assert parse_config(_minimal(on_error=spelling)).on_error is ErrorPolicy.QUARANTINE
+
+
+@pytest.mark.parametrize("bad", ["skip", "ignore", "abort!", "quarantin", "yes"])
+def test_an_unsupported_on_error_value_is_rejected(bad: str) -> None:
+    with pytest.raises(ConfigError) as info:
+        parse_config(_minimal(on_error=bad))
+
+    message = str(info.value)
+    assert "on_error" in message
+    assert "supported values are" in message
+    assert "abort" in message and "quarantine" in message
+
+
+@pytest.mark.parametrize("bad", [7, [], {}, True])
+def test_a_non_string_on_error_is_rejected(bad: object) -> None:
+    with pytest.raises(ConfigError, match="must set 'on_error' to a string"):
+        parse_config(_minimal(on_error=bad))
+
+
+def test_on_error_is_a_known_top_level_key() -> None:
+    """Without this it would fall into the unknown-key path and be rejected."""
+    assert "on_error" in _TOP_LEVEL_KEYS
+    parse_config(_minimal(on_error="abort"))
 
 
 def test_the_config_is_immutable() -> None:

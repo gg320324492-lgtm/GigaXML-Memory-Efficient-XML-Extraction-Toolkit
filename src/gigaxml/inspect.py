@@ -361,14 +361,14 @@ class InspectionReport:
                 )
         else:
             lines.append("record candidates (none)")
+            lines.append("  no path repeats at least twice. A candidate needs to occur more than")
             lines.append(
-                "  no path repeats at least twice WITH STRUCTURE. A candidate needs a child"
+                "  once; a path with structure qualifies, and so does a bare leaf unless a"
             )
-            lines.append("  or an attribute: a bare leaf is excluded because it would outrank the")
             lines.append(
-                "  record containing it. Read the path table below and write the record path"
+                "  repeating element with structure sits above it. Read the path table below"
             )
-            lines.append("  by hand -- it is a path that repeats, even if it has no children.")
+            lines.append("  and write the record path by hand.")
 
         lines.append("")
         lines.append(f"paths ({self.tracked_paths:,}), most frequent first")
@@ -583,17 +583,17 @@ def _score_candidates(entries: Sequence[PathEntry], *, limit: int) -> tuple[Cand
     out of the ranking:
 
     * A path must repeat at least twice. A single occurrence is not a record.
-    * A path must have **structure** -- a child or an attribute. A bare leaf has a
-      trivially perfect sibling-structure consistency and usually repeats more often
-      than the record containing it, so it would take first place; see
-      :func:`_is_eligible` for the cost of excluding it.
+    * A path must have structure -- a child or an attribute -- **or** be a bare leaf
+      with no repeating structured ancestor. See :func:`_is_eligible` for why both
+      halves of that are needed.
     """
+    by_path = {entry.path: entry for entry in entries}
     max_count = max((entry.count for entry in entries), default=1)
     scored: list[Candidate] = []
     for entry in entries:
         if entry.count < _MIN_CANDIDATE_COUNT:
             continue
-        if not _is_eligible(entry):
+        if not _is_eligible(entry, by_path):
             continue
         repeat = _repeat_score(entry.count, max_count)
         consistency = entry.shape_consistency
@@ -640,23 +640,50 @@ def _with_namespaces(
     return tuple(enriched)
 
 
-def _is_eligible(entry: PathEntry) -> bool:
+def _is_eligible(entry: PathEntry, table: Mapping[str, PathEntry]) -> bool:
     """Whether a path may be ranked as a record candidate.
 
-    A candidate needs **structure**: at least one child tag or one attribute name.
+    Args:
+        entry: the path being considered.
+        table: every tracked path, keyed by path. Needed because the rule for a bare
+            leaf is about its *ancestors*, which a single entry cannot see.
 
-    Without that rule a bare leaf is always a candidate and usually the *top* one,
-    because a leaf has a trivially perfect sibling-structure consistency (every leaf
-    has no children) and typically repeats more often than the record that contains
-    it -- on the project's own 10MB dataset, ``.../product/tags/tag`` occurs 101,691
-    times against ``.../product``'s 29,120, so about 3.5x as often. The cost is that
-    a document whose records
-    really are bare leaves (``<line>text</line>`` and nothing else) gets no candidate
-    at all; :attr:`InspectionReport.to_text` says so and points at the path table,
-    and the record path has to be written by hand.
+    A path with structure -- a child tag or an attribute name -- is always eligible.
 
+    A **bare leaf** is eligible unless it has an ancestor that is itself a repeating
+    record, meaning an ancestor with structure and at least two occurrences. The two
+    shapes that distinction separates:
+
+    * ``<root><line>text</line> x500</root>``: nothing above ``line`` is a record, so
+      ``line`` *is* the record. Excluding bare leaves outright -- which an earlier
+      version did -- meant such a document got no candidate at all, and that is
+      exactly the log-file shape this tool gets pointed at.
+    * ``<product><tags><tag>a</tag></tags></product>``: ``.../product`` repeats and
+      has structure, so ``.../product/tags/tag`` is one of its fields. Admitting it
+      would put a field above the record it belongs to, because a leaf has a
+      trivially perfect sibling consistency (every leaf has no children) and usually
+      repeats more often -- on the project's own 10MB dataset ``.../tags/tag`` occurs
+      101,691 times against ``.../product``'s 29,120.
+
+    Both halves of the ancestor test are needed: requiring only "has an ancestor"
+    would let a single-occurrence container such as ``<root>`` disqualify everything
+    beneath it.
     """
-    return bool(entry.child_tags or entry.attribute_names)
+    if entry.child_tags or entry.attribute_names:
+        return True
+    return not _has_repeating_structured_ancestor(entry.path, table)
+
+
+def _has_repeating_structured_ancestor(path: str, table: Mapping[str, PathEntry]) -> bool:
+    """Whether any proper ancestor of ``path`` repeats at least twice and has structure."""
+    segments = path.split("/")[1:]
+    for end in range(1, len(segments)):
+        ancestor = table.get("/" + "/".join(segments[:end]))
+        if ancestor is None or ancestor.count < _MIN_CANDIDATE_COUNT:
+            continue
+        if ancestor.child_tags or ancestor.attribute_names:
+            return True
+    return False
 
 
 class _SlotSample:
@@ -979,6 +1006,14 @@ def generate_config(
     Raises:
         InspectionError: there are no candidates, the index is out of range, or the
             candidate's path uses a prefix that means more than one URI.
+
+    Note:
+        The return value is the YAML text and **nothing else**. When the chosen
+        candidate sits inside another one, a warning goes to ``stderr`` and a line is
+        added to the YAML header -- neither is part of the return value, so a library
+        caller cannot detect the case by looking at what comes back. Read
+        :meth:`InspectionReport.nested_inside` for that; it is the structured signal,
+        and the warning is a convenience for someone at a terminal.
     """
     if not report.candidates:
         raise InspectionError(

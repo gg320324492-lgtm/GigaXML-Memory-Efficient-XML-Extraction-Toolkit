@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Final
 
@@ -53,16 +54,53 @@ __all__ = [
 ]
 
 #: Keys allowed at the top level of a config document.
-_TOP_LEVEL_KEYS: Final = frozenset({"record", "namespaces", "fields"})
+_TOP_LEVEL_KEYS: Final = frozenset({"record", "namespaces", "fields", "on_error"})
 
 #: Keys allowed inside one entry of ``fields``.
 _FIELD_KEYS: Final = frozenset({"path", "type", "required"})
+
+#: The policy a config gets when it does not declare one.
+_DEFAULT_ERROR_POLICY: Final = "abort"
 
 #: The type a field gets when it does not declare one.
 _DEFAULT_FIELD_TYPE: Final = FieldType.STRING
 
 #: Supported type names, for error messages.
 _TYPE_NAMES: Final = {field_type.value: field_type for field_type in FieldType}
+
+
+class ErrorPolicy(Enum):
+    """What a run does when one record cannot be extracted.
+
+    ``ABORT`` is the default, and is the behaviour this tool has always had: the
+    first unconvertible value or missing required field ends the run, with a
+    non-zero exit code and whatever rows had already been flushed left on disk.
+
+    ``QUARANTINE`` is the opt-in alternative for the case the default is worst at --
+    a multi-gigabyte file where a handful of records are malformed. It writes each
+    rejected record to a rejection log, keeps going, and exits 0; the count and the
+    log's path go into the run report. It is deliberately **not** the default:
+    quietly skipping records is a way to produce a file that looks complete and is
+    missing rows, and that decision belongs to whoever asked for the extraction.
+    """
+
+    ABORT = "abort"
+    QUARANTINE = "quarantine"
+
+    @classmethod
+    def from_name(cls, name: str) -> ErrorPolicy:
+        """Look up a policy by its config name.
+
+        Raises:
+            ConfigError: ``name`` is not a known policy.
+        """
+        try:
+            return cls(name.strip().lower())
+        except ValueError as exc:
+            known = sorted(member.value for member in cls)
+            raise ConfigError(
+                f"unsupported on_error value {name!r}; supported values are {known}"
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,12 +113,15 @@ class ExtractionConfig:
         namespaces: prefix-to-URI map; the empty string key is the default
             namespace. Shared by the record path and every field path.
         fields: the validated field definitions, in config order.
+        on_error: what to do when one record cannot be extracted. Defaults to
+            :attr:`ErrorPolicy.ABORT`.
     """
 
     record_path: str
     record_spec: RecordPathSpec
     namespaces: dict[str, str]
     fields: tuple[FieldConfig, ...]
+    on_error: ErrorPolicy = ErrorPolicy.ABORT
 
     @property
     def field_names(self) -> tuple[str, ...]:
@@ -134,7 +175,8 @@ def parse_config(data: object, *, source: str = "<config>") -> ExtractionConfig:
     Raises:
         ConfigError: an unknown key, a missing or mistyped ``record``/``fields``,
             a field without ``path``, an unsupported ``type`` name, a
-            non-boolean ``required``, or a malformed ``namespaces`` block.
+            non-boolean ``required``, a malformed ``namespaces`` block, or an
+            ``on_error`` value that is not a supported policy.
         gigaxml.errors.RecordPathError: ``record`` is not a valid record path.
             Propagated rather than re-wrapped: it already names the offending
             path and explains anchoring, and wrapping it would only bury that.
@@ -157,13 +199,27 @@ def parse_config(data: object, *, source: str = "<config>") -> ExtractionConfig:
 
     namespaces = _parse_namespaces(data.get("namespaces"), source)
     fields = _parse_fields(data.get("fields"), namespaces, source)
+    on_error = _parse_error_policy(data.get("on_error"), source)
 
     return ExtractionConfig(
         record_path=record_path,
         record_spec=parse_record_path(record_path, namespaces or None),
         namespaces=namespaces,
         fields=fields,
+        on_error=on_error,
     )
+
+
+def _parse_error_policy(raw: object, source: str) -> ErrorPolicy:
+    """Validate the optional ``on_error`` key into a policy."""
+    if raw is None:
+        return ErrorPolicy(_DEFAULT_ERROR_POLICY)
+    if not isinstance(raw, str):
+        raise ConfigError(
+            f"{source} must set 'on_error' to a string, got {type(raw).__name__}; "
+            f"supported values are {sorted(member.value for member in ErrorPolicy)}"
+        )
+    return ErrorPolicy.from_name(raw)
 
 
 def _reject_unknown_keys(

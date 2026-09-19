@@ -17,6 +17,7 @@ module is also runnable directly:
     python -m tests._mem --baseline
     python -m tests._mem --pipeline data/s400.xml out.parquet
     python -m tests._mem --inspect data/s400.xml
+    python -m tests._mem --reject data/s400.xml <work-dir>
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ __all__ = [
     "measure_peak_rss_mb",
     "peak_rss_mb",
     "pipeline_in_subprocess",
+    "rejections_in_subprocess",
     "rss_mb",
     "scan_in_subprocess",
 ]
@@ -240,6 +242,59 @@ def _run_inspect(xml_path: str) -> dict[str, float | int]:
     }
 
 
+def _run_rejections(xml_path: str, work_dir: str) -> dict[str, float | int]:
+    """Run a quarantine extraction in which *every* record is rejected.
+
+    The config declares the price column as ``int``, and the generated prices look
+    like ``5338.63``, so every record fails to convert. That gives one rejection per
+    record -- about 291k for the 100MB dataset and 1.16M for the 400MB one -- which is
+    the quantity a rejection log has to be flat in. If the log buffered its entries
+    instead of streaming them, the 400MB delta would be roughly four hundred times the
+    100MB one rather than about the same.
+    """
+    from gigaxml.config import parse_config
+    from gigaxml.parser.streaming import StreamingRecordReader
+    from gigaxml.run import RejectionLog, consume_records
+    from gigaxml.writers import create_writer
+
+    config = parse_config(
+        {
+            "record": _PIPELINE_RECORD_PATH,
+            "on_error": "quarantine",
+            "fields": {
+                "product_id": {"path": "@id"},
+                "price": {"path": "price", "type": "int"},
+            },
+        }
+    )
+    work = Path(work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    size_mb = Path(xml_path).stat().st_size / _MB
+
+    baseline = rss_mb()
+    started = time.perf_counter()
+    rejections = RejectionLog(work / "rejected.jsonl")
+    with rejections:
+        writer = create_writer(work / "out.csv", config.fields)
+        with writer:
+            reader = StreamingRecordReader(xml_path, config.record_path)
+            stats = consume_records(reader, config, writer, rejections=rejections)
+    elapsed = time.perf_counter() - started
+    peak = peak_rss_mb()
+    return {
+        "baseline_mb": round(baseline, 3),
+        "peak_mb": round(peak, 3),
+        "delta_mb": round(max(0.0, peak - baseline), 3),
+        "records": stats.records_processed,
+        "rejected": stats.rejected,
+        "rejected_log_mb": round((work / "rejected.jsonl").stat().st_size / _MB, 3),
+        "rows": writer.rows_written,
+        "seconds": round(elapsed, 4),
+        "input_mb": round(size_mb, 3),
+        "records_per_sec": round(stats.records_processed / elapsed, 1) if elapsed > 0 else 0.0,
+    }
+
+
 def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str, float | int]:
     """Scan ``xml_path`` in a fresh interpreter and return its memory profile.
 
@@ -269,6 +324,22 @@ def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str,
     line = completed.stdout.strip().splitlines()[-1]
     payload: dict[str, float | int] = json.loads(line)
     return payload
+
+
+def rejections_in_subprocess(
+    xml_path: str | Path,
+    work_dir: str | Path,
+) -> dict[str, float | int]:
+    """Run the all-rejections pipeline in a fresh interpreter.
+
+    Args:
+        xml_path: dataset to walk.
+        work_dir: directory for the output and the rejection log; created if absent.
+
+    Raises:
+        RuntimeError: the measurement subprocess failed.
+    """
+    return _subprocess_profile(["--reject", str(xml_path), str(work_dir)])
 
 
 def inspect_in_subprocess(xml_path: str | Path) -> dict[str, float | int]:
@@ -352,12 +423,16 @@ def _main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[1] == "--inspect":
         print(json.dumps(_run_inspect(argv[2])))
         return 0
+    if len(argv) == 4 and argv[1] == "--reject":
+        print(json.dumps(_run_rejections(argv[2], argv[3])))
+        return 0
     if len(argv) != 3:
         print(
             "usage: python -m tests._mem <xml-path> <clean|noclean>\n"
             "       python -m tests._mem --baseline\n"
             "       python -m tests._mem --pipeline <xml-path> <out-path>\n"
-            "       python -m tests._mem --inspect <xml-path>",
+            "       python -m tests._mem --inspect <xml-path>\n"
+            "       python -m tests._mem --reject <xml-path> <work-dir>",
             file=sys.stderr,
         )
         return 2

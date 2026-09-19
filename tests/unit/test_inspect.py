@@ -283,25 +283,32 @@ def test_a_document_with_no_repeating_structure_offers_no_candidate(tmp_path: Pa
         generate_config(report)
 
 
-def test_a_bare_leaf_document_yields_no_candidate_and_says_so(tmp_path: Path) -> None:
-    """A documented limitation, not an oversight.
+def test_a_document_whose_paths_all_occur_once_offers_no_candidate(tmp_path: Path) -> None:
+    """The remaining no-candidate case: nothing repeats, so there is nothing to pick."""
+    document = write(tmp_path, "<root><a>1</a><b>2</b><c>3</c></root>")
+    report = inspect_document(document)
 
-    A candidate needs structure. A bare leaf has a trivially perfect sibling
-    consistency and usually repeats more often than the record containing it -- on the
-    project's own 10MB dataset ``.../product/tags/tag`` occurs 101,691 times against
-    ``.../product``'s 29,120, about 3.5x as often -- so admitting leaves would put a
-    field at the top of the ranking. The report has to say so rather than leave the reader
-    wondering why nothing was proposed.
+    assert report.candidates == ()
+    text = report.to_text()
+    assert "no path repeats at least twice" in text
+    assert "write the record path by hand" in text
+
+
+def test_a_bare_leaf_document_now_yields_the_leaf_as_a_candidate(tmp_path: Path) -> None:
+    """This test used to assert the opposite, and the change is deliberate.
+
+    Until the bare-leaf rule changed, a document whose records are bare leaves got no
+    candidate at all: the leaf was excluded because a leaf has a trivially perfect
+    sibling consistency and usually repeats more often than the record containing it,
+    so it would have taken first place. It is now admitted when no repeating element
+    with structure sits above it, which is exactly this shape -- the log-file shape
+    the tool gets pointed at.
     """
     document = write(tmp_path, "<root><item>1</item><item>2</item><item>3</item></root>")
     report = inspect_document(document)
 
-    assert report.candidates == ()
-    assert report.entry_for("/root/item").count == 3, "the path IS in the table"
-
-    text = report.to_text()
-    assert "WITH STRUCTURE" in text
-    assert "write the record path" in text
+    assert [candidate.path for candidate in report.candidates] == ["/root/item"]
+    assert report.entry_for("/root/item").count == 3
 
 
 def test_a_leaf_among_siblings_is_not_a_candidate(tmp_path: Path) -> None:
@@ -570,3 +577,205 @@ def test_the_json_view_is_serialisable_and_complete(tmp_path: Path) -> None:
     assert "nested_inside" in payload["candidates"][0]
     assert payload["paths"][0]["path"]
     assert payload["namespaces"] == {}
+
+
+# --- bare leaves: eligible unless a repeating structured ancestor owns them ---
+
+
+def test_a_bare_leaf_with_nothing_above_it_is_the_record(tmp_path: Path) -> None:
+    """The log-file shape: ``<root><line>text</line> x3</root>``.
+
+    An earlier rule required structure of every candidate, so this document -- which
+    is what a log file looks like -- got no candidate at all.
+    """
+    document = write(tmp_path, "<root><line>a</line><line>b</line><line>c</line></root>")
+    report = inspect_document(document)
+
+    assert [candidate.path for candidate in report.candidates] == ["/root/line"]
+    assert report.candidates[0].count == 3
+    assert report.candidates[0].child_tags == ()
+    assert report.candidates[0].attribute_names == ()
+
+
+def test_a_bare_leaf_inside_a_repeating_record_is_not_a_candidate(tmp_path: Path) -> None:
+    """``.../product/tags/tag`` is a field of ``.../product``, not a record.
+
+    A leaf has a trivially perfect sibling consistency and usually repeats more
+    often, so admitting it would put a field above the record it belongs to.
+    """
+    document = write(
+        tmp_path,
+        "<root>"
+        "<product><tags><tag>a</tag><tag>b</tag></tags></product>"
+        "<product><tags><tag>c</tag><tag>d</tag></tags></product>"
+        "</root>",
+    )
+    report = inspect_document(document)
+    paths = [candidate.path for candidate in report.candidates]
+
+    assert "/root/product" in paths
+    assert "/root/product/tags/tag" not in paths
+    assert report.entry_for("/root/product/tags/tag").count == 4
+
+
+def test_an_ancestor_has_to_repeat_to_disqualify_a_leaf(tmp_path: Path) -> None:
+    """Both halves of the test matter: structure *and* at least two occurrences.
+
+    ``<root>`` has structure but occurs once, so it is a container rather than a
+    record and must not disqualify what is inside it.
+    """
+    document = write(tmp_path, "<root><line>a</line><line>b</line></root>")
+    report = inspect_document(document)
+
+    assert report.entry_for("/root").count == 1
+    assert report.entry_for("/root").child_tags == ("line",)
+    assert [candidate.path for candidate in report.candidates] == ["/root/line"]
+
+
+def test_an_ancestor_without_structure_does_not_disqualify_a_leaf(tmp_path: Path) -> None:
+    """A repeating bare leaf cannot own another one; it has nothing to own it with."""
+    document = write(
+        tmp_path,
+        "<root><mid>a</mid><mid>b</mid><mid>c</mid></root>",
+    )
+    report = inspect_document(document)
+
+    assert [candidate.path for candidate in report.candidates] == ["/root/mid"]
+
+
+def test_the_nearest_repeating_ancestor_is_what_matters(tmp_path: Path) -> None:
+    """A leaf three levels down is owned by the repeating element above it, not the root."""
+    document = write(
+        tmp_path,
+        "<root>"
+        "<group><item><leaf>x</leaf></item><item><leaf>y</leaf></item></group>"
+        "<group><item><leaf>z</leaf></item></group>"
+        "</root>",
+    )
+    report = inspect_document(document)
+    paths = [candidate.path for candidate in report.candidates]
+
+    assert "/root/group/item" in paths
+    assert "/root/group/item/leaf" not in paths
+
+
+def test_the_mixed_shape_ranks_the_bigger_record_set_first(fixtures_dir: Path) -> None:
+    """``mixed.xml``: 200 structured items beside 300 bare lines.
+
+    Both are legitimate record sets, so both are candidates, and the one with more
+    occurrences ranks first. This is the intended consequence of the rule, not a
+    regression: a document can hold two record kinds and the tool says so rather
+    than picking one.
+    """
+    report = inspect_document(fixtures_dir / "mixed.xml")
+    by_path = {candidate.path: candidate for candidate in report.candidates}
+
+    assert [candidate.path for candidate in report.candidates] == [
+        "/root/logs/line",
+        "/root/items/item",
+    ]
+    assert by_path["/root/logs/line"].count == 300
+    assert by_path["/root/items/item"].count == 200
+
+
+def test_the_three_shapes_from_the_rule_change(fixtures_dir: Path) -> None:
+    """``bare_leaf`` gains a candidate, ``mixed`` gains one, ``flat_log`` is untouched."""
+    bare = inspect_document(fixtures_dir / "bare_leaf.xml")
+    assert [candidate.path for candidate in bare.candidates] == ["/root/line"]
+    assert bare.candidates[0].count == 500
+
+    flat = inspect_document(fixtures_dir / "flat_log.xml")
+    assert [candidate.path for candidate in flat.candidates] == ["/root/line"]
+    assert flat.candidates[0].count == 500
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("bare_leaf.xml", ("/root/line",)),
+        ("flat_log.xml", ("/root/line",)),
+        ("mixed.xml", ("/root/logs/line", "/root/items/item")),
+        ("nsA.xml", ("/catalog/items/item",)),
+        ("nsB.xml", ("/catalog/items/item",)),
+        ("nsC.xml", ("/r:catalog/r:items/r:item",)),
+        ("shadowed.xml", ("/root/set2/item",)),
+        ("xml_lang.xml", ("/root/item",)),
+        ("xml_space.xml", ("/root/item",)),
+        ("xxe.xml", ()),
+        ("nest_eq.xml", ("/root/i", "/root/i/tags")),
+        ("nest_hot.xml", ("/root/item/tag", "/root/item")),
+        ("orders_lines.xml", ("/orders/order/line", "/orders/order")),
+        ("section_many.xml", ("/root/section/item", "/root/section")),
+        (
+            "two_records.xml",
+            (
+                "/catalog/products/product",
+                "/catalog/products/product/price",
+                "/catalog/orders/order",
+            ),
+        ),
+        (
+            "extract_default_ns.xml",
+            (
+                "/catalog/products/product",
+                "/catalog/products/product/manufacturer",
+                "/catalog/products/product/price",
+                "/catalog/products/product/tags",
+            ),
+        ),
+        (
+            "extract_prefixed_ns.xml",
+            (
+                "/s:catalog/s:products/s:product",
+                "/s:catalog/s:products/s:product/s:manufacturer",
+                "/s:catalog/s:products/s:product/s:price",
+                "/s:catalog/s:products/s:product/s:tags",
+            ),
+        ),
+        (
+            "namespaced.xml",
+            (
+                "/catalog/orders/order",
+                "/catalog/products/product",
+                "/catalog/products/product/manufacturer",
+                "/catalog/products/product/price",
+                "/catalog/products/product/tags",
+            ),
+        ),
+        (
+            "tiny.xml",
+            (
+                "/catalog/orders/order",
+                "/catalog/products/product",
+                "/catalog/products/product/manufacturer",
+                "/catalog/products/product/price",
+                "/catalog/products/product/tags",
+            ),
+        ),
+    ],
+)
+def test_every_committed_document_keeps_the_candidates_it_had(
+    fixtures_dir: Path, name: str, expected: tuple[str, ...]
+) -> None:
+    """Zero perturbation, pinned per document.
+
+    Only the two documents the rule exists for -- ``bare_leaf`` and ``mixed`` -- may
+    differ from what the previous rule produced; every other fixture and the
+    generated dataset must be unchanged, or the rule is reaching further than it
+    should.
+    """
+    report = inspect_document(fixtures_dir / name)
+    assert tuple(candidate.path for candidate in report.candidates) == expected
+
+
+def test_the_generated_dataset_keeps_its_candidates(s10_path: Path) -> None:
+    report = inspect_document(s10_path)
+
+    assert tuple(candidate.path for candidate in report.candidates) == (
+        "/catalog/products/product",
+        "/catalog/products/product/manufacturer",
+        "/catalog/products/product/price",
+        "/catalog/products/product/tags",
+        "/catalog/orders/order",
+    )
+    assert report.candidates[0].count == 29_120

@@ -391,6 +391,42 @@ def test_the_default_batch_size_does_not_warn(
     assert "warning:" not in capsys.readouterr().err
 
 
+# --- the machine-readable containment signal --------------------------------
+
+
+@pytest.mark.parametrize(
+    "fixture,expected_container",
+    [
+        ("orders_lines.xml", "/orders/order"),
+        ("nest_hot.xml", "/root/item"),
+        ("section_many.xml", "/root/section"),
+    ],
+)
+def test_the_json_report_says_when_the_top_candidate_is_contained(
+    fixtures_dir: Path, fixture: str, expected_container: str
+) -> None:
+    """This field, not the stderr warning, is the contract for callers.
+
+    ``nested_inside`` has been on every candidate in ``--json`` since the field was
+    introduced; what changed is its *value*, which used to be null in exactly the
+    direction that matters -- when the nested path ranks first. Pinned here so that a
+    caller reading the JSON does not have to capture and parse a human-facing warning.
+    """
+    report = inspect_json(fixtures_dir / fixture)
+
+    assert report["candidates"][0]["nested_inside"] == expected_container
+
+
+def test_a_candidate_that_contains_others_reports_no_container(
+    fixtures_dir: Path,
+) -> None:
+    """The other direction: a record that owns sub-structures is not itself contained."""
+    report = inspect_json(fixtures_dir / "orders_lines.xml")
+    by_path = {candidate["path"]: candidate for candidate in report["candidates"]}
+
+    assert by_path["/orders/order"]["nested_inside"] is None
+
+
 # --- Gate 11: the whole chain, and the error paths -------------------------
 
 
