@@ -6,6 +6,16 @@ writers and validation land in later phases; there are no placeholder modules.
 
 from __future__ import annotations
 
-from gigaxml.parser.streaming import RecordPathError, StreamingRecordReader, resolve_record_tag
+from gigaxml.parser.streaming import (
+    RecordPathError,
+    StreamingRecordReader,
+    resolve_record_tag,
+    resolve_record_tags,
+)
 
-__all__ = ["RecordPathError", "StreamingRecordReader", "resolve_record_tag"]
+__all__ = [
+    "RecordPathError",
+    "StreamingRecordReader",
+    "resolve_record_tag",
+    "resolve_record_tags",
+]

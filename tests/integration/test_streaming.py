@@ -77,17 +77,20 @@ def test_unmatched_record_path_raises_instead_of_returning_zero(fixtures_dir: Pa
         list(reader)
 
 
-def test_only_the_final_segment_is_matched(fixtures_dir: Path) -> None:
-    """Documents a deliberate Phase 1 limitation.
+def test_wrong_ancestors_do_not_match(fixtures_dir: Path) -> None:
+    """Phase 1.5 replaced leaf-only matching with full-chain matching.
 
-    ``iterparse(tag=...)`` filters by qualified name only, so a record path with
-    the right last segment but wrong ancestors still matches. This is asserted
-    rather than left implicit: if a later phase starts verifying the full chain,
-    this test should fail loudly and be updated on purpose.
+    The previous version of this test asserted the opposite, deliberately: it
+    documented the limitation and said it should "fail loudly and be updated on
+    purpose" once the full chain was verified. This is that update -- the
+    assertion is stricter, not weaker. ``record_tag`` still resolves the record
+    element's own tag, but the reader no longer matches on it alone, so a wrong
+    ancestor chain is a loud failure instead of a silent extra row.
     """
     reader = StreamingRecordReader(fixtures_dir / "tiny.xml", "/wrong/ancestors/product")
     assert reader.record_tag == "product"
-    assert sum(1 for _ in reader) == 2
+    with pytest.raises(RecordPathError, match="matched 0 elements"):
+        list(reader)
 
 
 def test_malformed_record_path_fails_before_reading(fixtures_dir: Path) -> None:
