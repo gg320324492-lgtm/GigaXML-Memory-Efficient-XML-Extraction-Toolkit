@@ -253,6 +253,18 @@ class RowWriter(ABC):
         """Rows flushed so far. Rows still sitting in the current batch are not counted."""
         return self._rows_written
 
+    @property
+    def rows_accepted(self) -> int:
+        """Rows handed to :meth:`write`, whether or not their batch has been flushed.
+
+        The difference from :attr:`rows_written` is the current batch, which can be
+        ``batch_size`` rows wide. That is invisible on a long run and total on a short
+        one -- a 1,200-row extraction with the default batch never flushes at all, so
+        ``rows_written`` stays zero for the whole run. Progress reporting wants this
+        number; anything checking what reached the file wants the other.
+        """
+        return self._rows_written + len(self._batch)
+
     def write(self, row: Mapping[str, object]) -> None:
         """Add one row, flushing if the batch is full."""
         if self._closed:

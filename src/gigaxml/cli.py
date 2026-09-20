@@ -39,6 +39,8 @@ from gigaxml.parser.streaming import StreamingRecordReader
 from gigaxml.run import (
     DEFAULT_REJECTION_FILENAME,
     DEFAULT_RUN_REPORT_FILENAME,
+    PROGRESS_EVERY_DEFAULT,
+    ProgressReporter,
     RejectionLog,
     RunStats,
     consume_records,
@@ -151,6 +153,32 @@ def build_parser() -> argparse.ArgumentParser:
             "the parts back, which costs about 4%% of a full extraction for CSV output "
             "and almost nothing for Parquet. The parts already on disk decide the "
             "format: a --format that disagrees is ignored, with a warning."
+        ),
+    )
+    extract.add_argument(
+        "--progress",
+        action="store_true",
+        help=(
+            "Write machine-readable progress to stderr, one JSON object per line, so a "
+            "caller can show a bar without guessing. A line is emitted after every "
+            "--progress-every records, or every second, whichever comes first, and one "
+            "final line is always written. Lines go to stderr because stdout carries "
+            "the run summary. There is no total and no percentage: the tool cannot know "
+            "how many records a document holds without reading it, and an invented "
+            "denominator is worse than none. The count is cumulative, so a resumed run "
+            "continues from where it left off rather than restarting at zero. Off by "
+            "default, and nothing at all is written when it is off."
+        ),
+    )
+    extract.add_argument(
+        "--progress-every",
+        type=_positive_int,
+        metavar="N",
+        default=PROGRESS_EVERY_DEFAULT,
+        help=(
+            f"Records between progress lines (default {PROGRESS_EVERY_DEFAULT}). A line "
+            f"is also written once a second, so a slow source still reports. Ignored "
+            f"without --progress."
         ),
     )
     extract.add_argument(
@@ -295,6 +323,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _progress_reporter(args: argparse.Namespace) -> ProgressReporter | None:
+    """Build a reporter when ``--progress`` was asked for, else ``None``.
+
+    Returning ``None`` is what keeps the default path byte-identical: every call site
+    already treats a missing collaborator as "do nothing extra".
+    """
+    if not args.progress:
+        return None
+    return ProgressReporter(sys.stderr, every=args.progress_every)
+
+
 def _positive_int(text: str) -> int:
     """An ``argparse`` type for a strictly positive integer."""
     try:
@@ -327,6 +366,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
     checkpointing = args.checkpoint_every is not None
     report_path = _run_report_path(args, checkpoint=checkpointing)
     started = time.perf_counter()
+    progress = _progress_reporter(args)
 
     if args.resume and args.checkpoint_every is None:
         raise CheckpointError(
@@ -334,7 +374,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
             "the run, and the checkpoint does not record it"
         )
     if checkpointing:
-        return _extract_checkpointed(args, config, report_path, started)
+        return _extract_checkpointed(args, config, report_path, started, progress)
 
     writer: RowWriter | None = None
     rejections = _rejection_log(Path(args.output).parent)
@@ -352,7 +392,9 @@ def _handle_extract(args: argparse.Namespace) -> int:
             reader = StreamingRecordReader(
                 args.source, config.record_path, config.namespaces or None
             )
-            stats = consume_records(reader, config, writer, rejections=rejections)
+            stats = consume_records(
+                reader, config, writer, rejections=rejections, progress=progress
+            )
     except (GigaXMLError, OSError, etree.XMLSyntaxError) as exc:
         # The summary goes out before the error is re-raised. Without it, a caller who
         # only sees a non-zero exit code has no way to tell a partial output from a
@@ -513,6 +555,7 @@ def _extract_checkpointed(
     config: ExtractionConfig,
     report_path: Path,
     started: float,
+    progress: ProgressReporter | None = None,
 ) -> int:
     """Handle ``extract --checkpoint-every``, optionally continuing a run.
 
@@ -664,11 +707,17 @@ def _extract_checkpointed(
                     header=index == 0,
                 )
                 with writer:
+                    if progress is not None:
+                        # The count is cumulative, so a resumed run continues where it
+                        # left off. `rows_this_run` is the same idea for rows.
+                        progress.set_offsets(records_consumed, rows_this_run)
+                        progress.set_part(index)
                     stats = consume_records(
                         chain(head, islice(stream, args.checkpoint_every - 1)),
                         config,
                         writer,
                         rejections=rejections,
+                        progress=progress,
                     )
                 rows_this_run += writer.rows_written
                 parts.append(PartRecord(name=current_part.name, rows=writer.rows_written))

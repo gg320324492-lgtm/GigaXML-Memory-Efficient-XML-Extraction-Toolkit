@@ -39,7 +39,9 @@ from gigaxml.writers import RowWriter
 __all__ = [
     "DEFAULT_REJECTION_FILENAME",
     "DEFAULT_RUN_REPORT_FILENAME",
+    "PROGRESS_EVERY_DEFAULT",
     "QUARANTINABLE",
+    "ProgressReporter",
     "RejectionLog",
     "RunStats",
     "consume_records",
@@ -241,6 +243,145 @@ class RejectionLog:
         return False
 
 
+#: How often the cheap counter check runs. Calling the clock on every record would cost
+#: more than the progress it reports; a thousand records is far cheaper than one tick.
+_PROGRESS_CHECK_EVERY: Final = 1000
+
+#: Emit after this many further records, or after this many seconds, whichever comes
+#: first. The count trigger keeps the line rate low on a fast source; the time trigger
+#: keeps it non-zero on a slow one, where a count-only rule can stay silent for minutes.
+PROGRESS_EVERY_DEFAULT: Final = 20000
+_PROGRESS_INTERVAL_DEFAULT: Final = 1.0
+
+
+class ProgressReporter:
+    """Machine-readable progress, one JSON object per line, on a stream of your choosing.
+
+    **Write to stderr, never stdout.** ``extract`` prints its run summary to stdout, and
+    both a caller parsing it and a shell redirecting it depend on that being the only
+    thing there. Progress interleaved with it would break both.
+
+    **Lines are JSON, warnings are plain text**, so a consumer separates them by trying
+    to parse. That is why the existing warnings are left alone: wrapping them would
+    change what an existing caller sees.
+
+    **No total, no percentage.** The tool cannot know how many records a document holds
+    without reading it first, and a denominator it invented would be a number that looks
+    authoritative and is not. The consumer supplies it -- ``inspect`` reports an exact
+    count for each candidate -- so this reports only what it has actually done.
+
+    **``records`` is cumulative across a resume.** A resumed run reports the records it
+    skipped as well as the ones it processed, because the consumer's denominator is the
+    whole document and a progress bar that restarts at zero after a resume is worse than
+    no progress bar. ``elapsed_seconds`` is the opposite: it times this run only, so the
+    two are deliberately not the same baseline.
+
+    Args:
+        stream: where to write. Pass ``sys.stderr``.
+        every: emit once this many further records have gone by.
+        interval: emit once this many seconds have gone by, even if few records have.
+        records_offset: records already accounted for before this run -- a resume's
+            skipped prefix. Added to every count reported.
+        rows_offset: the same, for rows.
+    """
+
+    __slots__ = (
+        "_emitted",
+        "_every",
+        "_interval",
+        "_last_at",
+        "_last_records",
+        "_last_rows",
+        "_part",
+        "_records_offset",
+        "_rows_offset",
+        "_started",
+        "_stream",
+    )
+
+    def __init__(
+        self,
+        stream: IO[str],
+        *,
+        every: int = PROGRESS_EVERY_DEFAULT,
+        interval: float = _PROGRESS_INTERVAL_DEFAULT,
+        records_offset: int = 0,
+        rows_offset: int = 0,
+    ) -> None:
+        self._stream = stream
+        self._every = max(1, every)
+        self._interval = interval
+        self._records_offset = records_offset
+        self._rows_offset = rows_offset
+        self._part: int | None = None
+        self._started = time.perf_counter()
+        self._last_at = self._started
+        self._last_records = 0
+        self._last_rows = 0
+        self._emitted = False
+
+    def _emit(self, records: int, rows: int, rejected: int, part: int | None) -> None:
+        payload: dict[str, object] = {
+            "event": "progress",
+            "records": records,
+            "rows": rows,
+            "rejected": rejected,
+            "elapsed_seconds": round(time.perf_counter() - self._started, 3),
+        }
+        if part is not None:
+            payload["part"] = part
+        self._stream.write(json.dumps(payload) + "\n")
+        self._stream.flush()
+        self._last_records = records
+        self._last_rows = rows
+        self._last_at = time.perf_counter()
+        self._emitted = True
+
+    def set_offsets(self, records: int, rows: int) -> None:
+        """Move the cumulative baseline. A checkpointed run calls this before each part.
+
+        ``elapsed_seconds`` is deliberately not reset: it times the run, not the part.
+        """
+        self._records_offset = records
+        self._rows_offset = rows
+
+    def set_part(self, part: int | None) -> None:
+        """Set the part number that goes on every line, or ``None`` for a single file.
+
+        Only a checkpointed run has parts. Emitting ``part`` for a single-file run would
+        invite a consumer to group lines that are not grouped.
+        """
+        self._part = part
+
+    def tick(self, records: int, rows: int, rejected: int) -> None:
+        """Maybe emit. Call every :data:`_PROGRESS_CHECK_EVERY` records, not every one."""
+        cumulative = self._records_offset + records
+        # Either trigger is enough; both have to be quiet for this to be silent.
+        if (
+            cumulative - self._last_records < self._every
+            and time.perf_counter() - self._last_at < self._interval
+        ):
+            return
+        self._emit(cumulative, self._rows_offset + rows, rejected, self._part)
+
+    def finish(self, records: int, rows: int, rejected: int) -> None:
+        """Emit the closing line, whatever the outcome.
+
+        Called on success and on failure alike: a consumer that never receives a last
+        line cannot tell a finished run from a stalled one.
+
+        **Silent when the last tick already reported these numbers.** The guarantee is
+        that a consumer ends up holding a line with the final counts, not that a line is
+        written for its own sake -- and a checkpointed run ends a part every time it
+        writes one, so writing unconditionally here would double every line it produced.
+        """
+        cumulative = self._records_offset + records
+        rows = self._rows_offset + rows
+        if self._emitted and cumulative == self._last_records and rows == self._last_rows:
+            return
+        self._emit(cumulative, rows, rejected, self._part)
+
+
 def consume_records(
     reader: Iterable[etree._Element],
     config: ExtractionConfig,
@@ -248,6 +389,7 @@ def consume_records(
     *,
     limit: int | None = None,
     rejections: RejectionLog | None = None,
+    progress: ProgressReporter | None = None,
 ) -> RunStats:
     """Extract every record from ``reader`` into ``writer``.
 
@@ -263,6 +405,8 @@ def consume_records(
             :attr:`~gigaxml.config.ErrorPolicy.QUARANTINE` to have any effect; with
             ``None`` the policy degrades to aborting, because there is nowhere to
             record what was skipped.
+        progress: where to report progress. With ``None`` nothing is emitted and the
+            run behaves exactly as it did before this existed.
 
     Returns:
         What the pass did.
@@ -276,21 +420,47 @@ def consume_records(
     index = 0
     limit_hit = False
 
-    for record in reader:
-        if limit is not None and index >= limit:
-            # One record past the limit was yielded to establish that there is
-            # more; it is discarded rather than written.
-            limit_hit = True
-            break
-        index += 1
-        try:
-            values = extract_record(record, config.fields).values
-        except QUARANTINABLE as exc:
-            if config.on_error is not ErrorPolicy.QUARANTINE or rejections is None:
-                raise
-            rejections.reject(index, config.record_path, exc)
-            continue
-        writer.write(values)
+    try:
+        for record in reader:
+            if limit is not None and index >= limit:
+                # One record past the limit was yielded to establish that there is
+                # more; it is discarded rather than written.
+                limit_hit = True
+                break
+            index += 1
+            try:
+                values = extract_record(record, config.fields).values
+            except QUARANTINABLE as exc:
+                if config.on_error is not ErrorPolicy.QUARANTINE or rejections is None:
+                    raise
+                rejections.reject(index, config.record_path, exc)
+                continue
+            writer.write(values)
+
+            # Checked every so often rather than every record: reading the clock per record
+            # costs more than the progress is worth, and the reporter decides for itself
+            # whether enough has changed to be worth a line.
+            if progress is not None and index % _PROGRESS_CHECK_EVERY == 0:
+                progress.tick(
+                    index,
+                    writer.rows_accepted,
+                    0 if rejections is None else rejections.count,
+                )
+    finally:
+        # In a finally block on purpose. This is the only place that knows how far the
+        # pass got when it failed, and a consumer that never receives a closing line
+        # cannot tell a finished run from a stalled one.
+        if rejections is not None:
+            # Flushed first so the closing line's count is the real one: `count` follows
+            # the flush, and a last line that under-reports rejections is exactly the
+            # kind of number that looks authoritative and is wrong.
+            rejections.flush()
+        if progress is not None:
+            progress.finish(
+                index,
+                writer.rows_accepted,
+                0 if rejections is None else rejections.count,
+            )
 
     if rejections is not None:
         # The loop is over, so make the log durable and let the count mean what it
