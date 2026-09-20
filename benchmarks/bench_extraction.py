@@ -69,6 +69,17 @@ source, config_path, output, label = sys.argv[1:5]
 config = parse_config(json.loads(pathlib.Path(config_path).read_text(encoding="utf-8")))
 process = psutil.Process()
 
+# PeakWorkingSetSize is a maximum over the process's whole life, which is the quantity
+# being claimed. Reading the current RSS after the work instead would report a number that
+# is 10-14% lower and, more importantly, is not a peak at all -- the allocator may well
+# have given pages back. psutil exposes it on Windows; elsewhere there is no portable
+# equivalent, so it degrades to the current RSS, which is what tests/_mem.py does too.
+def _peak_rss_mb() -> float:
+    info = process.memory_info()
+    peak = getattr(info, "peak_wset", None)
+    return (peak if peak is not None else info.rss) / (1 << 20)
+
+
 def rss():
     return process.memory_info().rss / (1 << 20)
 
@@ -82,7 +93,7 @@ with writer:
     reader = StreamingRecordReader(source, config.record_path)
     stats = consume_records(reader, config, writer)
 elapsed = time.perf_counter() - started
-peak = rss()
+peak = _peak_rss_mb()
 print(json.dumps({
     "label": label,
     "baseline_mb": round(baseline, 3),

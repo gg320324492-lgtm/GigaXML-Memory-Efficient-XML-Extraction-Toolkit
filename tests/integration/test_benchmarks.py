@@ -112,7 +112,11 @@ def test_the_harness_still_produces_results_of_the_expected_shape(
         assert row["records"] > 0
         assert row["rows"] == row["records"]
         assert row["seconds"] > 0
-        assert row["peak_mb"] >= row["baseline_mb"] - 1.0  # peak cannot be below baseline
+        # The harness reads PeakWorkingSetSize, a maximum over the process's life, and
+        # reads the baseline before any of that work happens -- so peak >= baseline is an
+        # invariant rather than a tolerance. The slack that used to be here contradicted
+        # its own comment.
+        assert row["peak_mb"] >= row["baseline_mb"]
 
     labels = {row["label"] for row in results}
     assert labels == {f"{SMALL.stem} / 6 fields", f"{SMALL.stem} / 1 field"}

@@ -32,6 +32,17 @@ import psutil
 from gigaxml.inspect import inspect_document
 
 process = psutil.Process()
+# PeakWorkingSetSize is a maximum over the process's whole life, which is the quantity
+# being claimed. Reading the current RSS after the work instead would report a number that
+# is 10-14% lower and, more importantly, is not a peak at all -- the allocator may well
+# have given pages back. psutil exposes it on Windows; elsewhere there is no portable
+# equivalent, so it degrades to the current RSS, which is what tests/_mem.py does too.
+def _peak_rss_mb() -> float:
+    info = process.memory_info()
+    peak = getattr(info, "peak_wset", None)
+    return (peak if peak is not None else info.rss) / (1 << 20)
+
+
 def rss():
     return process.memory_info().rss / (1 << 20)
 
@@ -46,7 +57,7 @@ print(json.dumps({
     "seconds": round(elapsed, 3),
     "throughput_mib_s": round(size / elapsed, 1),
     "baseline_mb": round(baseline, 3),
-    "peak_mb": round(rss(), 3),
+    "peak_mb": round(_peak_rss_mb(), 3),
     "delta_mb": round(max(0.0, rss() - baseline), 3),
     "candidates": len(report.candidates),
 }))
