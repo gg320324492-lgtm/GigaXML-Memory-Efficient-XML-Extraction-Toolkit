@@ -39,6 +39,7 @@ from gigaxml.writers import RowWriter
 __all__ = [
     "DEFAULT_REJECTION_FILENAME",
     "DEFAULT_RUN_REPORT_FILENAME",
+    "PROGRESS_CHECK_EVERY",
     "PROGRESS_EVERY_DEFAULT",
     "QUARANTINABLE",
     "ProgressReporter",
@@ -245,7 +246,7 @@ class RejectionLog:
 
 #: How often the cheap counter check runs. Calling the clock on every record would cost
 #: more than the progress it reports; a thousand records is far cheaper than one tick.
-_PROGRESS_CHECK_EVERY: Final = 1000
+PROGRESS_CHECK_EVERY: Final = 1000
 
 #: Emit after this many further records, or after this many seconds, whichever comes
 #: first. The count trigger keeps the line rate low on a fast source; the time trigger
@@ -286,6 +287,7 @@ class ProgressReporter:
     """
 
     __slots__ = (
+        "_check_every",
         "_emitted",
         "_every",
         "_interval",
@@ -310,6 +312,10 @@ class ProgressReporter:
     ) -> None:
         self._stream = stream
         self._every = max(1, every)
+        # The check interval must be no coarser than the requested granularity, or a
+        # caller asking for a line every 100 records gets one every 1000 and is never
+        # told. The ceiling is what keeps the clock reads cheap on the default.
+        self._check_every = max(1, min(PROGRESS_CHECK_EVERY, self._every))
         self._interval = interval
         self._records_offset = records_offset
         self._rows_offset = rows_offset
@@ -345,6 +351,15 @@ class ProgressReporter:
         self._records_offset = records
         self._rows_offset = rows
 
+    @property
+    def check_every(self) -> int:
+        """How often the caller should offer a tick.
+
+        At most :data:`PROGRESS_CHECK_EVERY`, and never coarser than the granularity the
+        caller asked for.
+        """
+        return self._check_every
+
     def set_part(self, part: int | None) -> None:
         """Set the part number that goes on every line, or ``None`` for a single file.
 
@@ -354,7 +369,7 @@ class ProgressReporter:
         self._part = part
 
     def tick(self, records: int, rows: int, rejected: int) -> None:
-        """Maybe emit. Call every :data:`_PROGRESS_CHECK_EVERY` records, not every one."""
+        """Maybe emit. Call once every ``check_every`` records, not on every one."""
         cumulative = self._records_offset + records
         # Either trigger is enough; both have to be quiet for this to be silent.
         if (
@@ -440,7 +455,7 @@ def consume_records(
             # Checked every so often rather than every record: reading the clock per record
             # costs more than the progress is worth, and the reporter decides for itself
             # whether enough has changed to be worth a line.
-            if progress is not None and index % _PROGRESS_CHECK_EVERY == 0:
+            if progress is not None and index % progress.check_every == 0:
                 progress.tick(
                     index,
                     writer.rows_accepted,

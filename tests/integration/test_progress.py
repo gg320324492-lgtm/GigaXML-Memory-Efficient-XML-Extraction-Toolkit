@@ -24,6 +24,7 @@ import subprocess
 import pytest
 
 from gigaxml.cli import main
+from gigaxml.run import PROGRESS_EVERY_DEFAULT
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
@@ -261,11 +262,14 @@ def test_the_time_trigger_fires_when_records_do_not() -> None:
 
 
 def test_the_interval_is_not_consulted_on_every_record(tmp_path: pathlib.Path) -> None:
-    """The check is every _PROGRESS_CHECK_EVERY records, not every record.
+    """With the default granularity the check runs once per thousand records, not per record.
 
     Reading the clock per record costs more than the progress is worth. This counts the
-    ticks rather than timing them: the reporter must be asked far fewer times than there
-    are records.
+    ticks rather than timing them.
+
+    The granularity is left at the default on purpose. Asking for ``every=1`` would ask
+    for a check on every record, which is what the caller requested and not a defect --
+    the economy is in the default, not in refusing a fine request.
     """
     import io
 
@@ -280,7 +284,7 @@ def test_the_interval_is_not_consulted_on_every_record(tmp_path: pathlib.Path) -
             self.ticks += 1
             super().tick(*args, **kwargs)
 
-    reporter = Counting(io.StringIO(), every=1, interval=0.0)
+    reporter = Counting(io.StringIO(), every=PROGRESS_EVERY_DEFAULT, interval=0.0)
     from gigaxml.config import parse_config
     from gigaxml.parser.streaming import StreamingRecordReader
     from gigaxml.run import consume_records
@@ -293,7 +297,9 @@ def test_the_interval_is_not_consulted_on_every_record(tmp_path: pathlib.Path) -
             StreamingRecordReader(source, config.record_path), config, writer, progress=reporter
         )
 
+    # Once per thousand records, plus the tick the loop makes on its final pass.
     assert reporter.ticks <= 4000 // 1000 + 1, f"ticked {reporter.ticks} times for 4000 records"
+    assert reporter.ticks < 4000 / 100, "a thousand times fewer than the record count"
 
 
 # --- cumulative across a resume ---------------------------------------------
@@ -535,3 +541,63 @@ def test_a_larger_dataset_reports_a_rising_count(tmp_path: pathlib.Path) -> None
     counts = [line["records"] for line in progress_lines(completed.stderr)]
     assert counts == sorted(counts)
     assert counts[-1] == 29_120
+
+
+def test_the_check_interval_never_exceeds_the_requested_granularity() -> None:
+    """Asking for a line every 100 records must not silently deliver one every 1000.
+
+    The loop checks the clock once every `check_every` records rather than on every
+    record, because reading the clock per record costs more than the progress is worth.
+    That ceiling must not swallow a finer request: the parameter would then promise a
+    granularity the implementation never provides, and nothing would say so.
+    """
+    import io
+
+    from gigaxml.run import PROGRESS_CHECK_EVERY, ProgressReporter
+
+    for requested, expected in (
+        (50, 50),
+        (100, 100),
+        (PROGRESS_CHECK_EVERY, PROGRESS_CHECK_EVERY),
+        (PROGRESS_CHECK_EVERY * 10, PROGRESS_CHECK_EVERY),
+    ):
+        reporter = ProgressReporter(io.StringIO(), every=requested)
+        assert reporter.check_every == expected, (
+            f"asked for {requested}, checks every {reporter.check_every}"
+        )
+
+
+def test_a_fine_granularity_actually_produces_finer_lines(tmp_path: pathlib.Path) -> None:
+    """The property above is only worth having if it changes what comes out."""
+    source = small_dataset(tmp_path, 3000)
+    config = write_config(tmp_path)
+
+    coarse = run_cli(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(config),
+            "-o",
+            str(tmp_path / "a.csv"),
+            "--progress",
+            "--progress-every",
+            "1000",
+        ]
+    )
+    fine = run_cli(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(config),
+            "-o",
+            str(tmp_path / "b.csv"),
+            "--progress",
+            "--progress-every",
+            "100",
+        ]
+    )
+
+    assert fine.returncode == 0, fine.stderr
+    assert len(progress_lines(fine.stderr)) > len(progress_lines(coarse.stderr))
