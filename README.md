@@ -75,6 +75,21 @@ For a quick look at the data before committing to a full run:
 gigaxml sample big.xml -c config.yaml -n 20 -o first20.jsonl
 ```
 
+### What it looks like
+
+![gigaxml inspect reading the structure of a document](assets/inspect.gif)
+
+*Finding the records in a document that opens with a licence comment.*
+
+![gigaxml extract processing a four-gigabyte file](assets/extract-4g.gif)
+
+*Extracting 11.9 million records from 4.05 GiB.*
+
+> **Both of these are animations rendered from the tools' real output, not screen
+> recordings.** The text is what the tools actually printed and the timings are the
+> measured ones, but the frames are drawn rather than captured — this machine's sandbox
+> does not permit screen capture. Each frame carries the same note.
+
 ## Benchmarks
 
 Three generated datasets, two configs, measured in a subprocess with `psutil`:
@@ -139,7 +154,9 @@ every import so that two deltas are comparable.
   single text node over about 10 MB, or amplified by entities are refused rather than
   partially read. These are deliberate and there are no flags to turn them off.
 - **`--checkpoint-every` verifies the parts on disk before resuming**, which costs one
-  pass over the output: 660 ms for 24.9 MiB of CSV, negligible for Parquet.
+  pass over the output: **73 ms for 18.0 MiB of CSV** on a warm cache, negligible for
+  Parquet, whose row counts come from file metadata. It grows with the size of the
+  output, not the input. Measured by `benchmarks/bench_resident.py`.
 
 ## Development
 

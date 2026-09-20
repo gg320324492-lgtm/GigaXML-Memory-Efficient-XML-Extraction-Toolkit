@@ -1,17 +1,21 @@
-"""Where does the writer's resident memory come from, and what does ``--batch-size`` cost?
+"""Costs of the output machinery: resident footprint, batch size, and the resume check.
 
-Two questions left open at the end of an earlier phase, answered here:
+Three things that are paid for but not obvious from the outside:
 
 * **The resident footprint.** A run holds tens of megabytes before it has touched any
   data. This walks the import chain step by step so the answer is a measurement rather
   than a guess.
 * **``--batch-size`` sensitivity.** It is documented as a memory knob. This checks
   whether it is also a throughput knob, and where the knee is.
+* **The cost of ``verify_parts``.** A resume counts every part the manifest names before
+  it trusts the manifest, which is one pass over the output. That is a real cost paid on
+  every resume, and the README quotes it, so a script has to produce it.
 
 Usage::
 
     python benchmarks/bench_resident.py
     python benchmarks/bench_resident.py --dataset data/b1g.xml
+    python benchmarks/bench_resident.py --skip-sweep      # just the two cheaper sections
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 DATA = REPO / "data"
+GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
 
 SIX_FIELDS = {
     "record": "/catalog/products/product",
@@ -133,10 +138,84 @@ def run_child(script_body: str, work: pathlib.Path, args: list[str]) -> dict:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
+VERIFY = """
+import json, pathlib, subprocess, sys, time
+from gigaxml.checkpoint import Checkpoint, PartRecord, read_checkpoint, verify_parts
+
+parts_dir = pathlib.Path(sys.argv[1])
+manifest = read_checkpoint(parts_dir / "checkpoint.json")
+extension = manifest.parts[-1].name.rsplit(".", 1)[-1] if manifest.parts else "csv"
+total_mib = sum(
+    (parts_dir / part.name).stat().st_size for part in manifest.parts
+) / (1 << 20)
+
+started = time.perf_counter()
+problems = verify_parts(manifest, parts_dir, extension)
+elapsed = time.perf_counter() - started
+print(json.dumps({
+    "parts": len(manifest.parts),
+    "output_mib": round(total_mib, 3),
+    "verify_ms": round(elapsed * 1000, 1),
+    "problems": problems,
+}))
+"""
+
+
+def run_verify_check(source: pathlib.Path, work: pathlib.Path) -> dict:
+    """Build a checkpointed output, then time the check a resume would do."""
+    work.mkdir(parents=True, exist_ok=True)
+    config_path = work / "config.json"
+    config_path.write_text(json.dumps(SIX_FIELDS), encoding="utf-8")
+    parts = work / "parts"
+
+    every = max(1000, 290_900 // 12)  # about twelve parts, whatever the dataset size
+    built = subprocess.run(
+        [
+            str(GIGAXML),
+            "extract",
+            str(source),
+            "-c",
+            str(config_path),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            str(every),
+            "--format",
+            "csv",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO),
+    )
+    if built.returncode != 0:
+        return {"error": built.stderr.strip()[-300:]}
+
+    script = work / "verify.py"
+    script.write_text(VERIFY, encoding="utf-8")
+    measured = subprocess.run(
+        [sys.executable, str(script), str(parts)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO),
+    )
+    if measured.returncode != 0:
+        return {"error": measured.stderr.strip()[-300:]}
+    result = json.loads(measured.stdout.strip().splitlines()[-1])
+    result["checkpoint_every"] = every
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default=str(DATA / "b100m.xml"))
     parser.add_argument("--work", default=None)
+    parser.add_argument(
+        "--skip-sweep",
+        action="store_true",
+        help="skip the batch-size sweep, which is the slow section",
+    )
     args = parser.parse_args()
 
     source = pathlib.Path(args.dataset)
@@ -161,10 +240,14 @@ def main() -> int:
     for step, value in decomposition["steps"].items():
         print(f"  {step:<26} {value:>8.3f} MiB   (+{deltas[step]:>6.3f})")
 
-    print()
-    print(f"=== batch_size sensitivity: {source.name}, 6 fields ===")
     sensitivity = []
-    for batch_size in DEFAULT_BATCHES:
+    if args.skip_sweep:
+        print()
+        print("=== batch_size sensitivity: skipped (--skip-sweep) ===")
+    else:
+        print()
+        print(f"=== batch_size sensitivity: {source.name}, 6 fields ===")
+    for batch_size in [] if args.skip_sweep else DEFAULT_BATCHES:
         result = run_child(
             BATCH,
             work_root / f"batch-{batch_size}",
@@ -191,9 +274,30 @@ def main() -> int:
             f"{row['seconds']:>8.2f} {row['throughput_mib_s']:>7.1f}"
         )
 
+    print()
+    print(f"=== verify_parts cost: {source.name}, 6 fields, csv parts ===")
+    verify_result = run_verify_check(source, work_root / "verify")
+    if "error" in verify_result:
+        print("ERROR", verify_result["error"])
+    else:
+        print(json.dumps(verify_result))
+        rate = verify_result["output_mib"] / (verify_result["verify_ms"] / 1000)
+        print(
+            f"  {verify_result['parts']} parts / {verify_result['output_mib']:.3f} MiB "
+            f"-> {verify_result['verify_ms']:.1f} ms  ({rate:.0f} MiB/s)"
+        )
+        print("  This is paid on every resume, and grows with the output, not the input.")
+
     out = work_root / "results.json"
     out.write_text(
-        json.dumps({"decomposition": decomposition, "sensitivity": sensitivity}, indent=2),
+        json.dumps(
+            {
+                "decomposition": decomposition,
+                "sensitivity": sensitivity,
+                "verify_parts": verify_result,
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     print()
