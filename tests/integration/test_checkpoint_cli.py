@@ -1,0 +1,768 @@
+"""Integration tests: ``--checkpoint-every`` and ``--resume``.
+
+The two that matter most are here: a resumed run must produce exactly what a single
+uninterrupted run would have, and a resume against a different source or config must
+be refused rather than produce a plausible-looking wrong answer.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from gigaxml.checkpoint import CHECKPOINT_FILENAME
+from gigaxml.cli import main
+
+DOC = (
+    '<?xml version="1.0"?><root>'
+    + "".join(f"<item><id>{n}</id><name>N{n}</name></item>" for n in range(1, 13))
+    + "</root>"
+)
+FIELDS = {"id": {"path": "id", "type": "int"}, "name": {"path": "name"}}
+
+
+def write_config(tmp_path: Path, *, name: str = "config.yaml", fields: dict | None = None) -> Path:
+    path = tmp_path / name
+    path.write_text(
+        json.dumps({"record": "/root/item", "fields": fields or FIELDS}), encoding="utf-8"
+    )
+    return path
+
+
+def write_source(tmp_path: Path, text: str = DOC, *, name: str = "source.xml") -> Path:
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def read_manifest(parts_dir: Path) -> dict:
+    return json.loads((parts_dir / CHECKPOINT_FILENAME).read_text(encoding="utf-8"))
+
+
+def part_names(parts_dir: Path, extension: str) -> list[str]:
+    return sorted(path.name for path in parts_dir.glob(f"part-*.{extension}"))
+
+
+def concat(parts_dir: Path, extension: str) -> list[str]:
+    lines: list[str] = []
+    for path in sorted(parts_dir.glob(f"part-*.{extension}")):
+        lines.extend(path.read_text(encoding="utf-8").splitlines())
+    return lines
+
+
+# --- Gate 3: a checkpointed run --------------------------------------------
+
+
+def test_a_checkpointed_run_commits_parts_and_a_manifest(tmp_path: Path) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+
+    exit_code = main(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "5",
+            "--format",
+            "csv",
+        ]
+    )
+
+    assert exit_code == 0
+    assert part_names(parts, "csv") == [
+        "part-00000.csv",
+        "part-00001.csv",
+        "part-00002.csv",
+    ]
+    manifest = read_manifest(parts)
+    assert manifest["version"] == 1
+    assert manifest["complete"] is True
+    assert [part["rows"] for part in manifest["parts"]] == [5, 5, 2]
+    assert manifest["records_consumed"] == 12
+    assert sum(part["rows"] for part in manifest["parts"]) + manifest["rejected"] == 12
+    assert not list(parts.glob("*.tmp")), "no partial part is left behind"
+    assert (parts / "run-report.json").is_file(), "the summary lives with the parts"
+    assert not (tmp_path / "run-report.json").exists()
+
+
+def test_the_parts_concatenate_to_exactly_the_single_file_output(tmp_path: Path) -> None:
+    """The property that makes parts useful: cat them in order and you are done."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+
+    assert main(["extract", str(source), "-c", str(config), "-o", str(tmp_path / "one.csv")]) == 0
+    single = (tmp_path / "one.csv").read_text(encoding="utf-8").splitlines()
+
+    parts = tmp_path / "parts"
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "5",
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+
+    assert concat(parts, "csv") == single
+
+
+def test_only_the_first_csv_part_carries_the_header(tmp_path: Path) -> None:
+    """A header in every part would put header rows in the middle of a concatenation."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "5",
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+
+    assert (parts / "part-00000.csv").read_text(encoding="utf-8").startswith("id,name")
+    for name in ("part-00001.csv", "part-00002.csv"):
+        assert not (parts / name).read_text(encoding="utf-8").startswith("id,name")
+
+
+@pytest.mark.parametrize("extension", ["csv", "jsonl", "parquet"])
+def test_every_format_can_be_checkpointed(tmp_path: Path, extension: str) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / f"parts-{extension}"
+
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "5",
+                "--format",
+                extension,
+            ]
+        )
+        == 0
+    )
+
+    assert len(part_names(parts, extension)) == 3
+    assert not list(parts.glob("*.tmp"))
+
+    if extension == "parquet":
+        import pyarrow.parquet as parquet
+
+        rows = sum(
+            parquet.read_table(path).num_rows for path in sorted(parts.glob("part-*.parquet"))
+        )
+        assert rows == 12
+
+
+def test_parquet_is_the_default_part_format(tmp_path: Path) -> None:
+    """A directory has no extension to infer from, so there is a default."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "5",
+            ]
+        )
+        == 0
+    )
+
+    assert part_names(parts, "parquet")
+    assert read_manifest(parts)["complete"] is True
+
+
+# --- Gate 13: the default path is untouched --------------------------------
+
+
+def test_without_the_flag_nothing_changes(tmp_path: Path) -> None:
+    """No parts directory, no manifest, and a summary with the same shape as before."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    output = tmp_path / "out.csv"
+
+    assert main(["extract", str(source), "-c", str(config), "-o", str(output)]) == 0
+
+    assert output.is_file()
+    assert not (tmp_path / "parts").exists()
+    assert not list(tmp_path.glob("*.tmp"))
+
+    report = json.loads((tmp_path / "run-report.json").read_text(encoding="utf-8"))
+    assert "checkpoint" not in report, "the checkpoint block appears only when used"
+    assert set(report) == {
+        "status",
+        "source",
+        "output",
+        "format",
+        "record_path",
+        "fields",
+        "rows",
+        "rejected",
+        "rejected_path",
+        "error",
+        "output_complete",
+        "partial_path",
+        "elapsed_seconds",
+        "tool_version",
+    }
+
+
+def test_the_output_bytes_match_a_5b1_run(tmp_path: Path) -> None:
+    """Same input, same bytes -- the flag changes nothing about the output itself."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    first = tmp_path / "a.csv"
+    second = tmp_path / "b.jsonl"
+
+    assert main(["extract", str(source), "-c", str(config), "-o", str(first)]) == 0
+    assert main(["extract", str(source), "-c", str(config), "-o", str(second)]) == 0
+
+    assert first.read_text(encoding="utf-8").splitlines() == [
+        "id,name",
+        *[f"{n},N{n}" for n in range(1, 13)],
+    ]
+    assert len(second.read_text(encoding="utf-8").splitlines()) == 12
+
+
+# --- Gate 6: refusal --------------------------------------------------------
+
+
+def test_resuming_with_a_changed_config_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "100",
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+    before = sorted(path.name for path in parts.iterdir())
+
+    other = write_config(tmp_path, name="other.yaml", fields={"id": {"path": "id"}})
+    exit_code = main(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(other),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "100",
+            "--format",
+            "csv",
+            "--resume",
+        ]
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "cannot resume" in err
+    assert "config:" in err
+    assert "Nothing was written" in err
+    assert sorted(path.name for path in parts.iterdir()) == before
+
+
+def test_resuming_with_a_changed_source_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "100",
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+    before = sorted(path.name for path in parts.iterdir())
+
+    changed = write_source(tmp_path, DOC.replace("N1", "CHANGED"), name="changed.xml")
+    exit_code = main(
+        [
+            "extract",
+            str(changed),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "100",
+            "--format",
+            "csv",
+            "--resume",
+        ]
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "source content" in err
+    assert "sha256" in err
+    assert sorted(path.name for path in parts.iterdir()) == before
+
+
+def test_a_fresh_run_over_an_existing_checkpoint_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Writing over committed parts would throw away work that was already done."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+
+    assert main(args) == 1
+    err = capsys.readouterr().err
+    assert "already exists" in err
+    assert "--resume" in err
+
+
+# --- Gate 7: an already complete checkpoint --------------------------------
+
+
+def test_resuming_a_complete_checkpoint_does_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    before = {path.name: path.read_bytes() for path in parts.iterdir()}
+
+    assert main([*args, "--resume"]) == 0
+
+    assert "already complete" in capsys.readouterr().err
+    assert {path.name: path.read_bytes() for path in parts.iterdir()} == before
+
+
+# --- Gate 11: edges ---------------------------------------------------------
+
+
+def test_a_corrupt_manifest_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "100",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    (parts / CHECKPOINT_FILENAME).write_text("{ not json", encoding="utf-8")
+
+    assert main([*args, "--resume"]) == 1
+    assert "could not be read" in capsys.readouterr().err
+
+
+def test_a_manifest_with_a_missing_key_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "100",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    payload = read_manifest(parts)
+    del payload["parts"]
+    (parts / CHECKPOINT_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+    assert main([*args, "--resume"]) == 1
+    assert "missing" in capsys.readouterr().err
+
+
+def test_resume_without_a_manifest_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "empty"
+
+    exit_code = main(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "5",
+            "--format",
+            "csv",
+            "--resume",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "nothing to resume" in capsys.readouterr().err
+
+
+def test_resume_without_checkpoint_every_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+
+    exit_code = main(
+        ["extract", str(source), "-c", str(config), "-o", str(tmp_path / "p"), "--resume"]
+    )
+
+    assert exit_code == 1
+    assert "--checkpoint-every" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("bad", ["0", "-1"])
+def test_a_non_positive_part_size_is_refused(tmp_path: Path, bad: str) -> None:
+    """argparse rejects it before the run starts, the same way it rejects ``sample -n``."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+
+    with pytest.raises(SystemExit) as info:
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(tmp_path / "p"),
+                "--checkpoint-every",
+                bad,
+                "--format",
+                "csv",
+            ]
+        )
+
+    assert info.value.code == 2
+
+
+def test_a_file_where_the_parts_directory_should_be_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    existing = tmp_path / "already-a-file.csv"
+    existing.write_text("id,name\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(config),
+            "-o",
+            str(existing),
+            "--checkpoint-every",
+            "5",
+            "--format",
+            "csv",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "existing file" in capsys.readouterr().err
+    assert existing.read_text(encoding="utf-8") == "id,name\n"
+
+
+# --- sample does not support it --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--checkpoint-every", "5"], ["--resume"]],
+)
+def test_sample_refuses_the_checkpoint_flags(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: list[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+
+    exit_code = main(
+        ["sample", str(source), "-c", str(config), "-n", "2", "-o", str(tmp_path / "s.csv"), *extra]
+    )
+
+    assert exit_code == 1
+    assert "sample does not support" in capsys.readouterr().err
+
+
+# --- Gate 9: the rejection log is appended on resume -----------------------
+
+
+def test_the_rejection_log_is_appended_not_truncated(tmp_path: Path) -> None:
+    """Rejections from before the interruption are still real."""
+    body = (
+        (
+            '<?xml version="1.0"?><root>'
+            + "".join(f"<item><id>{n}</id><name>N{n}</name></item>" for n in range(1, 13))
+            + "</root>"
+        )
+        .replace("<id>3</id>", "<id>bad</id>")
+        .replace("<id>9</id>", "<id>worse</id>")
+    )
+    source = write_source(tmp_path, body)
+    config = write_config(tmp_path)
+    config.write_text(
+        json.dumps({"record": "/root/item", "on_error": "quarantine", "fields": FIELDS}),
+        encoding="utf-8",
+    )
+    parts = tmp_path / "parts"
+
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "5",
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+    first = (parts / "rejected.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(first) == 2
+
+    # Resume with the same source and config: the run is complete, so nothing is
+    # rewritten -- but the log must still hold both rejections.
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "5",
+                "--format",
+                "csv",
+                "--resume",
+            ]
+        )
+        == 0
+    )
+    assert (parts / "rejected.jsonl").read_text(encoding="utf-8").splitlines() == first
+
+
+# --- Gates 4 and 5: interruption, then resume ------------------------------
+
+
+def test_a_killed_run_keeps_committed_parts_and_resumes_to_the_same_result(
+    s100_path: Path, tmp_path: Path
+) -> None:
+    """The headline claim, tested the way it will actually be used.
+
+    A 100MB run is started, killed after two parts are committed, and then resumed.
+    The concatenated result must equal what a single uninterrupted run produces.
+    """
+    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
+    if not script.exists():  # pragma: no cover - depends on the environment
+        pytest.skip(f"console script not installed at {script}")
+
+    config = tmp_path / "big.yaml"
+    config.write_text(
+        json.dumps(
+            {
+                "record": "/catalog/products/product",
+                "fields": {"product_id": {"path": "@id"}, "name": {"path": "name"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    whole = tmp_path / "whole.csv"
+    parts = tmp_path / "parts"
+    every = "20000"
+
+    completed = subprocess.run(
+        [str(script), "extract", str(s100_path), "-c", str(config), "-o", str(whole)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    expected = whole.read_text(encoding="utf-8").splitlines()
+
+    process = subprocess.Popen(
+        [
+            str(script),
+            "extract",
+            str(s100_path),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            every,
+            "--format",
+            "csv",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if len(part_names(parts, "csv")) >= 2:
+                break
+            time.sleep(0.05)
+        assert len(part_names(parts, "csv")) >= 2, "the run never committed two parts"
+        assert process.poll() is None, "the run finished before it could be killed"
+        time.sleep(0.3)
+    finally:
+        process.kill()
+        process.wait()
+
+    manifest = read_manifest(parts)
+    assert manifest["complete"] is False, "it was killed, so it cannot be complete"
+    assert manifest["records_consumed"] > 0
+    committed = part_names(parts, "csv")
+    assert len(committed) == len(manifest["parts"]), "the manifest names exactly the parts on disk"
+    for name in committed:
+        assert (parts / name).is_file(), "every committed part is readable"
+
+    # Resume.
+    resumed = subprocess.run(
+        [
+            str(script),
+            "extract",
+            str(s100_path),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            every,
+            "--format",
+            "csv",
+            "--resume",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resumed.returncode == 0, resumed.stderr
+
+    final = read_manifest(parts)
+    assert final["complete"] is True
+    assert final["records_consumed"] == 291_200
+    assert sum(part["rows"] for part in final["parts"]) == 291_200
+
+    combined = concat(parts, "csv")
+    assert len(combined) == len(expected), "the same number of lines as one uninterrupted run"
+    assert combined == expected, "and the same lines, in the same order"

@@ -119,15 +119,29 @@ class RejectionLog:
 
     Args:
         path: where to write. The file is created lazily, on the first rejection.
+        append: continue an existing log instead of replacing it. A resumed run uses
+            this: the rejections from before the interruption are still real, and
+            truncating them would lose the only record of what was skipped.
+        initial: rejections already in the file. Needed because :attr:`count` means
+            "lines in the file", and on an appended log that starts above zero.
     """
 
-    __slots__ = ("_created", "_durable", "_handle", "_path", "_pending", "_pending_bytes")
+    __slots__ = (
+        "_created",
+        "_durable",
+        "_handle",
+        "_mode",
+        "_path",
+        "_pending",
+        "_pending_bytes",
+    )
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, append: bool = False, initial: int = 0) -> None:
         self._path = Path(path)
         self._handle: IO[str] | None = None
         self._created = False
-        self._durable = 0
+        self._mode = "a" if append else "w"
+        self._durable = initial
         self._pending = 0
         self._pending_bytes = 0
 
@@ -148,7 +162,7 @@ class RejectionLog:
 
     @property
     def count(self) -> int:
-        """How many rejections are **on disk**.
+        """How many rejections are **on disk**, including any appended ones.
 
         Deliberately not "how many times :meth:`reject` was called": after a crash the
         two differ, and the number a caller can act on is the one that matches the
@@ -171,7 +185,9 @@ class RejectionLog:
             error: the error that rejected it.
         """
         if not self._created:
-            self._handle = self._path.open("w", encoding="utf-8", buffering=_REJECTION_BUFFER_BYTES)
+            self._handle = self._path.open(
+                self._mode, encoding="utf-8", buffering=_REJECTION_BUFFER_BYTES
+            )
             self._created = True
         payload = json.dumps(self._entry(index, record_path, error), ensure_ascii=False) + "\n"
         self._handle.write(payload)

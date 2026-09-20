@@ -7,13 +7,26 @@ import json
 import sys
 import time
 from collections.abc import Callable, Sequence
+from itertools import chain, islice
 from pathlib import Path
 
 from lxml import etree
 
 from gigaxml import __version__
+from gigaxml.checkpoint import (
+    CHECKPOINT_FILENAME,
+    DEFAULT_PART_FORMAT,
+    Checkpoint,
+    PartRecord,
+    config_identity,
+    part_name,
+    read_checkpoint,
+    source_identity,
+    validate_resume,
+    write_checkpoint,
+)
 from gigaxml.config import ExtractionConfig, load_config
-from gigaxml.errors import GigaXMLError
+from gigaxml.errors import CheckpointError, GigaXMLError
 from gigaxml.generate import generate_dataset
 from gigaxml.inspect import (
     DEFAULT_MAX_DEPTH,
@@ -106,6 +119,33 @@ def build_parser() -> argparse.ArgumentParser:
             f"linear in this: about 0.95 KB per buffered row for a 6-field config, so "
             f"{DEFAULT_BATCH_SIZE} rows is ~5 MiB while 100000 is ~90 MiB. A value above "
             f"{BATCH_SIZE_WARN_THRESHOLD} warns."
+        ),
+    )
+    extract.add_argument(
+        "--checkpoint-every",
+        type=_positive_int,
+        metavar="N",
+        default=None,
+        help=(
+            "Commit the output in parts of N records each, into the directory given "
+            "by --output, so an interrupted run can be continued with --resume. "
+            "N decides how much work an interruption costs you, NOT how much memory "
+            "the run uses: parts are written a batch at a time and never accumulate. "
+            "Each part is written atomically, so a part is either complete or absent."
+        ),
+    )
+    extract.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Continue a checkpointed run instead of starting a new one. This does NOT "
+            "seek: XML cannot be re-entered mid-stream, so the source is parsed again "
+            "from the beginning and the records already accounted for are skipped. "
+            "Skipping is not free -- measured on 403 MB / 1,164,800 records, skipping "
+            "everything costs 8.7s against 17.1s to extract and write it, so resuming "
+            "saves roughly half of what you had already done: about 49%% of the total "
+            "if you were 90%% through, about 5%% if you were 10%% through. Refused "
+            "outright if the source or the config has changed since the checkpoint."
         ),
     )
     extract.add_argument(
@@ -223,6 +263,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Rows per write batch (default {DEFAULT_BATCH_SIZE}).",
     )
     sample.add_argument(
+        "--checkpoint-every",
+        type=_positive_int,
+        metavar="N",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    sample.add_argument(
+        "--resume",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    sample.add_argument(
         "--report",
         metavar="PATH",
         default=None,
@@ -267,10 +319,20 @@ def _handle_extract(args: argparse.Namespace) -> int:
     _warn_on_format_mismatch(args.output, args.format)
     _warn_on_batch_size(args.batch_size)
 
-    report_path = _run_report_path(args)
+    checkpointing = args.checkpoint_every is not None
+    report_path = _run_report_path(args, checkpoint=checkpointing)
     started = time.perf_counter()
+
+    if args.resume and args.checkpoint_every is None:
+        raise CheckpointError(
+            "--resume needs --checkpoint-every too: the part size is a parameter of "
+            "the run, and the checkpoint does not record it"
+        )
+    if checkpointing:
+        return _extract_checkpointed(args, config, report_path, started)
+
     writer: RowWriter | None = None
-    rejections = _rejection_log(args.output)
+    rejections = _rejection_log(Path(args.output).parent)
 
     try:
         # Creating the writer is inside the try on purpose: a run that cannot even
@@ -360,6 +422,13 @@ def _handle_sample(args: argparse.Namespace) -> int:
     the same thing here. It also writes the same run report, for the same reason: a
     ``sample`` that aborts leaves the same indistinguishable half-file.
     """
+    if args.checkpoint_every is not None or args.resume:
+        raise CheckpointError(
+            "sample does not support --checkpoint-every or --resume. A sample is a "
+            "quick look at the front of a document, not a run worth resuming; use "
+            "extract for work that needs to survive an interruption."
+        )
+
     config = load_config(args.config)
     _warn_on_format_mismatch(args.output, args.format)
     _warn_on_batch_size(args.batch_size)
@@ -367,7 +436,7 @@ def _handle_sample(args: argparse.Namespace) -> int:
     report_path = _run_report_path(args)
     started = time.perf_counter()
     writer: RowWriter | None = None
-    rejections = _rejection_log(args.output)
+    rejections = _rejection_log(Path(args.output).parent)
 
     try:
         writer = create_writer(
@@ -412,24 +481,273 @@ def _handle_sample(args: argparse.Namespace) -> int:
     return 0
 
 
-def _rejection_log(output: str | Path) -> RejectionLog:
-    """The rejection log, which sits beside the output file."""
-    return RejectionLog(Path(output).parent / DEFAULT_REJECTION_FILENAME)
+def _rejection_log(directory: Path, *, append: bool = False, initial: int = 0) -> RejectionLog:
+    """The rejection log for a run, which lives beside the output it belongs to."""
+    return RejectionLog(directory / DEFAULT_REJECTION_FILENAME, append=append, initial=initial)
 
 
-def _run_report_path(args: argparse.Namespace) -> Path:
-    """Where the run report goes: ``--report`` if given, else beside the output."""
+def _run_report_path(args: argparse.Namespace, *, checkpoint: bool = False) -> Path:
+    """Where the run summary goes: ``--report`` if given, else with the output.
+
+    "With the output" means the output's own directory, which differs by mode only
+    because ``--output`` means different things: a file in the ordinary case, and the
+    parts directory when checkpointing. In the second case the summary belongs inside
+    that directory, alongside the manifest and the rejection log, so the directory is
+    a complete account of the run rather than one file short of it.
+    """
     if args.report is not None:
         return Path(args.report)
-    return Path(args.output).parent / DEFAULT_RUN_REPORT_FILENAME
+    output = Path(args.output)
+    if checkpoint:
+        return output / DEFAULT_RUN_REPORT_FILENAME
+    return output.parent / DEFAULT_RUN_REPORT_FILENAME
+
+
+def _extract_checkpointed(
+    args: argparse.Namespace,
+    config: ExtractionConfig,
+    report_path: Path,
+    started: float,
+) -> int:
+    """Handle ``extract --checkpoint-every``, optionally continuing a run.
+
+    The output is a directory of parts plus a manifest. Each part is written by the
+    same atomic writer as a single-file run, so a part is complete or absent; the
+    manifest is rewritten atomically after each part is committed, so it never
+    describes a part that is not there.
+    """
+    parts_dir = Path(args.output)
+    if parts_dir.is_file():
+        raise CheckpointError(
+            f"--checkpoint-every needs --output to be a directory, but "
+            f"{str(parts_dir)!r} is an existing file"
+        )
+    extension = args.format or DEFAULT_PART_FORMAT
+    manifest = parts_dir / CHECKPOINT_FILENAME
+
+    try:
+        parts_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise CheckpointError(
+            f"cannot create the parts directory {str(parts_dir)!r}: {exc}"
+        ) from exc
+
+    resumed_from = 0
+    parts: list[PartRecord] = []
+    index = 0
+    if args.resume:
+        checkpoint = read_checkpoint(manifest)
+        validate_resume(checkpoint, args.source, config)
+        resumed_from = checkpoint.records_consumed
+        parts = list(checkpoint.parts)
+        index = len(parts)
+    elif manifest.is_file():
+        raise CheckpointError(
+            f"a checkpoint already exists at {str(manifest)!r}. Use --resume to "
+            f"continue that run, or remove the directory to start a fresh one -- "
+            f"writing over it would throw away work that has already been committed."
+        )
+
+    if args.resume and read_checkpoint(manifest).complete:
+        print(
+            f"the checkpoint at {str(manifest)!r} is already complete; nothing to do",
+            file=sys.stderr,
+        )
+        _write_report_safely(
+            report_path,
+            args=args,
+            config=config,
+            writer=None,
+            rejections=_rejection_log(parts_dir),
+            error=None,
+            started=started,
+            partial=None,
+            checkpoint_info=_checkpoint_info(
+                args, parts_dir, resumed_from, resumed_from, parts, 0, True
+            ),
+        )
+        return 0
+
+    # Hashed once: the source does not change during a run, and hashing 403 MB costs
+    # a quarter of a second -- worth doing once, not once per part.
+    identity = source_identity(args.source)
+    config_hash = config_identity(config)
+
+    rejections = _rejection_log(
+        parts_dir,
+        append=bool(args.resume),
+        initial=read_checkpoint(manifest).rejected if args.resume else 0,
+    )
+    writer: RowWriter | None = None
+    current_part: Path | None = None
+    records_consumed = resumed_from
+    complete = False
+    rows_this_run = 0
+
+    try:
+        reader = StreamingRecordReader(args.source, config.record_path, config.namespaces or None)
+        # Hold ONE iterator. StreamingRecordReader.__iter__ is a generator function,
+        # so every call to iter() starts a fresh parse from the beginning -- taking a
+        # slice of the reader repeatedly would re-read the document from the top each
+        # time and never reach the end.
+        stream = iter(reader)
+        if resumed_from:
+            # The fast-forward: parse and discard. No extraction, no writing, and
+            # nothing retained, so memory stays as flat as the read itself.
+            for _ in islice(stream, resumed_from):
+                pass
+
+        with rejections:
+            while True:
+                # Take one record first, so an exhausted source ends the loop without
+                # a writer ever being created -- an empty part file would be a lie
+                # about work that was done.
+                head = list(islice(stream, 1))
+                if not head:
+                    complete = True
+                    break
+
+                current_part = parts_dir / part_name(index, extension)
+                writer = create_writer(
+                    current_part,
+                    config.fields,
+                    batch_size=args.batch_size,
+                    output_format=extension,
+                    # Only the first part carries a CSV header, so concatenating the
+                    # parts in order yields exactly the single-file output.
+                    header=index == 0,
+                )
+                with writer:
+                    stats = consume_records(
+                        chain(head, islice(stream, args.checkpoint_every - 1)),
+                        config,
+                        writer,
+                        rejections=rejections,
+                    )
+                rows_this_run += writer.rows_written
+                parts.append(PartRecord(name=current_part.name, rows=writer.rows_written))
+                records_consumed += stats.records_processed
+                index += 1
+
+                if stats.records_processed < args.checkpoint_every:
+                    complete = True
+                write_checkpoint(
+                    manifest,
+                    Checkpoint(
+                        source=identity,
+                        config=config_hash,
+                        records_consumed=records_consumed,
+                        rejected=rejections.count,
+                        parts=tuple(parts),
+                        complete=complete,
+                    ),
+                )
+                current_part = None
+                if complete:
+                    break
+    except (GigaXMLError, OSError, etree.XMLSyntaxError) as exc:
+        _write_report_safely(
+            report_path,
+            args=args,
+            config=config,
+            writer=writer,
+            rejections=rejections,
+            error=exc,
+            started=started,
+            partial=_part_partial(current_part),
+            checkpoint_info=_checkpoint_info(
+                args,
+                parts_dir,
+                resumed_from,
+                records_consumed,
+                parts,
+                rows_this_run,
+                complete,
+            ),
+        )
+        raise
+
+    _write_report_safely(
+        report_path,
+        args=args,
+        config=config,
+        writer=writer,
+        rejections=rejections,
+        error=None,
+        started=started,
+        partial=None,
+        checkpoint_info=_checkpoint_info(
+            args,
+            parts_dir,
+            resumed_from,
+            records_consumed,
+            parts,
+            rows_this_run,
+            complete,
+        ),
+    )
+    print(
+        json.dumps(
+            {
+                "output": str(parts_dir),
+                "format": extension,
+                "parts": len(parts),
+                "rows_this_run": rows_this_run,
+                "records_consumed": records_consumed,
+                "rejected": rejections.count,
+                "resumed_from": resumed_from or None,
+                "complete": complete,
+            },
+            indent=2,
+        )
+    )
+    if rejections.count:
+        print(
+            f"warning: {rejections.count:,} record(s) rejected; see {rejections.written_path}",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _part_partial(part: Path | None) -> Path | None:
+    """The partial file of a part that was being written when a run failed."""
+    if part is None:
+        return None
+    return part.with_name(part.name + PARTIAL_SUFFIX)
+
+
+def _checkpoint_info(
+    args: argparse.Namespace,
+    parts_dir: Path,
+    resumed_from: int,
+    records_consumed: int,
+    parts: Sequence[PartRecord],
+    rows_this_run: int,
+    complete: bool,
+) -> dict[str, object]:
+    """The checkpoint block of the run summary.
+
+    ``records_consumed`` is cumulative and comes from the loop, which is the only
+    place that knows how many records were rejected as well as written -- deriving it
+    from the part row counts would silently drop the rejected ones.
+    """
+    return {
+        "format": args.format or DEFAULT_PART_FORMAT,
+        "directory": str(parts_dir),
+        "resumed_from": resumed_from if args.resume else None,
+        "records_consumed": records_consumed,
+        "rows_this_run": rows_this_run,
+        "parts": [part.to_dict() for part in parts],
+        "complete": complete,
+    }
 
 
 def _partial_output_path(output: str | Path) -> Path:
     """Where a run writes before moving the file into place.
 
     Derived from the target rather than asked of the writer, so it still works when
-    the run failed before a writer existed -- an unreadable config, say -- and the
-    summary still has something to say about partial output.
+    the run failed before a writer existed -- an output directory that does not exist,
+    say -- and the summary still has something to say about partial output.
     """
     target = Path(output)
     return target.with_name(target.name + PARTIAL_SUFFIX)
@@ -442,6 +760,9 @@ def _run_report_payload(
     rejections: RejectionLog,
     error: BaseException | None,
     started: float,
+    *,
+    partial: Path | None = None,
+    checkpoint_info: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """The run summary, which is written whether the run finished or not.
 
@@ -451,27 +772,49 @@ def _run_report_payload(
     target itself keeps whatever it had -- so a caller reading this can tell a
     complete output from a partial one without parsing stderr, and can find the
     partial output if it wants it.
+
+    In checkpoint mode the meaning shifts in one place: ``output_complete`` follows
+    the *manifest's* ``complete`` rather than the last part's writer. Every committed
+    part is complete by construction, so the writer's flag would say "yes" for a run
+    that stopped halfway -- which is exactly the confusion this field exists to
+    prevent.
+
+    The checkpoint block is added only when there is one, so a run that does not use
+    the feature produces the same summary bytes it did before it existed.
     """
     written_path = rejections.written_path
-    partial = _partial_output_path(args.output)
-    return {
+    if checkpoint_info is not None:
+        output_format = str(checkpoint_info["format"])
+        complete = bool(checkpoint_info["complete"]) and error is None
+        partial_path = partial
+    else:
+        output_format = (
+            args.format if args.format is not None else WriterFormat.from_path(args.output).value
+        )
+        complete = writer is not None and writer.published
+        partial_path = _partial_output_path(args.output)
+
+    payload: dict[str, object] = {
         "status": "failed" if error is not None else "ok",
         "source": str(args.source),
         "output": str(args.output),
-        "format": args.format
-        if args.format is not None
-        else WriterFormat.from_path(args.output).value,
+        "format": output_format,
         "record_path": config.record_path,
         "fields": list(config.field_names),
         "rows": 0 if writer is None else writer.rows_written,
         "rejected": rejections.count,
         "rejected_path": None if written_path is None else str(written_path),
         "error": None if error is None else {"type": type(error).__name__, "message": str(error)},
-        "output_complete": writer is not None and writer.published,
-        "partial_path": str(partial) if partial.exists() else None,
+        "output_complete": complete,
+        "partial_path": (
+            str(partial_path) if partial_path is not None and partial_path.is_file() else None
+        ),
         "elapsed_seconds": elapsed_since(started),
         "tool_version": __version__,
     }
+    if checkpoint_info is not None:
+        payload["checkpoint"] = checkpoint_info
+    return payload
 
 
 def _write_run_report(
@@ -483,9 +826,20 @@ def _write_run_report(
     rejections: RejectionLog,
     error: BaseException | None,
     started: float,
+    partial: Path | None = None,
+    checkpoint_info: dict[str, object] | None = None,
 ) -> None:
     """Write the run summary. Raises ``OSError`` if the path cannot be written."""
-    payload = _run_report_payload(args, config, writer, rejections, error, started)
+    payload = _run_report_payload(
+        args,
+        config,
+        writer,
+        rejections,
+        error,
+        started,
+        partial=partial,
+        checkpoint_info=checkpoint_info,
+    )
     report_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

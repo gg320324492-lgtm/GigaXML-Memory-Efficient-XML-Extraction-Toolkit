@@ -185,6 +185,9 @@ class RowWriter(ABC):
         fields: the configured fields, in output order. They decide the CSV header,
             the JSONL key order and the Parquet schema.
         batch_size: rows per flush. Must be positive.
+        header: whether a CSV writer writes its header row. Only CSV has one, and only
+            the first part of a checkpointed run wants it -- see
+            :func:`create_writer`.
 
     Raises:
         WriterError: ``batch_size`` is not positive, or the output cannot be opened.
@@ -196,6 +199,7 @@ class RowWriter(ABC):
         fields: Sequence[FieldConfig],
         *,
         batch_size: int = DEFAULT_BATCH_SIZE,
+        header: bool = True,
     ) -> None:
         if batch_size < 1:
             raise WriterError(f"batch_size must be at least 1, got {batch_size!r}")
@@ -209,6 +213,7 @@ class RowWriter(ABC):
         self._field_names = tuple(field.name for field in self._fields)
         self._field_name_set = frozenset(self._field_names)
         self._batch_size = batch_size
+        self._header = header
         self._batch: list[Mapping[str, object]] = []
         self._rows_written = 0
         self._closed = False
@@ -343,7 +348,7 @@ class RowWriter(ABC):
         is not touched, so whatever was there before the run is still there after it.
 
         Idempotent, and safe to call on a writer that already failed. Final, too: a
-        later :meth: is a no-op, because publishing after an abandonment is the
+        later :meth:`close` is a no-op, because publishing after an abandonment is the
         one thing this must not do.
         """
         if self._closed:
@@ -437,7 +442,8 @@ class CsvWriter(_TextWriter):
     def _open(self) -> None:
         super()._open()
         self._writer = csv.writer(self._handle)
-        self._writer.writerow(self._field_names)
+        if self._header:
+            self._writer.writerow(self._field_names)
 
     def _write_batch(self, batch: Sequence[Mapping[str, object]]) -> None:
         self._writer.writerows(
@@ -571,6 +577,7 @@ def create_writer(
     *,
     batch_size: int = DEFAULT_BATCH_SIZE,
     output_format: WriterFormat | str | None = None,
+    header: bool = True,
 ) -> RowWriter:
     """Build the writer for ``path``, inferring the format from its extension.
 
@@ -581,6 +588,10 @@ def create_writer(
             trades against resident memory.
         output_format: force a format instead of inferring it from the extension.
             Accepts a :class:`WriterFormat` or its name.
+        header: whether a CSV writer writes its header row. Parts of a checkpointed
+            run are meant to be concatenated in order, and a header repeated in every
+            part would put header rows in the middle of the data -- so only the first
+            part asks for one. Ignored by JSONL and Parquet, which have no header.
 
     Returns:
         A writer that is already open; call :meth:`RowWriter.close` or use it as a
@@ -601,7 +612,7 @@ def create_writer(
         WriterFormat.JSONL: JsonlWriter,
         WriterFormat.PARQUET: ParquetWriter,
     }
-    return writers[writer_format](path, fields, batch_size=batch_size)
+    return writers[writer_format](path, fields, batch_size=batch_size, header=header)
 
 
 def batch_size_warning(batch_size: int) -> str | None:

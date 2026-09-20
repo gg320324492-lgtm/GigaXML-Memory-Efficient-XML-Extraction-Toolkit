@@ -18,6 +18,7 @@ module is also runnable directly:
     python -m tests._mem --pipeline data/s400.xml out.parquet
     python -m tests._mem --inspect data/s400.xml
     python -m tests._mem --reject data/s400.xml <work-dir>
+    python -m tests._mem --fastforward data/s400.xml <skip>
 """
 
 from __future__ import annotations
@@ -39,10 +40,12 @@ import psutil
 __all__ = [
     "REPO_ROOT",
     "empty_baseline_mb",
+    "fastforward_in_subprocess",
     "inspect_in_subprocess",
     "measure_peak_rss_mb",
     "peak_rss_mb",
     "pipeline_in_subprocess",
+    "plain_extract_in_subprocess",
     "rejections_in_subprocess",
     "rss_mb",
     "scan_in_subprocess",
@@ -242,6 +245,96 @@ def _run_inspect(xml_path: str) -> dict[str, float | int]:
     }
 
 
+def _run_fast_forward(xml_path: str, skip: str) -> dict[str, float | int]:
+    """Parse and discard ``skip`` records, touching nothing else.
+
+    This is what ``--resume`` does before it starts working. It must not accumulate:
+    the whole point of a streaming fast-forward is that skipping a million records
+    costs time and no memory.
+    """
+    from gigaxml.config import parse_config
+    from gigaxml.parser.streaming import StreamingRecordReader
+
+    count = int(skip)
+    config = parse_config({"record": _PIPELINE_RECORD_PATH, "fields": {"id": {"path": "@id"}}})
+
+    baseline = rss_mb()
+    started = time.perf_counter()
+    stream = StreamingRecordReader(xml_path, config.record_path)
+    seen = 0
+    for _ in stream:
+        seen += 1
+        if seen >= count:
+            break
+    elapsed = time.perf_counter() - started
+    peak = peak_rss_mb()
+    return {
+        "baseline_mb": round(baseline, 3),
+        "peak_mb": round(peak, 3),
+        "delta_mb": round(max(0.0, peak - baseline), 3),
+        "skipped": seen,
+        "seconds": round(elapsed, 4),
+        "input_mb": round(Path(xml_path).stat().st_size / _MB, 3),
+        "records_per_sec": round(seen / elapsed, 1) if elapsed > 0 else 0.0,
+    }
+
+
+def _run_plain_extract(xml_path: str, work_dir: str) -> dict[str, float | int]:
+    """Extract every record with the same config the fast-forward uses.
+
+    The comparison Gate 2 asks for is "skipping costs no more memory than processing",
+    and that is only meaningful if both measurements use the same config -- a wider
+    config costs more per record, which would flatter the fast-forward.
+    """
+    from gigaxml.config import parse_config
+    from gigaxml.parser.streaming import StreamingRecordReader
+    from gigaxml.run import consume_records
+    from gigaxml.writers import create_writer
+
+    config = parse_config({"record": _PIPELINE_RECORD_PATH, "fields": {"id": {"path": "@id"}}})
+    work = Path(work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+
+    baseline = rss_mb()
+    started = time.perf_counter()
+    writer = create_writer(work / "out.csv", config.fields)
+    with writer:
+        reader = StreamingRecordReader(xml_path, config.record_path)
+        stats = consume_records(reader, config, writer)
+    elapsed = time.perf_counter() - started
+    peak = peak_rss_mb()
+    return {
+        "baseline_mb": round(baseline, 3),
+        "peak_mb": round(peak, 3),
+        "delta_mb": round(max(0.0, peak - baseline), 3),
+        "records": stats.records_processed,
+        "rows": writer.rows_written,
+        "seconds": round(elapsed, 4),
+        "input_mb": round(Path(xml_path).stat().st_size / _MB, 3),
+    }
+
+
+def plain_extract_in_subprocess(
+    xml_path: str | Path,
+    work_dir: str | Path,
+) -> dict[str, float | int]:
+    """Measure a full extraction with the fast-forward's config, in a fresh interpreter."""
+    return _subprocess_profile(["--plain-extract", str(xml_path), str(work_dir)])
+
+
+def fastforward_in_subprocess(xml_path: str | Path, skip: int) -> dict[str, float | int]:
+    """Measure a fast-forward in a fresh interpreter.
+
+    Args:
+        xml_path: dataset to walk.
+        skip: how many records to read and discard.
+
+    Raises:
+        RuntimeError: the measurement subprocess failed.
+    """
+    return _subprocess_profile(["--fastforward", str(xml_path), str(skip)])
+
+
 def _run_rejections(xml_path: str, work_dir: str) -> dict[str, float | int]:
     """Run a quarantine extraction in which *every* record is rejected.
 
@@ -426,13 +519,20 @@ def _main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[1] == "--reject":
         print(json.dumps(_run_rejections(argv[2], argv[3])))
         return 0
+    if len(argv) == 4 and argv[1] == "--fastforward":
+        print(json.dumps(_run_fast_forward(argv[2], argv[3])))
+        return 0
+    if len(argv) == 4 and argv[1] == "--plain-extract":
+        print(json.dumps(_run_plain_extract(argv[2], argv[3])))
+        return 0
     if len(argv) != 3:
         print(
             "usage: python -m tests._mem <xml-path> <clean|noclean>\n"
             "       python -m tests._mem --baseline\n"
             "       python -m tests._mem --pipeline <xml-path> <out-path>\n"
             "       python -m tests._mem --inspect <xml-path>\n"
-            "       python -m tests._mem --reject <xml-path> <work-dir>",
+            "       python -m tests._mem --reject <xml-path> <work-dir>\n"
+            "       python -m tests._mem --fastforward <xml-path> <skip>",
             file=sys.stderr,
         )
         return 2

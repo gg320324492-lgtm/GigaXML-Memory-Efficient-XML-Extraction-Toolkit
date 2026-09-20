@@ -19,6 +19,7 @@ somewhere: :class:`FieldTypeError` keeps ``field`` and ``raw`` for
 from __future__ import annotations
 
 __all__ = [
+    "CheckpointError",
     "ConfigError",
     "FieldPathError",
     "FieldTypeError",
@@ -117,6 +118,21 @@ class InspectionError(GigaXMLError, ValueError):
     config at all (a namespace prefix rebound to different URIs along the path).
     Distinct from the path and config errors because nothing here is wrong with
     the user's input -- the *document* is simply not what the request assumed.
+    """
+
+
+class CheckpointError(GigaXMLError, ValueError):
+    """A checkpointed run cannot be continued as asked.
+
+    Raised for a manifest that is missing, unreadable, truncated, of an unknown
+    format version or structurally wrong; for a manifest that describes a different
+    source or a different config than the one being resumed with; and for a parts
+    directory that cannot be used as one.
+
+    Descends from :class:`GigaXMLError` for the same reason as the rest: one
+    ``except`` clause covers everything the library raises deliberately. It is
+    deliberately **not** a ``WriterError`` -- nothing is wrong with the output, the
+    run is simply not the run the checkpoint describes.
     """
 
 
