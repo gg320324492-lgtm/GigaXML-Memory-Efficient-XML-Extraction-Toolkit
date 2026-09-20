@@ -34,6 +34,7 @@ from gigaxml.sample import sample_records
 from gigaxml.writers import (
     BATCH_SIZE_WARN_THRESHOLD,
     DEFAULT_BATCH_SIZE,
+    PARTIAL_SUFFIX,
     RowWriter,
     WriterFormat,
     batch_size_warning,
@@ -112,9 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         help=(
-            "Where to write the machine-readable run report. Defaults to "
+            "Where to write the machine-readable run summary. Defaults to "
             "run-report.json beside --output. Written on success *and* on failure, so "
-            "a caller can tell a half-written output from a complete one."
+            "a caller can tell a partial output from a complete one. It is a side "
+            "artefact: if it cannot be written the run still succeeds, with a warning, "
+            "because the exit code reports whether the data is usable."
         ),
     )
     extract.set_defaults(handler=_handle_extract)
@@ -224,8 +227,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         help=(
-            "Where to write the machine-readable run report. Defaults to "
-            "run-report.json beside --output. Written on success *and* on failure."
+            "Where to write the machine-readable run summary. Defaults to "
+            "run-report.json beside --output. Written on success *and* on failure. It "
+            "is a side artefact: if it cannot be written the run still succeeds, with "
+            "a warning."
         ),
     )
     sample.set_defaults(handler=_handle_sample)
@@ -264,24 +269,27 @@ def _handle_extract(args: argparse.Namespace) -> int:
 
     report_path = _run_report_path(args)
     started = time.perf_counter()
-    writer = create_writer(
-        args.output,
-        config.fields,
-        batch_size=args.batch_size,
-        output_format=args.format,
-    )
+    writer: RowWriter | None = None
     rejections = _rejection_log(args.output)
 
     try:
+        # Creating the writer is inside the try on purpose: a run that cannot even
+        # open its output should still leave a summary saying so.
+        writer = create_writer(
+            args.output,
+            config.fields,
+            batch_size=args.batch_size,
+            output_format=args.format,
+        )
         with rejections, writer:
             reader = StreamingRecordReader(
                 args.source, config.record_path, config.namespaces or None
             )
             stats = consume_records(reader, config, writer, rejections=rejections)
     except (GigaXMLError, OSError, etree.XMLSyntaxError) as exc:
-        # The report goes out before the error is re-raised. Without it, a caller who
-        # only sees a non-zero exit code has no way to tell a half-written output from
-        # a complete one -- which is the failure this phase exists to remove.
+        # The summary goes out before the error is re-raised. Without it, a caller who
+        # only sees a non-zero exit code has no way to tell a partial output from a
+        # complete one -- which is the failure this phase exists to remove.
         _write_report_safely(
             report_path,
             args=args,
@@ -293,7 +301,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
         )
         raise
 
-    _write_run_report(
+    _write_report_safely(
         report_path,
         args=args,
         config=config,
@@ -358,15 +366,16 @@ def _handle_sample(args: argparse.Namespace) -> int:
 
     report_path = _run_report_path(args)
     started = time.perf_counter()
-    writer = create_writer(
-        args.output,
-        config.fields,
-        batch_size=args.batch_size,
-        output_format=args.format,
-    )
+    writer: RowWriter | None = None
     rejections = _rejection_log(args.output)
 
     try:
+        writer = create_writer(
+            args.output,
+            config.fields,
+            batch_size=args.batch_size,
+            output_format=args.format,
+        )
         with rejections:
             result = sample_records(
                 args.source,
@@ -390,7 +399,7 @@ def _handle_sample(args: argparse.Namespace) -> int:
         )
         raise
 
-    _write_run_report(
+    _write_report_safely(
         report_path,
         args=args,
         config=config,
@@ -415,22 +424,36 @@ def _run_report_path(args: argparse.Namespace) -> Path:
     return Path(args.output).parent / DEFAULT_RUN_REPORT_FILENAME
 
 
+def _partial_output_path(output: str | Path) -> Path:
+    """Where a run writes before moving the file into place.
+
+    Derived from the target rather than asked of the writer, so it still works when
+    the run failed before a writer existed -- an unreadable config, say -- and the
+    summary still has something to say about partial output.
+    """
+    target = Path(output)
+    return target.with_name(target.name + PARTIAL_SUFFIX)
+
+
 def _run_report_payload(
     args: argparse.Namespace,
     config: ExtractionConfig,
-    writer: RowWriter,
+    writer: RowWriter | None,
     rejections: RejectionLog,
     error: BaseException | None,
     started: float,
 ) -> dict[str, object]:
-    """The run report, which is written whether the run finished or not.
+    """The run summary, which is written whether the run finished or not.
 
-    ``output_complete`` is the field this exists for. A run that aborts leaves
-    whatever rows had been flushed, and until now that file looked exactly like one
-    from a run that finished; this turns the difference into something a caller can
-    read without parsing stderr.
+    ``output_complete`` is the field this exists for: it is true only once the
+    finished file has actually been moved onto the target path. A run that aborts
+    leaves whatever it managed to write in a ``.tmp`` beside the target, and the
+    target itself keeps whatever it had -- so a caller reading this can tell a
+    complete output from a partial one without parsing stderr, and can find the
+    partial output if it wants it.
     """
     written_path = rejections.written_path
+    partial = _partial_output_path(args.output)
     return {
         "status": "failed" if error is not None else "ok",
         "source": str(args.source),
@@ -440,11 +463,12 @@ def _run_report_payload(
         else WriterFormat.from_path(args.output).value,
         "record_path": config.record_path,
         "fields": list(config.field_names),
-        "rows": writer.rows_written,
+        "rows": 0 if writer is None else writer.rows_written,
         "rejected": rejections.count,
         "rejected_path": None if written_path is None else str(written_path),
         "error": None if error is None else {"type": type(error).__name__, "message": str(error)},
-        "output_complete": error is None,
+        "output_complete": writer is not None and writer.published,
+        "partial_path": str(partial) if partial.exists() else None,
         "elapsed_seconds": elapsed_since(started),
         "tool_version": __version__,
     }
@@ -455,12 +479,12 @@ def _write_run_report(
     *,
     args: argparse.Namespace,
     config: ExtractionConfig,
-    writer: RowWriter,
+    writer: RowWriter | None,
     rejections: RejectionLog,
     error: BaseException | None,
     started: float,
 ) -> None:
-    """Write the run report. Raises ``OSError`` if the path cannot be written."""
+    """Write the run summary. Raises ``OSError`` if the path cannot be written."""
     payload = _run_report_payload(args, config, writer, rejections, error, started)
     report_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -468,7 +492,12 @@ def _write_run_report(
 
 
 def _write_report_safely(report_path: Path, **fields: object) -> None:
-    """Write the report on a failing path, without masking the original error."""
+    """Write the run summary, or say why it could not be written.
+
+    Used on both paths. The summary is a side artefact: the exit code reports whether
+    the *data* is usable, so a summary that cannot be written is a warning, not a
+    failure -- and on the failing path it must not replace the real error.
+    """
     try:
         _write_run_report(report_path, **fields)  # type: ignore[arg-type]
     except OSError as exc:

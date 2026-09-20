@@ -531,6 +531,115 @@ def test_a_warned_batch_size_is_still_accepted(tmp_path: Path) -> None:
     assert (tmp_path / "out.csv").read_text(encoding="utf-8").splitlines() == ["a", "1"]
 
 
+# --- atomic output ----------------------------------------------------------
+
+
+def test_rows_go_to_the_partial_file_until_close(tmp_path: Path) -> None:
+    config = build_config({"a": {"path": "a"}})
+    target = tmp_path / "out.csv"
+
+    writer = create_writer(target, config.fields)
+    writer.write({"a": "1"})
+    writer.close()
+
+    assert target.exists()
+    assert not writer.partial_path.exists()
+    assert writer.published is True
+
+
+def test_the_partial_file_sits_beside_the_target(tmp_path: Path) -> None:
+    config = build_config({"a": {"path": "a"}})
+    nested = tmp_path / "one" / "two"
+    nested.mkdir(parents=True)
+
+    writer = create_writer(nested / "out.csv", config.fields)
+
+    assert writer.partial_path.parent == writer.path.parent
+    assert writer.partial_path == nested / "out.csv.tmp"
+    assert writer.path == nested / "out.csv"
+    writer.close()
+
+
+def test_a_writer_that_failed_does_not_touch_the_target(tmp_path: Path) -> None:
+    """The whole point: the target keeps whatever it had."""
+    config = build_config({"a": {"path": "a"}})
+    target = tmp_path / "out.csv"
+    with create_writer(target, config.fields) as writer:
+        writer.write({"a": "previous"})
+    before = target.read_bytes()
+
+    with pytest.raises(RuntimeError), create_writer(target, config.fields) as writer:
+        writer.write({"a": "new"})
+        raise RuntimeError("the run failed")
+
+    assert target.read_bytes() == before
+    assert writer.published is False
+    assert writer.partial_path.exists()
+    assert writer.partial_path.read_text(encoding="utf-8").splitlines() == ["a", "new"]
+
+
+def test_abandon_keeps_the_partial_and_is_idempotent(tmp_path: Path) -> None:
+    config = build_config({"a": {"path": "a"}})
+    target = tmp_path / "out.csv"
+
+    writer = create_writer(target, config.fields)
+    writer.write({"a": "1"})
+    writer.abandon()
+    writer.abandon()
+    writer.close()
+
+    assert not target.exists()
+    assert writer.published is False
+    assert writer.partial_path.read_text(encoding="utf-8").splitlines() == ["a", "1"]
+
+
+def test_close_after_abandon_does_not_publish(tmp_path: Path) -> None:
+    """``abandon`` is final. Re-opening the question later would defeat it.
+
+    A writer that was abandoned because its run failed must not end up publishing a
+    partial file just because something called ``close`` on the way out.
+    """
+    config = build_config({"a": {"path": "a"}})
+    target = tmp_path / "out.csv"
+
+    writer = create_writer(target, config.fields)
+    writer.write({"a": "1"})
+    writer.abandon()
+    assert not target.exists()
+
+    writer.close()
+
+    assert not target.exists(), "close after abandon is a no-op"
+    assert writer.published is False
+    assert writer.partial_path.read_text(encoding="utf-8").splitlines() == ["a", "1"]
+
+
+def test_a_stale_partial_file_is_replaced_not_appended_to(tmp_path: Path) -> None:
+    config = build_config({"a": {"path": "a"}})
+    target = tmp_path / "out.csv"
+    (tmp_path / "out.csv.tmp").write_text("a\nstale\n", encoding="utf-8")
+
+    with create_writer(target, config.fields) as writer:
+        writer.write({"a": "fresh"})
+
+    assert target.read_text(encoding="utf-8").splitlines() == ["a", "fresh"]
+
+
+@pytest.mark.parametrize("name", ["out.csv", "out.jsonl", "out.parquet"])
+def test_every_format_uses_the_partial_path(tmp_path: Path, name: str) -> None:
+    config = build_config({"a": {"path": "a"}})
+    target = tmp_path / name
+
+    writer = create_writer(target, config.fields)
+    assert writer.partial_path == tmp_path / f"{name}.tmp"
+    assert not target.exists(), "nothing at the target until close"
+    writer.write({"a": "1"})
+    writer.close()
+
+    assert target.exists()
+    assert not writer.partial_path.exists()
+
+
 def test_a_writer_needs_at_least_one_field(tmp_path: Path) -> None:
     with pytest.raises(WriterError, match="at least one field"):
         create_writer(tmp_path / "out.csv", [])

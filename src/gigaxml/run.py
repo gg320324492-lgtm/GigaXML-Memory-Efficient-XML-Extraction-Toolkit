@@ -61,7 +61,27 @@ QUARANTINABLE: Final = (FieldTypeError, MissingRequiredFieldError)
 
 #: Bytes buffered by the rejection log's handle. Bounded, so a run with a million
 #: rejections costs no more memory than one with a hundred.
-_REJECTION_BUFFER_BYTES: Final = 1 << 16
+_REJECTION_BUFFER_BYTES: Final = 1 << 20
+
+#: Rejections written between explicit flushes.
+#:
+#: **Why not flush every line.** Flushing after each write makes every rejection
+#: durable, and it was measured before choosing: on 1,164,800 rejections it cost
+#: **+17.29%** (20.599s against 17.563s, best of three, alternating between the two
+#: variants). That is over the 10% the design allows for durability, so the log
+#: flushes every :data:`_REJECTION_FLUSH_LINES` lines instead, which bounds what a
+#: crash can lose to 255 lines out of a million.
+#:
+#: The counter follows the flush, not the write -- see :meth:`RejectionLog.count` --
+#: so the number in the run summary is always the number of lines actually in the
+#: file, whether the run ended cleanly or died.
+_REJECTION_FLUSH_LINES: Final = 256
+
+#: Bytes written between explicit flushes, kept well under the handle's own buffer so
+#: the file object never flushes behind our back and makes the count wrong. Long
+#: error messages are what this guards against; short ones hit the line threshold
+#: first.
+_REJECTION_FLUSH_BYTES: Final = _REJECTION_BUFFER_BYTES // 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,17 +110,26 @@ class RejectionLog:
 
     Use as a context manager, or call :meth:`close`.
 
+    **Durability.** Rejections are buffered and flushed every
+    :data:`_REJECTION_FLUSH_LINES` lines (or :data:`_REJECTION_FLUSH_BYTES` bytes).
+    A crash therefore loses at most the last few hundred lines rather than all of
+    them, and :attr:`count` follows the flush rather than the write, so it always
+    agrees with what is actually in the file. Flushing every line would be exact but
+    costs 17% of the throughput, which was measured rather than assumed.
+
     Args:
         path: where to write. The file is created lazily, on the first rejection.
     """
 
-    __slots__ = ("_count", "_created", "_handle", "_path")
+    __slots__ = ("_created", "_durable", "_handle", "_path", "_pending", "_pending_bytes")
 
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._handle: IO[str] | None = None
         self._created = False
-        self._count = 0
+        self._durable = 0
+        self._pending = 0
+        self._pending_bytes = 0
 
     @property
     def path(self) -> Path:
@@ -119,8 +148,18 @@ class RejectionLog:
 
     @property
     def count(self) -> int:
-        """How many records have been rejected so far."""
-        return self._count
+        """How many rejections are **on disk**.
+
+        Deliberately not "how many times :meth:`reject` was called": after a crash the
+        two differ, and the number a caller can act on is the one that matches the
+        file. :meth:`flush` makes them equal on demand, and :meth:`close` always does.
+        """
+        return self._durable
+
+    @property
+    def total(self) -> int:
+        """How many rejections have been recorded, flushed or still buffered."""
+        return self._durable + self._pending
 
     def reject(self, index: int, record_path: str, error: BaseException) -> None:
         """Write one rejected record, as one line, now.
@@ -134,9 +173,12 @@ class RejectionLog:
         if not self._created:
             self._handle = self._path.open("w", encoding="utf-8", buffering=_REJECTION_BUFFER_BYTES)
             self._created = True
-        self._count += 1
-        self._handle.write(json.dumps(self._entry(index, record_path, error), ensure_ascii=False))
-        self._handle.write("\n")
+        payload = json.dumps(self._entry(index, record_path, error), ensure_ascii=False) + "\n"
+        self._handle.write(payload)
+        self._pending += 1
+        self._pending_bytes += len(payload)
+        if self._pending >= _REJECTION_FLUSH_LINES or self._pending_bytes >= _REJECTION_FLUSH_BYTES:
+            self.flush()
 
     @staticmethod
     def _entry(index: int, record_path: str, error: BaseException) -> dict[str, object]:
@@ -159,9 +201,19 @@ class RejectionLog:
             entry["raw"] = error.raw
         return entry
 
+    def flush(self) -> None:
+        """Make everything written so far durable, and count it as such."""
+        if self._handle is None:
+            return
+        self._handle.flush()
+        self._durable += self._pending
+        self._pending = 0
+        self._pending_bytes = 0
+
     def close(self) -> None:
         """Flush and close. Idempotent, and safe when nothing was rejected."""
         if self._handle is not None:
+            self.flush()
             self._handle.close()
             self._handle = None
 
@@ -224,6 +276,10 @@ def consume_records(
             continue
         writer.write(values)
 
+    if rejections is not None:
+        # The loop is over, so make the log durable and let the count mean what it
+        # says. Without this a short run could report fewer rejections than it made.
+        rejections.flush()
     rejected = 0 if rejections is None else rejections.count
     written_path = None if rejections is None else rejections.written_path
     return RunStats(

@@ -184,12 +184,13 @@ def test_abort_keeps_its_exit_code_and_its_one_line_error(
     assert "warning:" not in err
 
 
-def test_abort_still_leaves_the_partial_output_but_now_marks_it(tmp_path: Path) -> None:
-    """The half-file is 5B's problem; saying so is this phase's.
+def test_abort_does_not_create_the_target_at_all(tmp_path: Path) -> None:
+    """This used to assert the opposite, and the change is deliberate.
 
-    ``out.csv`` here is byte-identical to what a successful two-record run would
-    produce. The only thing that distinguishes it is the report, which is exactly why
-    the report has to exist.
+    Until output was written atomically, an aborted run left a truncated file at the
+    target path that was byte-identical to what a shorter successful run would have
+    produced. Now the target is only ever created by a run that finished, so a first
+    run that fails leaves no output file at all.
     """
     source = write_source(tmp_path)
     config = write_config(tmp_path)
@@ -197,11 +198,30 @@ def test_abort_still_leaves_the_partial_output_but_now_marks_it(tmp_path: Path) 
 
     assert main(["extract", str(source), "-c", str(config), "-o", str(output)]) == 1
 
-    assert rows_in(output) == ["1,A"], "the partial output is still there"
+    assert not output.exists(), "a failed first run leaves no output file"
+
+
+def test_abort_keeps_the_partial_output_beside_the_target(tmp_path: Path) -> None:
+    """The old test's real intent, which survives: the work is not thrown away.
+
+    It used to be at the target path, which made it indistinguishable from a finished
+    file. It is now beside it, under a name that says what it is, and the report names
+    that file so a caller does not have to guess.
+    """
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    output = tmp_path / "out.csv"
+
+    assert main(["extract", str(source), "-c", str(config), "-o", str(output)]) == 1
+
+    partial = tmp_path / "out.csv.tmp"
+    assert partial.exists(), "the rows written before the failure are still there"
+    assert rows_in(partial) == ["1,A"]
 
     report = read_report(tmp_path / "run-report.json")
     assert report["status"] == "failed"
     assert report["output_complete"] is False
+    assert report["partial_path"] == str(partial)
     assert report["rows"] == 1
     assert report["error"]["type"] == "FieldTypeError"
     assert "not convertible" in report["error"]["message"]
@@ -247,6 +267,7 @@ def test_the_report_lands_on_both_paths_with_every_field(
         "rejected_path",
         "error",
         "output_complete",
+        "partial_path",
         "elapsed_seconds",
         "tool_version",
     }
@@ -409,11 +430,18 @@ def test_a_rejection_log_that_cannot_be_written_is_reported(
     assert capsys.readouterr().err.startswith("error: ")
 
 
-def test_a_report_path_in_a_missing_directory_is_reported(
+def test_a_report_that_cannot_be_written_does_not_fail_the_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """This used to assert exit code 1, and the change is deliberate.
+
+    The exit code reports whether the *data* is usable. The output is the product and
+    the summary is a side artefact, so a run whose data landed is a success even if
+    the summary could not be written -- it says so on stderr and carries on.
+    """
     source = write_source(tmp_path, ALL_GOOD)
     config = write_config(tmp_path)
+    output = tmp_path / "out.csv"
 
     exit_code = main(
         [
@@ -422,13 +450,18 @@ def test_a_report_path_in_a_missing_directory_is_reported(
             "-c",
             str(config),
             "-o",
-            str(tmp_path / "out.csv"),
+            str(output),
             "--report",
             str(tmp_path / "nowhere" / "r.json"),
         ]
     )
-    assert exit_code == 1
-    assert "nowhere" in capsys.readouterr().err
+
+    assert exit_code == 0, "the data is complete, so the run succeeded"
+    err = capsys.readouterr().err
+    assert "warning:" in err
+    assert "nowhere" in err
+    assert rows_in(output) == ["1,A", "2,B", "3,C"]
+    assert not (tmp_path / "run-report.json").exists()
 
 
 def test_quarantine_to_parquet(tmp_path: Path) -> None:

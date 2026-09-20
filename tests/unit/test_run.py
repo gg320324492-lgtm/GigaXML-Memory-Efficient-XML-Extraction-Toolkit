@@ -52,9 +52,32 @@ def test_nothing_is_created_until_something_is_rejected(tmp_path: Path) -> None:
 
     log.reject(1, "/root/item", ValueError("nope"))
 
-    assert log.count == 1
+    assert log.total == 1, "one rejection was recorded"
     assert log.written_path == tmp_path / "rejected.jsonl"
     assert (tmp_path / "rejected.jsonl").exists()
+    log.close()
+    assert log.count == 1, "and closing makes it durable"
+
+
+def test_the_count_follows_the_flush_not_the_write(tmp_path: Path) -> None:
+    """The count is what is in the file, which is not the same as what was written.
+
+    A crash loses whatever is still buffered, so a count that ran ahead of the file
+    would overstate how much was recorded. ``total`` is the write-side number and
+    ``count`` is the file-side one; only the second is safe to publish.
+    """
+    log = RejectionLog(tmp_path / "rejected.jsonl")
+    for index in range(1, 11):
+        log.reject(index, "/root/item", ValueError("x"))
+
+    assert log.total == 10
+    assert log.count == 0, "ten lines written, none flushed yet"
+    assert (tmp_path / "rejected.jsonl").read_text(encoding="utf-8") == ""
+
+    log.flush()
+
+    assert log.count == 10
+    assert len((tmp_path / "rejected.jsonl").read_text(encoding="utf-8").splitlines()) == 10
     log.close()
 
 
@@ -93,15 +116,27 @@ def test_each_rejection_is_one_line_of_json(tmp_path: Path) -> None:
     assert "raw" not in entries[1]
 
 
-def test_the_count_does_not_depend_on_the_file_being_flushed(tmp_path: Path) -> None:
-    """The count is the authoritative number; the report reads it, not the file."""
-    log = RejectionLog(tmp_path / "rejected.jsonl")
-    for index in range(1, 11):
-        log.reject(index, "/root/item", ValueError("x"))
+def test_the_count_always_matches_the_file(tmp_path: Path) -> None:
+    """The half of the old contract that survives: the count is never a guess.
 
-    assert log.count == 10
+    This replaces ``test_the_count_does_not_depend_on_the_file_being_flushed``, whose
+    direction this phase inverted. It used to assert that the count ran ahead of the
+    file, which was true and was the problem: a crash left a count with nothing behind
+    it. The invariant worth keeping is the one asserted here -- whatever ``count``
+    says, the file says the same -- and it is checked at every stage rather than only
+    at the end.
+    """
+    path = tmp_path / "rejected.jsonl"
+    log = RejectionLog(path)
+
+    for index in range(1, 3001):
+        log.reject(index, "/root/item", ValueError("x"))
+        on_disk = len(path.read_text(encoding="utf-8").splitlines())
+        assert log.count == on_disk, f"diverged after {index} rejections"
+
     log.close()
-    assert len((tmp_path / "rejected.jsonl").read_text(encoding="utf-8").splitlines()) == 10
+    assert log.count == len(path.read_text(encoding="utf-8").splitlines()) == 3000
+    assert log.total == 3000
 
 
 def test_close_is_idempotent(tmp_path: Path) -> None:

@@ -25,6 +25,23 @@ data). A string is exact for every value, needs no guess, and round-trips throug
 ``pyarrow`` is imported lazily, inside the Parquet writer, so that
 ``import gigaxml.writers`` and the CSV/JSONL paths keep working with only the two
 required dependencies installed.
+
+**Output is written atomically.** Every writer opens ``<target>.tmp`` in the target's
+own directory and only renames it into place once the last batch is flushed. The
+guarantee that buys is worth stating plainly: **the file at the target path is either
+complete or the previous complete version -- never a truncated one.** Before this, a
+run killed halfway through left a file indistinguishable from a finished one, and a
+*failed* re-run destroyed the previous run's output on its way to producing nothing.
+A half-written output is worse than no output, because nothing about it says so.
+
+Two consequences worth knowing:
+
+* On failure the ``.tmp`` file is **left on disk**, not deleted. Six hours of partial
+  output is worth keeping, and the name says what it is. The run summary names it, so
+  a caller that reads the summary can find it.
+* On Windows, ``os.replace`` fails with ``WinError 5`` if the target is open in
+  another program -- POSIX allows it. That is reported as one clear line naming the
+  partial file, rather than as a traceback from deep inside a writer.
 """
 
 from __future__ import annotations
@@ -45,6 +62,7 @@ from gigaxml.fields import FieldConfig, FieldType
 __all__ = [
     "BATCH_SIZE_WARN_THRESHOLD",
     "DEFAULT_BATCH_SIZE",
+    "PARTIAL_SUFFIX",
     "CsvWriter",
     "JsonlWriter",
     "ParquetWriter",
@@ -76,6 +94,14 @@ _KB_PER_BUFFERED_ROW: Final = 0.95
 
 #: Buffer for the text-mode handles, in bytes.
 _WRITE_BUFFER_BYTES: Final = 1 << 16
+
+#: Appended to the target name to get the path actually written to. Same directory
+#: as the target on purpose: a rename across devices is a copy plus a delete, which
+#: is not atomic, and ``tempfile``'s default directory is usually a different device.
+#:
+#: Public because a caller that only has the target path -- the run summary, for one
+#: -- has to be able to work out where the partial output would be.
+PARTIAL_SUFFIX: Final = ".tmp"
 
 #: Suffix to format. ``.ndjson`` is accepted because it is the same thing under a
 #: name half the ecosystem prefers.
@@ -149,8 +175,13 @@ class RowWriter(ABC):
     a run well inside this project's 32 MiB output budget; raising it to hundreds
     of thousands does not. See :func:`batch_size_warning`.
 
+    The file is written to ``<path>.tmp`` and renamed into place by :meth:`close`.
+    See the module docstring for what that guarantees and why the partial file is
+    kept on failure.
+
     Args:
-        path: output file. Parent directories are not created.
+        path: the output file -- the *target*, which is what :attr:`path` and every
+            error message name. Parent directories are not created.
         fields: the configured fields, in output order. They decide the CSV header,
             the JSONL key order and the Parquet schema.
         batch_size: rows per flush. Must be positive.
@@ -172,6 +203,8 @@ class RowWriter(ABC):
             raise WriterError("a writer needs at least one field to write")
 
         self._path = Path(path)
+        self._partial_path = self._path.with_name(self._path.name + PARTIAL_SUFFIX)
+        self._published = False
         self._fields = tuple(fields)
         self._field_names = tuple(field.name for field in self._fields)
         self._field_name_set = frozenset(self._field_names)
@@ -184,8 +217,26 @@ class RowWriter(ABC):
 
     @property
     def path(self) -> Path:
-        """The output file."""
+        """The output file -- the target, not the partial file being written."""
         return self._path
+
+    @property
+    def partial_path(self) -> Path:
+        """Where rows are written before :meth:`close` moves them into place.
+
+        Exists on disk exactly when the run did not finish. A caller looking at a
+        failed run should look here for whatever partial output there is.
+        """
+        return self._partial_path
+
+    @property
+    def published(self) -> bool:
+        """Whether the finished output has been moved onto the target path.
+
+        ``True`` only after :meth:`close` has replaced the target. A run that failed
+        leaves this ``False`` and the target untouched.
+        """
+        return self._published
 
     @property
     def field_names(self) -> tuple[str, ...]:
@@ -229,26 +280,84 @@ class RowWriter(ABC):
         return self._rows_written + len(self._batch)
 
     def close(self) -> None:
-        """Flush the final partial batch and release the file. Idempotent.
+        """Flush the final batch, release the file, and move it onto the target.
 
-        If an earlier flush failed, the pending batch is dropped rather than
-        retried: the run has already reported an error, and raising a second one
-        from ``close`` -- which is also called by ``__exit__`` while the first is
-        propagating -- would replace a useful message with a confusing one.
+        This is the "the run finished" path: the partial file becomes the output.
+        When the block raised, :meth:`__exit__` calls :meth:`abandon` instead, which
+        leaves the target alone.
+
+        Idempotent. If an earlier flush failed, the pending batch is dropped rather
+        than retried: the run has already reported an error, and raising a second one
+        from ``close`` would replace a useful message with a confusing one.
         """
         if self._closed:
             return
+        try:
+            if not self._failed:
+                self._flush_batch()
+        finally:
+            # The handle is released either way. On the failure path this is what
+            # leaves a complete, readable .tmp behind.
+            self._close()
+            self._closed = True
         if not self._failed:
-            self._flush_batch()
-        self._close()
-        self._closed = True
+            self._publish()
+
+    def _publish(self) -> None:
+        """Move the finished partial file onto the target. The only step that does.
+
+        Raises:
+            WriterError: the target cannot be replaced -- on Windows most often
+                because another program has it open.
+        """
+        try:
+            self._partial_path.replace(self._path)
+        except OSError as exc:
+            raise WriterError(
+                f"could not move the finished output onto {str(self._path)!r}: {exc} "
+                f"The complete output is still at {str(self._partial_path)!r}. If the "
+                f"target is open in another program, close it and rename that file by "
+                f"hand."
+            ) from exc
+        self._published = True
 
     def __enter__(self) -> RowWriter:
         return self
 
     def __exit__(self, *exc_info: object) -> bool:
-        self.close()
+        # An exception leaving the block means the run did not finish, so the partial
+        # file must NOT be moved onto the target -- publishing here would overwrite
+        # the previous output with a truncated one, which is the exact failure this
+        # whole mechanism exists to prevent.
+        if exc_info[0] is None:
+            self.close()
+        else:
+            self.abandon()
         return False
+
+    def abandon(self) -> None:
+        """Finish writing but leave the partial file where it is.
+
+        Called when the enclosing block raised. Everything successfully written so
+        far is flushed -- it is real output and worth keeping -- but the target path
+        is not touched, so whatever was there before the run is still there after it.
+
+        Idempotent, and safe to call on a writer that already failed. Final, too: a
+        later :meth: is a no-op, because publishing after an abandonment is the
+        one thing this must not do.
+        """
+        if self._closed:
+            return
+        try:
+            if not self._failed:
+                self._flush_batch()
+        except Exception:
+            # We are already unwinding an exception; a second one from here would
+            # replace a useful message with a confusing one.
+            self._failed = True
+        finally:
+            self._close()
+            self._closed = True
 
     def _flush_batch(self) -> None:
         """Validate and write the current batch, then clear it."""
@@ -303,11 +412,13 @@ class _TextWriter(RowWriter):
 
     def _open(self) -> None:
         try:
-            self._handle = self._path.open(
+            self._handle = self._partial_path.open(
                 "w", encoding="utf-8", newline="", buffering=_WRITE_BUFFER_BYTES
             )
         except OSError as exc:
-            raise WriterError(f"cannot open {str(self._path)!r} for writing: {exc}") from exc
+            raise WriterError(
+                f"cannot open {str(self._partial_path)!r} for writing: {exc}"
+            ) from exc
 
     def _close(self) -> None:
         self._handle.close()
@@ -394,9 +505,11 @@ class ParquetWriter(RowWriter):
         self._pa, parquet = _import_pyarrow()
         self._schema = _parquet_schema(self._fields, self._pa)
         try:
-            self._parquet_writer = parquet.ParquetWriter(self._path, self._schema)
+            self._parquet_writer = parquet.ParquetWriter(self._partial_path, self._schema)
         except OSError as exc:
-            raise WriterError(f"cannot open {str(self._path)!r} for writing: {exc}") from exc
+            raise WriterError(
+                f"cannot open {str(self._partial_path)!r} for writing: {exc}"
+            ) from exc
 
     def _write_batch(self, batch: Sequence[Mapping[str, object]]) -> None:
         columns: dict[str, list[object]] = {}
