@@ -88,7 +88,12 @@ def profile(source: pathlib.Path, top: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--datasets", nargs="+", default=["b100m.xml", "b1g.xml"])
+    parser.add_argument(
+        "--datasets",
+        nargs="+",
+        default=["b100m.xml", "b1g.xml", "b4g.xml"],
+        help="dataset filenames under data/ (default: all three, the 4 GB one takes 4 minutes)",
+    )
     parser.add_argument("--top", type=int, default=14)
     parser.add_argument("--work", default=None)
     args = parser.parse_args()
@@ -106,10 +111,20 @@ def main() -> int:
         rows.append(result)
         print(json.dumps(result))
 
-    first = DATA / args.datasets[0]
+    # Profile the smallest dataset in data/, whatever was asked for. The shape of the
+    # profile is what matters and it does not change with size, while profiling 4 GB takes
+    # several times as long as measuring it did.
+    smallest = min(
+        (path for path in DATA.glob("*.xml")),
+        key=lambda path: path.stat().st_size,
+        default=None,
+    )
+    if smallest is None:
+        print("no dataset available to profile")
+        return 1
     print()
-    print(f"=== profile: {first.name}, top {args.top} by tottime ===")
-    text = profile(first, args.top)
+    print(f"=== profile: {smallest.name}, top {args.top} by tottime ===")
+    text = profile(smallest, args.top)
     print(text[:4000])
     (work / "profile.txt").write_text(text, encoding="utf-8")
 
