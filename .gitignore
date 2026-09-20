@@ -37,7 +37,9 @@ Thumbs.db
 !tests/fixtures/**/*.xml.gz
 
 # ---- Local working notes: development journals, kept out of the repository ----
-docs/AGENT_BRIEF_*.md
-docs/PHASE-*-REPORT.md
-docs/PHASE-*-AUDIT.md
-docs/ROADMAP.md
+# The whole directory, not a list of name patterns. It is not tracked at all (see the
+# commit that removed it), so enumerating patterns only creates ways to miss: a new kind
+# of internal file -- a preflight note, say -- matches none of them and shows up as
+# untracked. Committing something from here on purpose needs `git add -f`, and that
+# friction is the point.
+docs/
