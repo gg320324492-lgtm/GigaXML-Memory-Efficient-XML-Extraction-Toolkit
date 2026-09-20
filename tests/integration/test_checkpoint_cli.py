@@ -17,6 +17,7 @@ import pytest
 
 from gigaxml.checkpoint import CHECKPOINT_FILENAME
 from gigaxml.cli import main
+from gigaxml.run import DEFAULT_RUN_REPORT_FILENAME
 
 DOC = (
     '<?xml version="1.0"?><root>'
@@ -38,6 +39,22 @@ def write_source(tmp_path: Path, text: str = DOC, *, name: str = "source.xml") -
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def data_bytes(parts_dir: Path) -> dict[str, bytes]:
+    """Every file in the parts directory except the run summary.
+
+    The summary is excluded on purpose. It describes **this** run, so two runs over
+    the same finished checkpoint legitimately differ in ``resumed_from``,
+    ``rows_this_run`` and ``elapsed_seconds`` -- an earlier version of this test
+    compared every file and therefore could never pass. The parts and the manifest
+    are the data; those are what must not move.
+    """
+    return {
+        path.name: path.read_bytes()
+        for path in parts_dir.iterdir()
+        if path.name != DEFAULT_RUN_REPORT_FILENAME
+    }
 
 
 def read_manifest(parts_dir: Path) -> dict:
@@ -419,12 +436,12 @@ def test_resuming_a_complete_checkpoint_does_nothing(
         "csv",
     ]
     assert main(args) == 0
-    before = {path.name: path.read_bytes() for path in parts.iterdir()}
+    before = data_bytes(parts)
 
     assert main([*args, "--resume"]) == 0
 
     assert "already complete" in capsys.readouterr().err
-    assert {path.name: path.read_bytes() for path in parts.iterdir()} == before
+    assert data_bytes(parts) == before, "the parts and the manifest are untouched"
 
 
 # --- Gate 11: edges ---------------------------------------------------------
@@ -766,3 +783,242 @@ def test_a_killed_run_keeps_committed_parts_and_resumes_to_the_same_result(
     combined = concat(parts, "csv")
     assert len(combined) == len(expected), "the same number of lines as one uninterrupted run"
     assert combined == expected, "and the same lines, in the same order"
+
+
+# --- a deleted or altered part must not be skipped over ---------------------
+
+
+def test_a_deleted_part_is_refused_rather_than_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The failure this guards against finishes reporting success.
+
+    ``records_consumed`` is how many records a resume skips. If a part that number
+    was derived from is gone, skipping walks straight past rows nobody will ever
+    write, and the run exits 0 with an empty stderr -- a silent loss, and not one the
+    caller can detect afterwards.
+    """
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    manifest_before = read_manifest(parts)
+
+    (parts / "part-00001.csv").unlink()
+    exit_code = main([*args, "--resume"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "cannot resume" in err
+    assert "part-00001.csv" in err
+    assert "missing" in err
+    assert "Nothing was written" in err
+    assert read_manifest(parts) == manifest_before, "and nothing was rewritten"
+
+
+def test_a_deleted_part_is_reported_even_when_the_checkpoint_is_complete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A finished run whose output is incomplete must not be waved through.
+
+    The user is about to use that output, and the manifest still claims the full row
+    count, so silence here would be the same silent loss in a different disguise.
+    """
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    assert read_manifest(parts)["complete"] is True
+
+    (parts / "part-00001.csv").unlink()
+    exit_code = main([*args, "--resume"])
+
+    assert exit_code == 1, "an incomplete output is not reported as merely idle"
+    err = capsys.readouterr().err
+    assert "part-00001.csv" in err
+    assert "missing" in err
+
+
+def test_a_part_with_the_wrong_row_count_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A part that exists but is not the size the manifest says is just as bad."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+
+    part = parts / "part-00001.csv"
+    part.write_text(part.read_text(encoding="utf-8") + "99,N99\n", encoding="utf-8")
+    exit_code = main([*args, "--resume"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "rows differ" in err
+    assert "part-00001.csv" in err
+    assert "checkpoint 5, file 6" in err
+
+
+def test_intact_parts_are_not_an_obstacle(tmp_path: Path) -> None:
+    """The check must not refuse a healthy checkpoint -- including the completed one."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    assert main([*args, "--resume"]) == 0
+
+
+@pytest.mark.parametrize("extension", ["csv", "jsonl", "parquet"])
+def test_the_part_check_works_for_every_format(tmp_path: Path, extension: str) -> None:
+    """Row counting differs by format -- lines for the text ones, metadata for Parquet."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / f"parts-{extension}"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        extension,
+    ]
+    assert main(args) == 0
+    assert main([*args, "--resume"]) == 0, "a healthy checkpoint of any format resumes"
+
+    (parts / f"part-00001.{extension}").unlink()
+    assert main([*args, "--resume"]) == 1
+
+
+# --- the manifest and the summary must agree about completion --------------
+
+
+@pytest.mark.parametrize("count,every", [(12, 3), (12, 4), (12, 6), (12, 12), (12, 5), (13, 5)])
+def test_the_manifest_and_the_summary_agree_about_completion(
+    tmp_path: Path, count: int, every: int
+) -> None:
+    """They used to disagree whenever the record count was an exact multiple.
+
+    The source ending exactly on a part boundary meant no part was short, so nothing
+    ever recorded that the run had finished: the manifest kept ``complete: false``
+    while the summary said true, and every later ``--resume`` re-read the whole
+    document to skip all of it, for ever, with no message.
+    """
+    document = (
+        '<?xml version="1.0"?><root>'
+        + "".join(f"<item><id>{n}</id><name>N{n}</name></item>" for n in range(1, count + 1))
+        + "</root>"
+    )
+    source = write_source(tmp_path, document)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+
+    assert (
+        main(
+            [
+                "extract",
+                str(source),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                str(every),
+                "--format",
+                "csv",
+            ]
+        )
+        == 0
+    )
+
+    manifest = read_manifest(parts)
+    report = json.loads((parts / DEFAULT_RUN_REPORT_FILENAME).read_text(encoding="utf-8"))
+    assert manifest["complete"] is report["checkpoint"]["complete"]
+    assert manifest["complete"] is True, f"{count} records in parts of {every} is a finished run"
+    assert manifest["records_consumed"] == count
+
+
+@pytest.mark.parametrize("every", [3, 4, 6, 12])
+def test_a_divisible_run_resumes_without_going_round_again(
+    tmp_path: Path, every: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With the manifest telling the truth, a resume stops instead of re-reading."""
+    document = (
+        '<?xml version="1.0"?><root>'
+        + "".join(f"<item><id>{n}</id><name>N{n}</name></item>" for n in range(1, 13))
+        + "</root>"
+    )
+    source = write_source(tmp_path, document)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        str(every),
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    before = data_bytes(parts)
+
+    for _ in range(3):
+        assert main([*args, "--resume"]) == 0
+        assert "already complete" in capsys.readouterr().err
+
+    assert data_bytes(parts) == before

@@ -102,3 +102,26 @@ def test_missing_source_file_raises(tmp_path: Path) -> None:
     reader = StreamingRecordReader(tmp_path / "absent.xml", "/catalog/products/product")
     with pytest.raises(FileNotFoundError):
         list(reader)
+
+
+def test_two_iterations_of_the_reader_are_independent(tmp_path: Path) -> None:
+    """``iter(reader)`` hands back a brand-new generator that parses from the start.
+
+    This is the property that made a chunked loop hang: taking ``islice(reader, n)``
+    inside the loop re-read the document from the top on every pass, so a run over ten
+    records never ended. Anything that consumes the reader in pieces has to call
+    ``iter`` once and keep that iterator.
+    """
+    source = tmp_path / "doc.xml"
+    source.write_text("<root><item>1</item><item>2</item><item>3</item></root>", encoding="utf-8")
+    reader = StreamingRecordReader(source, "/root/item")
+    first = iter(reader)
+    second = iter(reader)
+
+    assert first is not second, "each call is a fresh generator, not the same one"
+    assert next(first) is not None
+    assert next(second) is not None, "the second starts over rather than continuing"
+
+    # And a fresh call always replays the whole document.
+    assert len(list(reader)) == 3
+    assert len(list(reader)) == 3

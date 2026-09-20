@@ -36,7 +36,7 @@ from typing import Final
 
 from gigaxml.config import ExtractionConfig
 from gigaxml.errors import CheckpointError
-from gigaxml.writers import PARTIAL_SUFFIX
+from gigaxml.writers import PARTIAL_SUFFIX, _import_pyarrow
 
 __all__ = [
     "CHECKPOINT_FILENAME",
@@ -45,10 +45,13 @@ __all__ = [
     "Checkpoint",
     "PartRecord",
     "config_identity",
+    "count_part_rows",
     "part_name",
     "read_checkpoint",
+    "require_intact_parts",
     "source_identity",
     "validate_resume",
+    "verify_parts",
     "write_checkpoint",
 ]
 
@@ -174,6 +177,91 @@ def config_identity(config: ExtractionConfig) -> str:
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def count_part_rows(path: str | Path, extension: str, *, header: bool) -> int:
+    """Count the data rows in one part.
+
+    Parquet is read from its metadata, which costs nothing. The line-oriented formats
+    are counted by reading the file, which is the only way to be sure -- and is worth
+    it: this number is what stops a resumed run from skipping records that are not
+    there.
+
+    Args:
+        path: the part file.
+        extension: ``csv``, ``jsonl`` or ``parquet``.
+        header: whether the part carries a header row. Only the first **CSV** part
+            does -- JSONL and Parquet have no header -- so the caller passes
+            ``extension == "csv" and index == 0``.
+    """
+    target = Path(path)
+    if extension == "parquet":
+        _pa, parquet = _import_pyarrow()
+        return int(parquet.ParquetFile(target).metadata.num_rows)
+    with target.open("rb") as handle:
+        lines = sum(1 for _ in handle)
+    return lines - 1 if header and lines else lines
+
+
+def verify_parts(
+    checkpoint: Checkpoint,
+    parts_dir: str | Path,
+    extension: str,
+) -> list[str]:
+    """Check every part the manifest names against the file on disk.
+
+    Returns:
+        One human-readable problem per part that is missing, unreadable, or has a
+        different number of rows than the manifest claims. Empty when everything
+        agrees.
+
+    **Why this exists.** ``records_consumed`` is the number of records a resume skips.
+    If a part it was derived from is gone, skipping that many records walks straight
+    past rows that will never be written by anyone -- and the run finishes reporting
+    success. That is a silent loss of data, which is the failure this project has
+    spent every phase trying to eliminate; it is worse than an error, because nothing
+    about the output says anything is wrong.
+    """
+    directory = Path(parts_dir)
+    problems: list[str] = []
+    for index, part in enumerate(checkpoint.parts):
+        path = directory / part.name
+        if not path.is_file():
+            problems.append(f"missing:  {part.name}")
+            continue
+        try:
+            found = count_part_rows(path, extension, header=extension == "csv" and index == 0)
+        except Exception as exc:
+            # Deliberately broad: a corrupt part can fail as an OSError from the
+            # filesystem or as an Arrow error from the metadata reader, and every one
+            # of those means the same thing here -- this part cannot be vouched for.
+            # The exception is reported, never swallowed.
+            problems.append(f"unreadable: {part.name} ({exc})")
+            continue
+        if found != part.rows:
+            problems.append(f"rows differ: {part.name} (checkpoint {part.rows}, file {found})")
+    return problems
+
+
+def require_intact_parts(
+    checkpoint: Checkpoint,
+    parts_dir: str | Path,
+    extension: str,
+) -> None:
+    """Refuse to continue when the parts on disk do not match the manifest.
+
+    Raises:
+        CheckpointError: any part is missing, unreadable, or a different size.
+    """
+    problems = verify_parts(checkpoint, parts_dir, extension)
+    if not problems:
+        return
+    raise CheckpointError(
+        "cannot resume: the checkpoint lists parts that are missing or changed.\n"
+        + "\n".join(f"       {problem}" for problem in problems)
+        + "\n       Nothing was written. Restore the parts, or remove the checkpoint "
+        "to start over."
+    )
 
 
 def read_checkpoint(path: str | Path) -> Checkpoint:

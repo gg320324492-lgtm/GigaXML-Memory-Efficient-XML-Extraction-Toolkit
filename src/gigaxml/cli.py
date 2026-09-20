@@ -21,6 +21,7 @@ from gigaxml.checkpoint import (
     config_identity,
     part_name,
     read_checkpoint,
+    require_intact_parts,
     source_identity,
     validate_resume,
     write_checkpoint,
@@ -535,9 +536,19 @@ def _extract_checkpointed(
     resumed_from = 0
     parts: list[PartRecord] = []
     index = 0
+    checkpoint: Checkpoint | None = None
     if args.resume:
         checkpoint = read_checkpoint(manifest)
         validate_resume(checkpoint, args.source, config)
+        if checkpoint.parts:
+            # Continue in the format the checkpoint was started in, whatever --format
+            # says now: the parts already on disk are the ones being added to.
+            extension = checkpoint.parts[-1].name.rsplit(".", 1)[-1]
+        # The manifest is only worth trusting if the parts it names are still there.
+        # `records_consumed` is what a resume skips, so a part that has been deleted
+        # means walking straight past rows nobody will ever write -- and finishing
+        # with a success. Refuse instead.
+        require_intact_parts(checkpoint, parts_dir, extension)
         resumed_from = checkpoint.records_consumed
         parts = list(checkpoint.parts)
         index = len(parts)
@@ -548,7 +559,12 @@ def _extract_checkpointed(
             f"writing over it would throw away work that has already been committed."
         )
 
-    if args.resume and read_checkpoint(manifest).complete:
+    if checkpoint is not None and checkpoint.complete:
+        # Reached only when the parts agree, because require_intact_parts has already
+        # run: a complete checkpoint whose parts are gone is refused above rather than
+        # waved through with a warning. The user is about to use that output, and a
+        # warning on a command that exits 0 is the kind of thing that gets missed --
+        # which is the same reasoning that made the incomplete case an error.
         print(
             f"the checkpoint at {str(manifest)!r} is already complete; nothing to do",
             file=sys.stderr,
@@ -576,7 +592,7 @@ def _extract_checkpointed(
     rejections = _rejection_log(
         parts_dir,
         append=bool(args.resume),
-        initial=read_checkpoint(manifest).rejected if args.resume else 0,
+        initial=0 if checkpoint is None else checkpoint.rejected,
     )
     writer: RowWriter | None = None
     current_part: Path | None = None
@@ -604,7 +620,23 @@ def _extract_checkpointed(
                 # about work that was done.
                 head = list(islice(stream, 1))
                 if not head:
+                    # The source ran out. When it does so exactly on a part boundary,
+                    # no part was short, so nothing above has recorded that the run is
+                    # finished -- the manifest would keep saying complete: false while
+                    # the summary said true, and a resume would re-read the whole
+                    # document to skip all of it, every time, for ever. Write it down.
                     complete = True
+                    write_checkpoint(
+                        manifest,
+                        Checkpoint(
+                            source=identity,
+                            config=config_hash,
+                            records_consumed=records_consumed,
+                            rejected=rejections.count,
+                            parts=tuple(parts),
+                            complete=True,
+                        ),
+                    )
                     break
 
                 current_part = parts_dir / part_name(index, extension)
