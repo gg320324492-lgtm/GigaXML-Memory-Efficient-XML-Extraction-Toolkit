@@ -95,14 +95,20 @@ The one-field rows are a control, not the headline: a single-field config is the
 member of this family to run, and quoting it alone would overstate what a real config
 costs. Field count costs about **2.5×** in throughput.
 
-To reproduce, generate the datasets and run the harness:
+To reproduce, generate the datasets and run the harness in [`benchmarks/`](benchmarks):
 
 ```bash
 gigaxml generate --size 100MB -o data/b100m.xml
 gigaxml generate --size 1GB   -o data/b1g.xml
 gigaxml generate --size 4GB   -o data/b4g.xml
-python .probe7-bench.py
+python benchmarks/bench_extraction.py
 ```
+
+`--size` is approximate: `--size 1GB` produces 1033.65 MiB, not 1024, and the sizes above
+are the measured ones. Peak and delta are both reported because either alone can be
+misread — peak includes about 32 MiB of interpreter and library overhead, delta is what
+the workload is responsible for, and both baselines in this repository are taken after
+every import so that two deltas are comparable.
 
 ## Non-goals
 
