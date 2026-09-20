@@ -15,10 +15,13 @@ Measured in subprocesses through ``tests/_mem.py``. Excluded from CI (A11).
 
 from __future__ import annotations
 
+import time
+from itertools import chain, islice
 from pathlib import Path
 
 import pytest
 
+from gigaxml.parser.streaming import StreamingRecordReader
 from tests._mem import fastforward_in_subprocess, plain_extract_in_subprocess
 
 pytestmark = pytest.mark.performance
@@ -104,3 +107,66 @@ def test_skipping_costs_no_more_memory_than_processing(s400_path: Path, tmp_path
         f"same records; the fast-forward is accumulating something"
     )
     assert delta_skip <= ABSOLUTE_LIMIT_MB
+
+
+def test_the_part_check_costs_a_small_fraction_of_a_full_extraction(
+    tmp_path: Path,
+) -> None:
+    """``verify_parts`` is paid on every resume, so its cost needs a ceiling.
+
+    It reads the parts back to count rows -- Parquet from its metadata, the text formats
+    by scanning -- and that is the price of not trusting a number that may describe files
+    which are no longer there. Measured at 660 ms for 24.9 MiB of CSV, about 4% of a full
+    extraction of the same source.
+
+    The ceiling here is deliberately loose: the point is to notice if the check ever
+    becomes something you would feel, not to pin a millisecond. A regression that made
+    it, say, re-parse the source would be orders of magnitude out, and this catches that.
+    """
+    from gigaxml.checkpoint import Checkpoint, PartRecord, verify_parts
+    from gigaxml.config import parse_config
+    from gigaxml.run import consume_records
+    from gigaxml.writers import create_writer
+
+    config = parse_config(
+        {"record": "/catalog/products/product", "fields": {"id": {"path": "@id"}}}
+    )
+    parts_dir = tmp_path / "parts"
+    parts_dir.mkdir()
+
+    # One iterator, not one per slice: StreamingRecordReader.__iter__ is a generator
+    # function, so islice(reader, ...) re-parses the document from the top every time
+    # and the loop never ends. (This is the trap that hung the checkpoint loop.)
+    stream = iter(StreamingRecordReader("data/s10.xml", config.record_path))
+    parts: list[PartRecord] = []
+    index = 0
+    while True:
+        head = list(islice(stream, 1))
+        if not head:
+            break
+        path = parts_dir / f"part-{index:05d}.csv"
+        writer = create_writer(path, config.fields, header=index == 0)
+        with writer:
+            consume_records(chain(head, islice(stream, 4_999)), config, writer)
+        parts.append(PartRecord(name=path.name, rows=writer.rows_written))
+        index += 1
+        if writer.rows_written < 5_000:
+            break
+
+    checkpoint = Checkpoint(
+        source={},
+        config="c",
+        records_consumed=sum(p.rows for p in parts),
+        rejected=0,
+        parts=tuple(parts),
+        complete=True,
+    )
+    total_mib = sum((parts_dir / part.name).stat().st_size for part in parts) / (1 << 20)
+
+    started = time.perf_counter()
+    problems = verify_parts(checkpoint, parts_dir, "csv")
+    elapsed = time.perf_counter() - started
+
+    print(f"[verify] {len(parts)} parts / {total_mib:.1f} MiB CSV -> {elapsed * 1000:.0f} ms")
+    assert problems == []
+    assert elapsed < 5.0, f"checking {total_mib:.1f} MiB took {elapsed:.2f}s"

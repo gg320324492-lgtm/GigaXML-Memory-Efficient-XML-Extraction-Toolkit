@@ -311,6 +311,16 @@ class RowWriter(ABC):
     def _publish(self) -> None:
         """Move the finished partial file onto the target. The only step that does.
 
+        **This assumes the rename is atomic, which holds only within one filesystem.**
+        The partial file is therefore created beside the target rather than in a
+        temporary directory, so the two are on the same volume by construction.
+        ``os.replace`` across devices is not a rename at all: the implementation falls
+        back to copying the bytes and then deleting the source, and a crash during the
+        copy leaves a target that is neither the old file nor the new one -- exactly the
+        state this mechanism exists to make impossible. Nothing here checks for that
+        case, because the only way to reach it is to put the partial file somewhere
+        else on purpose.
+
         Raises:
             WriterError: the target cannot be replaced -- on Windows most often
                 because another program has it open.

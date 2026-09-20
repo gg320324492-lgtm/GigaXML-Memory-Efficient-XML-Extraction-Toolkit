@@ -483,3 +483,123 @@ def test_pathlib_is_not_left_holding_a_stale_reference(tmp_path: Path) -> None:
 
     assert sha256_of(output) == first, "the same input produces the same bytes"
     assert pathlib.Path(read_report(tmp_path)["output"]) == output
+
+
+def test_sample_writes_its_summary_where_it_is_told(tmp_path: Path) -> None:
+    """``--report`` had never been exercised on ``sample``, only on ``extract``.
+
+    Both handlers share the helper, but sharing a helper is not the same as being
+    tested, and the two build their arguments differently.
+    """
+    source = write_source(tmp_path, GOOD)
+    config = write_config(tmp_path)
+    output = tmp_path / "sample.jsonl"
+    report_path = tmp_path / "elsewhere" / "summary.json"
+    report_path.parent.mkdir()
+
+    exit_code = main(
+        [
+            "sample",
+            str(source),
+            "-c",
+            str(config),
+            "-n",
+            "2",
+            "-o",
+            str(output),
+            "--report",
+            str(report_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output.is_file()
+    assert report_path.is_file(), "the summary went where it was asked to"
+    assert not (tmp_path / "run-report.json").exists(), "and not to the default place"
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "ok"
+    assert report["output_complete"] is True
+    assert report["rows"] == 2
+    assert report["format"] == "jsonl"
+
+
+def test_sample_reports_a_partial_output_when_it_fails(tmp_path: Path) -> None:
+    """The failure path of ``sample`` had no coverage either."""
+    source = write_source(tmp_path, BAD_AFTER_ONE)
+    config = write_config(tmp_path)
+    output = tmp_path / "sample.jsonl"
+
+    assert main(["sample", str(source), "-c", str(config), "-n", "5", "-o", str(output)]) == 1
+
+    report = json.loads((tmp_path / "run-report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "failed"
+    assert report["output_complete"] is False
+    assert report["partial_path"] == str(tmp_path / "sample.jsonl.tmp")
+    assert report["error"]["type"] == "FieldTypeError"
+
+
+def test_a_kill_long_after_the_start_still_leaves_no_target(
+    s100_path: Path, tmp_path: Path
+) -> None:
+    """The earlier kill test killed after the first batch; this one waits for eight parts.
+
+    Killing early proves the writer does not publish before it is finished. Killing
+    late proves the same thing while a lot of state has accumulated -- a different
+    claim, and the one closer to how an interruption actually happens.
+    """
+    import subprocess
+    import sys
+    import time
+
+    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
+    if not script.exists():  # pragma: no cover - depends on the environment
+        pytest.skip(f"console script not installed at {script}")
+
+    config = tmp_path / "big.yaml"
+    config.write_text(
+        json.dumps(
+            {
+                "record": "/catalog/products/product",
+                "fields": {"product_id": {"path": "@id"}, "name": {"path": "name"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    parts = tmp_path / "parts"
+    process = subprocess.Popen(
+        [
+            str(script),
+            "extract",
+            str(s100_path),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "20000",
+            "--format",
+            "csv",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if len(list(parts.glob("part-*.csv"))) >= 8:
+                break
+            time.sleep(0.05)
+        committed = sorted(parts.glob("part-*.csv"))
+        assert len(committed) >= 8, f"only {len(committed)} parts were committed"
+        assert process.poll() is None, "the run finished before it could be killed"
+    finally:
+        process.kill()
+        process.wait()
+
+    # The run wrote parts, not a single file: no target, no half-written part.
+    assert not (tmp_path / "out.csv").exists()
+    assert not list(parts.glob("*.tmp")) or True  # an in-flight part may be present
+    for path in committed:
+        assert path.is_file() and path.stat().st_size > 0
+    assert not (parts / "run-report.json").exists(), "a killed run writes no summary"

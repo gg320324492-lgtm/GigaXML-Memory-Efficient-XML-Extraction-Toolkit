@@ -29,4 +29,12 @@ jobs:
           ruff format --check .
 
       - name: Unit, integration and security tests
-        run: pytest -q tests/unit tests/integration
+        # The performance tests are excluded: they measure memory and throughput, take
+        # minutes, and are not a pass/fail signal (see the performance marker in
+        # pyproject.toml). Coverage is measured over the source only.
+        run: |
+          pytest -q \
+            --cov=src/gigaxml \
+            --cov-report=term-missing \
+            --cov-fail-under=95 \
+            tests/unit tests/integration

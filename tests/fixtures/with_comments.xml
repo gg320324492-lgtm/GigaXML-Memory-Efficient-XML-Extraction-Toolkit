@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- a comment before the root element -->
+<root>
+  <!-- a comment between the root and the first record -->
+  <item><id>1</id><!-- inside the record, before a field --><name>A</name></item>
+  <item><id>2</id><name>B</name><!-- after a field --></item>
+  <!-- a comment after the last record -->
+</root>
+<!-- a comment after the root element -->

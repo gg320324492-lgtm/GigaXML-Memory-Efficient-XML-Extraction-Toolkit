@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <item><id>1</id><body><![CDATA[<b>bold</b> & "quoted"]]></body></item>
+  <item><id>2</id><body>plain text</body></item>
+  <item><id>3</id><body><![CDATA[a & b]]> tail</body></item>
+</root>

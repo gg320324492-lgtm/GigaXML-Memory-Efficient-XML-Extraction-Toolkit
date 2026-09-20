@@ -199,6 +199,29 @@ def resolve_record_tags(
     )
 
 
+def _parser_options() -> dict[str, bool]:
+    """The parser options every read uses. Deliberately not configurable.
+
+    These five are the whole of the defence against a hostile document, and they
+    matter **together**. ``huge_tree=False`` is what refuses a document that is too
+    deeply nested, carries a single enormous text node, or is amplified by entities,
+    so turning it on to accommodate one legitimately deep document would remove all
+    three limits at once. ``resolve_entities`` and ``load_dtd`` stop XXE;
+    ``no_network`` stops a remote DTD being fetched at all.
+
+    They are returned rather than inlined so that a test can assert them directly.
+    A change here should fail a test rather than quietly widening what the tool
+    accepts -- see ``tests/integration/test_security_limits.py``.
+    """
+    return {
+        "resolve_entities": False,
+        "no_network": True,
+        "load_dtd": False,
+        "attribute_defaults": False,
+        "huge_tree": False,
+    }
+
+
 class StreamingRecordReader:
     """Iterate the records of a large XML document with bounded memory.
 
@@ -326,15 +349,9 @@ class StreamingRecordReader:
                 # otherwise accumulate for the whole document. See the module
                 # docstring for the measurement that forced this.
                 #
-                # --- Security defaults. Deliberately not configurable: ---
-                # entities are never expanded, the network is never touched and
-                # no DTD (internal or external) is loaded. Exposing these as
-                # flags would let a config file silently turn XXE back on.
-                resolve_entities=False,
-                no_network=True,
-                load_dtd=False,
-                attribute_defaults=False,
-                huge_tree=False,
+                # Security defaults come from _parser_options(): entities are never
+                # expanded, the network is never touched and no DTD is loaded.
+                **_parser_options(),
             )
 
             for event, elem in context:

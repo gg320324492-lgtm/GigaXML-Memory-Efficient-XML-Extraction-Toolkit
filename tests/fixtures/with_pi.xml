@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="style.xsl"?>
+<root>
+  <?before-records a?>
+  <item><id>1</id><?inside a?><name>A</name></item>
+  <item><id>2</id><name>B</name></item>
+</root>
+<?after-root b?>

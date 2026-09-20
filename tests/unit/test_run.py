@@ -240,3 +240,44 @@ def test_the_loop_takes_every_value_inside_the_iteration_step(tmp_path: Path) ->
 
     lines = (tmp_path / "out.csv").read_text(encoding="utf-8").splitlines()
     assert lines == ["id,name", "1,A", "3,C"]
+
+
+def test_the_rejection_log_flushes_on_bytes_when_lines_do_not(tmp_path: Path) -> None:
+    """The line threshold is not the only one, and the other had no test.
+
+    ``reject`` flushes at 256 lines **or** 512 KiB, whichever comes first. The byte
+    threshold exists so that a long message cannot let the file object's own buffer
+    fill first -- if it did, the log would hold more lines than ``count`` reports, and
+    the two numbers this whole mechanism keeps in step would drift apart again. Short
+    messages never reach it, so it needs messages that do.
+    """
+    from gigaxml.run import _REJECTION_FLUSH_BYTES, RejectionLog
+
+    path = tmp_path / "rejected.jsonl"
+    log = RejectionLog(path)
+    # One message comfortably over the byte threshold, so a single rejection flushes.
+    huge = "x" * (_REJECTION_FLUSH_BYTES + 1024)
+
+    log.reject(1, "/root/item", ValueError(huge))
+
+    assert log.total == 1
+    assert log.count == 1, "the byte threshold should have flushed a single long line"
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+    log.close()
+
+
+def test_the_byte_threshold_keeps_the_count_honest(tmp_path: Path) -> None:
+    """Whatever mix of long and short messages, count never runs ahead of the file."""
+    from gigaxml.run import _REJECTION_FLUSH_BYTES, RejectionLog
+
+    path = tmp_path / "rejected.jsonl"
+    log = RejectionLog(path)
+    payload = "y" * (_REJECTION_FLUSH_BYTES // 4)
+
+    for index in range(1, 13):
+        log.reject(index, "/root/item", ValueError(payload))
+        on_disk = len(path.read_text(encoding="utf-8").splitlines())
+        assert log.count == on_disk, f"diverged after {index} long rejections"
+
+    log.close()
+    assert log.count == len(path.read_text(encoding="utf-8").splitlines()) == 12

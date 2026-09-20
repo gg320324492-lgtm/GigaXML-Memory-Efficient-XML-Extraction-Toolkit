@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <item><id>1</id><body>Hello <b>world</b> again</body></item>
+  <item><id>2</id><body>Only text</body></item>
+  <item><id>3</id><body><b>all</b> inside <i>elements</i></body></item>
+</root>

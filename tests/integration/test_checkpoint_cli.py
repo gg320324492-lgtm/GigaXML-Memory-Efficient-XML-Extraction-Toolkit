@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from gigaxml.checkpoint import CHECKPOINT_FILENAME
+from gigaxml.checkpoint import CHECKPOINT_FILENAME, Checkpoint
 from gigaxml.cli import main
 from gigaxml.run import DEFAULT_RUN_REPORT_FILENAME
 
@@ -1220,3 +1220,154 @@ def test_a_divisible_run_resumes_without_going_round_again(
         assert "already complete" in capsys.readouterr().err
 
     assert data_bytes(parts) == before
+
+
+@pytest.mark.parametrize("exit_kind", ["success", "failure", "killed"])
+def test_the_manifest_always_matches_the_disk(
+    tmp_path: Path, s100_path: Path, exit_kind: str
+) -> None:
+    """Whatever way a run ends, what it says about itself matches what it wrote.
+
+    FIX-3 was fixed at one exit point -- the source running out -- and that is exactly
+    the kind of fix that leaves a sibling path broken. This walks three genuinely
+    different endings and checks the same invariant on each: every part the manifest
+    names exists with the number of rows it claims, ``records_consumed`` agrees with
+    them, and ``complete`` tells the truth about whether the run finished.
+
+    The failure case really fails: the eighth record cannot be converted and the run
+    aborts, so the first part is committed and the second is not.
+    """
+    import subprocess
+    import sys
+    import time
+
+    from gigaxml.checkpoint import verify_parts
+
+    parts = tmp_path / "parts"
+
+    if exit_kind == "success":
+        document = (
+            '<?xml version="1.0"?><root>'
+            + "".join(f"<item><id>{n}</id><name>N{n}</name></item>" for n in range(1, 13))
+            + "</root>"
+        )
+        source = write_source(tmp_path, document)
+        config = write_config(tmp_path)
+        assert (
+            main(
+                [
+                    "extract",
+                    str(source),
+                    "-c",
+                    str(config),
+                    "-o",
+                    str(parts),
+                    "--checkpoint-every",
+                    "5",
+                    "--format",
+                    "csv",
+                ]
+            )
+            == 0
+        )
+    elif exit_kind == "failure":
+        document = (
+            '<?xml version="1.0"?><root>'
+            + "".join(
+                f"<item><id>{'bad' if n == 8 else n}</id><name>N{n}</name></item>"
+                for n in range(1, 13)
+            )
+            + "</root>"
+        )
+        source = write_source(tmp_path, document)
+        config = write_config(tmp_path)
+        assert (
+            main(
+                [
+                    "extract",
+                    str(source),
+                    "-c",
+                    str(config),
+                    "-o",
+                    str(parts),
+                    "--checkpoint-every",
+                    "5",
+                    "--format",
+                    "csv",
+                ]
+            )
+            == 1
+        )
+        assert len(part_names(parts, "csv")) == 1, "the first part committed, the second did not"
+    else:
+        script = Path(sys.executable).parent / (
+            "gigaxml.exe" if sys.platform == "win32" else "gigaxml"
+        )
+        if not script.exists():  # pragma: no cover - depends on the environment
+            pytest.skip(f"console script not installed at {script}")
+        config = tmp_path / "big.yaml"
+        config.write_text(
+            json.dumps(
+                {
+                    "record": "/catalog/products/product",
+                    "fields": {"product_id": {"path": "@id"}, "name": {"path": "name"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        process = subprocess.Popen(
+            [
+                str(script),
+                "extract",
+                str(s100_path),
+                "-c",
+                str(config),
+                "-o",
+                str(parts),
+                "--checkpoint-every",
+                "20000",
+                "--format",
+                "csv",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                if len(part_names(parts, "csv")) >= 3:
+                    break
+                time.sleep(0.05)
+            assert len(part_names(parts, "csv")) >= 3
+            assert process.poll() is None
+        finally:
+            process.kill()
+            process.wait()
+
+    manifest = read_manifest(parts)
+    extension = manifest["parts"][-1]["name"].rsplit(".", 1)[-1] if manifest["parts"] else "csv"
+
+    assert verify_parts(_as_checkpoint(manifest), parts, extension) == [], (
+        "every part the manifest names is on disk with the row count it claims"
+    )
+
+    total = sum(part["rows"] for part in manifest["parts"])
+    assert manifest["records_consumed"] == total + manifest["rejected"], (
+        "records_consumed counts what was written plus what was rejected"
+    )
+    assert manifest["complete"] is (exit_kind == "success"), (
+        "only a run that reached the end of the source says it is complete"
+    )
+
+
+def _as_checkpoint(manifest: dict) -> Checkpoint:
+    from gigaxml.checkpoint import PartRecord
+
+    return Checkpoint(
+        source=manifest["source"],
+        config=manifest["config"],
+        records_consumed=manifest["records_consumed"],
+        rejected=manifest["rejected"],
+        parts=tuple(PartRecord(name=p["name"], rows=p["rows"]) for p in manifest["parts"]),
+        complete=manifest["complete"],
+    )
