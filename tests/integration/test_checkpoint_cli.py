@@ -748,8 +748,32 @@ def test_a_killed_run_keeps_committed_parts_and_resumes_to_the_same_result(
     manifest = read_manifest(parts)
     assert manifest["complete"] is False, "it was killed, so it cannot be complete"
     assert manifest["records_consumed"] > 0
+
+    # What the design guarantees, in both directions.
+    #
+    # A part is renamed into place **before** the manifest that names it is written, and
+    # that order is deliberate. The other way round the manifest would list a part that
+    # does not exist yet, and verify_parts -- which checks that every part the manifest
+    # names is present with the row count it claims -- would refuse the resume, leaving a
+    # run that cannot be continued at all. The cost of the order chosen is that a kill
+    # inside the window between the two leaves one part on disk the manifest does not
+    # mention. That side is safe: verify_parts only ever checks manifest -> disk, so the
+    # extra part is ignored, and a resume starts at part-{len(parts)} and overwrites it
+    # with the same bytes. So the guarantee is "the manifest is never ahead", not "the
+    # two are equal" -- and asserting equality made this test fail whenever the kill
+    # happened to land in that window.
+    from gigaxml.checkpoint import verify_parts
+
     committed = part_names(parts, "csv")
-    assert len(committed) == len(manifest["parts"]), "the manifest names exactly the parts on disk"
+    listed = [part["name"] for part in manifest["parts"]]
+
+    assert verify_parts(_as_checkpoint(manifest), parts, "csv") == [], (
+        "the manifest must never name a part that is missing or a different size"
+    )
+    assert 0 <= len(committed) - len(listed) <= 1, (
+        f"disk holds {len(committed)} parts and the manifest lists {len(listed)}: the "
+        f"manifest must never be ahead of the disk, and the disk can only lead by one"
+    )
     for name in committed:
         assert (parts / name).is_file(), "every committed part is readable"
 
@@ -1371,3 +1395,63 @@ def _as_checkpoint(manifest: dict) -> Checkpoint:
         parts=tuple(PartRecord(name=p["name"], rows=p["rows"]) for p in manifest["parts"]),
         complete=manifest["complete"],
     )
+
+
+# --- the ordering that makes an interrupted run recoverable -----------------
+
+
+def test_a_part_on_disk_that_the_manifest_does_not_name_is_recoverable(
+    tmp_path: Path,
+) -> None:
+    """The window between a part landing and the manifest naming it, built directly.
+
+    Reproducing it by killing at the right moment is a coin flip -- the window is a few
+    milliseconds wide -- so the state is constructed instead. This is the state the
+    ordering in the loop can produce, and the point of the test is that a resume handles
+    it: the extra part is ignored, the run continues, and the result is the same as if
+    the kill had landed a moment later.
+    """
+    document = (
+        '<?xml version="1.0"?><root>'
+        + "".join(f"<item><id>{n}</id><name>N{n}</name></item>" for n in range(1, 13))
+        + "</root>"
+    )
+    source = write_source(tmp_path, document)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    whole = concat(parts, "csv")
+
+    # Rewind the manifest by one part, leaving the part itself on disk. This is exactly
+    # what a kill between the rename and the manifest write leaves behind.
+    manifest = read_manifest(parts)
+    dropped = manifest["parts"].pop()
+    manifest["records_consumed"] -= dropped["rows"]
+    manifest["complete"] = False
+    (parts / CHECKPOINT_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
+    assert (parts / dropped["name"]).is_file(), "the part is still there, unnamed"
+
+    from gigaxml.checkpoint import verify_parts
+
+    assert verify_parts(_as_checkpoint(manifest), parts, "csv") == [], (
+        "the extra part is not a problem: the check only looks manifest -> disk"
+    )
+
+    assert main([*args, "--resume"]) == 0
+
+    final = read_manifest(parts)
+    assert final["complete"] is True
+    assert final["records_consumed"] == 12
+    assert concat(parts, "csv") == whole, "and the result is what one pass would have written"

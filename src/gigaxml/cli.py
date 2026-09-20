@@ -677,6 +677,27 @@ def _extract_checkpointed(
 
                 if stats.records_processed < args.checkpoint_every:
                     complete = True
+
+                # --- the order here is deliberate: part first, manifest second ---
+                #
+                # By this point `with writer:` has already renamed the part into place,
+                # and only now does the manifest that names it get written. Reversing the
+                # two would be worse than it looks: the manifest would briefly list a part
+                # that does not exist, and `verify_parts` -- which refuses a resume when a
+                # part the manifest names is missing -- would then reject that resume. A
+                # run interrupted in that window could not be continued at all.
+                #
+                # The cost of the order chosen is that a kill *here* leaves one part on
+                # disk that the manifest does not mention. That side is safe. `verify_parts`
+                # only ever checks manifest -> disk, so an extra part is invisible to it,
+                # and a resume starts writing at `part-{len(parts)}` -- which is exactly
+                # the unnamed one -- and overwrites it with the same bytes, because the
+                # fast-forward is deterministic and lands in the same place.
+                #
+                # So the invariant is "the manifest is never ahead of the disk", not "the
+                # two agree". Closing the window entirely is not possible across two files
+                # without a journal, and would not be worth it: the direction it fails in
+                # is the recoverable one.
                 write_checkpoint(
                     manifest,
                     Checkpoint(
