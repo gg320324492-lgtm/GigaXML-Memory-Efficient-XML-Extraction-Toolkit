@@ -309,12 +309,25 @@ class StreamingRecordReader:
 
         ``keep_tail=True`` preserves the whitespace that follows the element, so
         the surviving tree stays well-formed.
+
+        **The parent check is load-bearing, not defensive padding.** Unlinking walks
+        backwards through an element's preceding siblings, and the root element has no
+        parent to unlink from. That normally never comes up, because the root has no
+        preceding sibling either -- but a comment or a processing instruction *before*
+        the root **is** its preceding sibling. A document with a licence header used to
+        fail here with ``TypeError: 'NoneType' object does not support item deletion``,
+        which reached the user as a bare traceback rather than an ``error:`` line.
+
+        The parent is fetched once: deleting siblings does not change it.
         """
         if not self._clean:
             return
         elem.clear(keep_tail=True)
+        parent = elem.getparent()
+        if parent is None:
+            return
         while elem.getprevious() is not None:
-            del elem.getparent()[0]
+            del parent[0]
 
     def _matches(self, stack: Sequence[str]) -> bool:
         """True when the open-element stack satisfies the configured record path.
@@ -332,6 +345,37 @@ class StreamingRecordReader:
         return tuple(stack[depth - len(chain) :]) == chain
 
     def __iter__(self) -> Iterator[etree._Element]:
+        """Walk the document, yielding one record at a time.
+
+        **Every call to ``iter(reader)`` starts a fresh parse from the beginning of the
+        document.** This is a generator function, so ``reader`` is re-iterable rather
+        than a one-shot iterator -- which is convenient (``list(reader)`` twice works)
+        and a trap, because it means a slice taken from the reader is a slice of a
+        *new* walk.
+
+        So: **consume the reader through one iterator, not many.** Take
+        ``stream = iter(reader)`` once and slice that. Slicing the reader itself is the
+        mistake, and it does not raise -- it silently re-reads::
+
+            # WRONG -- hangs. Each islice(reader, ...) parses from the top again, so
+            # the loop below never advances past the first N records.
+            while True:
+                head = list(islice(reader, 1))
+                if not head:
+                    break
+                consume(chain(head, islice(reader, n - 1)))
+
+            # RIGHT -- one walk, consumed progressively.
+            stream = iter(reader)
+            while True:
+                head = list(islice(stream, 1))
+                if not head:
+                    break
+                consume(chain(head, islice(stream, n - 1)))
+
+        A record's element is cleared as soon as the walk moves past it, so extract
+        within the iteration and never keep the element. See the module docstring.
+        """
         matched = 0
         record_depth = 0
         # Qualified tags of the elements currently open, outermost first. lxml's

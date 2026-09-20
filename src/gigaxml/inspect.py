@@ -537,10 +537,19 @@ def _release(elem: etree._Element) -> None:
     ``keep_tail=True`` preserves the whitespace that follows the element, so the
     surviving tree stays well-formed. Identical to the reader's rule, for the same
     reason: this is what keeps the walk's memory flat.
+
+    **The parent check is load-bearing.** The root element has no parent, and it only
+    has a preceding sibling when the document opens with a comment or a processing
+    instruction -- which is exactly what a licence header looks like. Without this the
+    walk raised ``TypeError`` on such documents, and ``inspect`` is the command a user
+    reaches for precisely when they do not recognise a document.
     """
     elem.clear(keep_tail=True)
+    parent = elem.getparent()
+    if parent is None:
+        return
     while elem.getprevious() is not None:
-        del elem.getparent()[0]
+        del parent[0]
 
 
 def _index_of(candidates: Sequence[Candidate], path: str | None) -> int:

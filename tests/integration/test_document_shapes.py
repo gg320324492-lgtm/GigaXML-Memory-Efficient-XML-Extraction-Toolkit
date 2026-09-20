@@ -16,6 +16,7 @@ marker. See the report for the full characterisation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -123,21 +124,20 @@ def test_comments_inside_the_tree_do_not_disturb_values(tmp_path: Path) -> None:
     assert rows == [{"a": "1"}, {"a": "2"}]
 
 
-@pytest.mark.xfail(strict=True, reason="a leading comment crashes _release; see the report")
 def test_a_comment_before_the_root_is_handled() -> None:
-    """Known defect, pinned rather than fixed.
+    """A comment before the root used to make this raise ``TypeError``.
 
-    ``_release`` loops ``while elem.getprevious() is not None: del elem.getparent()[0]``.
-    The root element has no parent, so the loop is normally never entered -- but a
-    comment before the root *is* the root's previous sibling, so it is entered and the
-    deletion raises ``TypeError``. Any document with a licence header hits this.
+    ``_release`` unlinks an element's consumed preceding siblings, and the root has no
+    parent to unlink from. That never came up while the root had no preceding sibling --
+    but a comment before the root **is** its preceding sibling, so the loop was entered
+    and deleted from ``None``. These two tests were ``xfail(strict=True)`` while the
+    defect was outstanding; the marker is gone because it is fixed.
     """
     assert candidate_paths("with_comments.xml") == ["/root/item"]
 
 
-@pytest.mark.xfail(strict=True, reason="a leading PI crashes _release; see the report")
 def test_a_pi_before_the_root_is_handled() -> None:
-    """The same defect, reached through a processing instruction."""
+    """The same shape, reached through a processing instruction."""
     assert candidate_paths("with_pi.xml") == ["/root/item"]
 
 
@@ -247,3 +247,123 @@ def test_mixed_content_does_not_leak_between_records(tmp_path: Path) -> None:
 
     lines = output.read_text(encoding="utf-8").splitlines()
     assert lines == ["id,bold", "1,world", "2,", "3,all"]
+
+
+# --- the leading comment must change nothing at all -------------------------
+
+
+LEADING_SHAPES = {
+    "plain": "<root><item><a>1</a></item><item><a>2</a></item></root>",
+    "comment": "<!-- (c) 2026 --><root><item><a>1</a></item><item><a>2</a></item></root>",
+    "pi": "<?x y?><root><item><a>1</a></item><item><a>2</a></item></root>",
+    "several": (
+        "<!-- one -->\n<?pi one?>\n<!-- two -->\n"
+        "<root><item><a>1</a></item><item><a>2</a></item></root>"
+    ),
+    "lead_and_trail": (
+        "<!-- lead --><root><item><a>1</a></item><item><a>2</a></item></root><!-- trail -->"
+    ),
+}
+
+
+def _write_shapes(tmp_path: Path) -> dict[str, Path]:
+    sources = {}
+    for name, text in LEADING_SHAPES.items():
+        path = tmp_path / f"{name}.xml"
+        path.write_text(text, encoding="utf-8")
+        sources[name] = path
+    return sources
+
+
+@pytest.mark.parametrize("command", ["extract", "sample"])
+def test_what_is_in_front_of_the_root_changes_nothing(tmp_path: Path, command: str) -> None:
+    """Not "it does not crash" -- the output is byte-for-byte the same.
+
+    A leading comment is metadata about the file, not part of the data, so a document
+    with one has to produce exactly what the same document without one produces. The
+    earlier defect made these documents fail outright; the risk now is a fix that makes
+    them merely *work* while shifting a value or a row somewhere.
+    """
+    sources = _write_shapes(tmp_path)
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        json.dumps({"record": "/root/item", "fields": {"a": {"path": "a"}}}), encoding="utf-8"
+    )
+
+    digests: dict[str, str] = {}
+    for name, source in sources.items():
+        # The extension decides the format, so it has to be a real one.
+        if command == "extract":
+            output = tmp_path / f"{name}-extract.csv"
+            args = ["extract", str(source), "-c", str(config), "-o", str(output)]
+        else:
+            output = tmp_path / f"{name}-sample.jsonl"
+            args = ["sample", str(source), "-c", str(config), "-n", "2", "-o", str(output)]
+        assert main(args) == 0, f"{command} failed on {name}"
+        digests[name] = hashlib.sha256(output.read_bytes()).hexdigest()
+
+    reference = digests["plain"]
+    for name, digest in digests.items():
+        assert digest == reference, f"{name} produced different bytes from plain"
+
+
+def test_what_is_in_front_of_the_root_does_not_change_the_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``inspect --json`` too, ignoring the fields that name the file itself."""
+    sources = _write_shapes(tmp_path)
+
+    payloads: dict[str, str] = {}
+    for name, source in sources.items():
+        capsys.readouterr()
+        assert main(["inspect", str(source), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        for field in ("source", "input_mb"):
+            payload.pop(field, None)
+        payloads[name] = json.dumps(payload, sort_keys=True)
+
+    reference = payloads["plain"]
+    for name, payload in payloads.items():
+        assert payload == reference, f"{name} produced a different report from plain"
+
+
+def test_a_leading_comment_survives_the_checkpoint_path(s100_path: Path, tmp_path: Path) -> None:
+    """The reader is shared, so the checkpoint and resume paths are covered too."""
+    # The comment goes after the XML declaration, not before it: a declaration is only
+    # legal at the very start of a document, and prepending to it is a different error
+    # from the one under test.
+    raw = s100_path.read_text(encoding="utf-8")
+    declaration, _, rest = raw.partition("?>")
+    document = f"{declaration}?>\n<!-- generated by something -->{rest}"
+    source = tmp_path / "with_header.xml"
+    source.write_text(document, encoding="utf-8")
+    config = tmp_path / "big.yaml"
+    config.write_text(
+        json.dumps(
+            {
+                "record": "/catalog/products/product",
+                "fields": {"product_id": {"path": "@id"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "50000",
+        "--format",
+        "csv",
+    ]
+
+    assert main(args) == 0
+    manifest = json.loads((parts / "checkpoint.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is True
+    assert manifest["records_consumed"] == 291_200
+
+    assert main([*args, "--resume"]) == 0

@@ -603,3 +603,35 @@ def test_a_kill_long_after_the_start_still_leaves_no_target(
     for path in committed:
         assert path.is_file() and path.stat().st_size > 0
     assert not (parts / "run-report.json").exists(), "a killed run writes no summary"
+
+
+def test_a_directory_named_like_the_partial_file_is_not_partial_output(
+    tmp_path: Path,
+) -> None:
+    """``partial_path`` must mean "a partial file", so a directory of that name is not one.
+
+    The check was ``exists()``, which is true for a directory as well as a file, so a
+    directory occupying that name made the summary point at it as if it held partial
+    output. The fix was one word -- ``is_file()`` -- and until now nothing pinned it:
+    the behaviour was right, and the next edit could have changed it back with no test
+    going red. That is exactly how the original ``exists()`` survived.
+
+    The directory has to be in place *before* the run, which is also why this lands on
+    the failure path rather than the success one: with the name taken, the writer cannot
+    open its partial file at all, so the run fails and still has to describe itself
+    correctly. There is no way to reach the success path in this state -- the writer
+    needs that name -- which is worth knowing rather than trying to test around.
+    """
+    source = write_source(tmp_path, GOOD)
+    config = write_config(tmp_path)
+    output = tmp_path / "out.csv"
+    (tmp_path / "out.csv.tmp").mkdir()
+
+    assert main(["extract", str(source), "-c", str(config), "-o", str(output)]) == 1
+
+    report = json.loads((tmp_path / "run-report.json").read_text(encoding="utf-8"))
+    assert report["output_complete"] is False
+    assert report["partial_path"] is None, "a directory is not partial output"
+    assert report["error"]["type"] == "WriterError"
+    assert not output.exists()
+    assert (tmp_path / "out.csv.tmp").is_dir(), "and the directory was left alone"
