@@ -146,7 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
             "everything costs 8.7s against 17.1s to extract and write it, so resuming "
             "saves roughly half of what you had already done: about 49%% of the total "
             "if you were 90%% through, about 5%% if you were 10%% through. Refused "
-            "outright if the source or the config has changed since the checkpoint."
+            "outright if the source or the config has changed since the checkpoint, or "
+            "if any part it names is missing or a different size -- checking that reads "
+            "the parts back, which costs about 4%% of a full extraction for CSV output "
+            "and almost nothing for Parquet. The parts already on disk decide the "
+            "format: a --format that disagrees is ignored, with a warning."
         ),
     )
     extract.add_argument(
@@ -544,6 +548,16 @@ def _extract_checkpointed(
             # Continue in the format the checkpoint was started in, whatever --format
             # says now: the parts already on disk are the ones being added to.
             extension = checkpoint.parts[-1].name.rsplit(".", 1)[-1]
+        if args.format is not None and args.format != extension:
+            # Say so rather than quietly doing the right thing. The parts are the
+            # truth and they win, but a caller who asked for parquet and got csv has
+            # been overruled, and silence about that is how a downstream tool ends up
+            # calling a parquet reader on a CSV.
+            print(
+                f"warning: --format {args.format} was ignored: this checkpoint holds "
+                f"{extension} parts, and the parts already written decide the format",
+                file=sys.stderr,
+            )
         # The manifest is only worth trusting if the parts it names are still there.
         # `records_consumed` is what a resume skips, so a part that has been deleted
         # means walking straight past rows nobody will ever write -- and finishing
@@ -579,7 +593,7 @@ def _extract_checkpointed(
             started=started,
             partial=None,
             checkpoint_info=_checkpoint_info(
-                args, parts_dir, resumed_from, resumed_from, parts, 0, True
+                args, parts_dir, extension, resumed_from, resumed_from, parts, 0, True
             ),
         )
         return 0
@@ -690,6 +704,7 @@ def _extract_checkpointed(
             checkpoint_info=_checkpoint_info(
                 args,
                 parts_dir,
+                extension,
                 resumed_from,
                 records_consumed,
                 parts,
@@ -711,6 +726,7 @@ def _extract_checkpointed(
         checkpoint_info=_checkpoint_info(
             args,
             parts_dir,
+            extension,
             resumed_from,
             records_consumed,
             parts,
@@ -751,6 +767,7 @@ def _part_partial(part: Path | None) -> Path | None:
 def _checkpoint_info(
     args: argparse.Namespace,
     parts_dir: Path,
+    extension: str,
     resumed_from: int,
     records_consumed: int,
     parts: Sequence[PartRecord],
@@ -762,9 +779,14 @@ def _checkpoint_info(
     ``records_consumed`` is cumulative and comes from the loop, which is the only
     place that knows how many records were rejected as well as written -- deriving it
     from the part row counts would silently drop the rejected ones.
+
+    ``extension`` is the format the parts are actually in, which on a resume is the
+    checkpoint's format rather than whatever ``--format`` asked for. The summary is a
+    record of what happened, so it reports that one -- reporting the request instead
+    would put a format in the receipt that no file on disk has.
     """
     return {
-        "format": args.format or DEFAULT_PART_FORMAT,
+        "format": extension,
         "directory": str(parts_dir),
         "resumed_from": resumed_from if args.resume else None,
         "records_consumed": records_consumed,

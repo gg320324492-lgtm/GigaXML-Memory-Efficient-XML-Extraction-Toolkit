@@ -785,6 +785,204 @@ def test_a_killed_run_keeps_committed_parts_and_resumes_to_the_same_result(
     assert combined == expected, "and the same lines, in the same order"
 
 
+# --- the summary reports the format the parts are really in ----------------
+
+
+def test_the_summary_reports_the_real_part_format(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The parts on disk decide the format, so the summary must say what they are.
+
+    A resume given a different ``--format`` correctly keeps writing the format the
+    checkpoint was started in -- but the summary used to echo the *request*, so a
+    downstream tool reading ``format: parquet`` would point a Parquet reader at CSV
+    files. Reporting the request instead of the fact is the same class of mistake as
+    a manifest that says a run is complete when it is not.
+    """
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+
+    assert main([*args, "--resume"]) == 0
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "extract",
+            str(source),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "5",
+            "--format",
+            "parquet",
+            "--resume",
+        ]
+    )
+
+    assert exit_code == 0, "the run itself is fine: the parts are the truth and they win"
+    report = json.loads((parts / DEFAULT_RUN_REPORT_FILENAME).read_text(encoding="utf-8"))
+    on_disk = sorted({path.suffix.lstrip(".") for path in parts.glob("part-*")})
+    assert on_disk == ["csv"], "the checkpoint's format is unchanged"
+    assert report["format"] == "csv", "the summary reports the files, not the request"
+
+    err = capsys.readouterr().err
+    assert "--format parquet was ignored" in err
+    assert "already complete" in err, "and the run still says it had nothing to do"
+
+
+def test_an_incomplete_resume_with_a_mismatched_format_is_also_reported(
+    tmp_path: Path, s100_path: Path
+) -> None:
+    """The same guarantee on the path that actually writes more parts."""
+    import subprocess
+    import sys
+    import time
+
+    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
+    if not script.exists():  # pragma: no cover - depends on the environment
+        pytest.skip(f"console script not installed at {script}")
+
+    config = tmp_path / "big.yaml"
+    config.write_text(
+        json.dumps(
+            {
+                "record": "/catalog/products/product",
+                "fields": {"product_id": {"path": "@id"}, "name": {"path": "name"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    parts = tmp_path / "parts"
+    process = subprocess.Popen(
+        [
+            str(script),
+            "extract",
+            str(s100_path),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "20000",
+            "--format",
+            "csv",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if len(part_names(parts, "csv")) >= 2:
+                break
+            time.sleep(0.05)
+        assert len(part_names(parts, "csv")) >= 2, "the run never committed two parts"
+    finally:
+        process.kill()
+        process.wait()
+
+    resumed = subprocess.run(
+        [
+            str(script),
+            "extract",
+            str(s100_path),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--checkpoint-every",
+            "20000",
+            "--format",
+            "parquet",
+            "--resume",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert "--format parquet was ignored" in resumed.stderr
+    report = json.loads((parts / DEFAULT_RUN_REPORT_FILENAME).read_text(encoding="utf-8"))
+    assert report["format"] == "csv"
+    assert sorted({path.suffix.lstrip(".") for path in parts.glob("part-*")}) == ["csv"]
+
+
+@pytest.mark.parametrize("extra", [[], ["--format", "csv"]])
+def test_no_warning_when_the_format_agrees_or_is_omitted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: list[str]
+) -> None:
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+    parts = tmp_path / "parts"
+    args = [
+        "extract",
+        str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(parts),
+        "--checkpoint-every",
+        "5",
+        "--format",
+        "csv",
+    ]
+    assert main(args) == 0
+    capsys.readouterr()
+
+    assert main([*args, "--resume", *extra]) == 0
+
+    err = capsys.readouterr().err
+    assert "was ignored" not in err
+    report = json.loads((parts / DEFAULT_RUN_REPORT_FILENAME).read_text(encoding="utf-8"))
+    assert report["format"] == "csv"
+
+
+def test_a_fresh_run_reports_the_format_it_was_asked_for(tmp_path: Path) -> None:
+    """Without a checkpoint there is nothing to be overruled by."""
+    source = write_source(tmp_path)
+    config = write_config(tmp_path)
+
+    for extension in ("csv", "jsonl"):
+        parts = tmp_path / f"parts-{extension}"
+        assert (
+            main(
+                [
+                    "extract",
+                    str(source),
+                    "-c",
+                    str(config),
+                    "-o",
+                    str(parts),
+                    "--checkpoint-every",
+                    "5",
+                    "--format",
+                    extension,
+                ]
+            )
+            == 0
+        )
+        report = json.loads((parts / DEFAULT_RUN_REPORT_FILENAME).read_text(encoding="utf-8"))
+        assert report["format"] == extension
+        assert report["checkpoint"]["format"] == extension
+
+
 # --- a deleted or altered part must not be skipped over ---------------------
 
 
