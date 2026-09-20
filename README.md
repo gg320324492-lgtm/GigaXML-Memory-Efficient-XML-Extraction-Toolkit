@@ -14,13 +14,14 @@ Measured on this machine, on a generated 4.05 GiB file holding 11,915,264 record
 | | |
 |---|---|
 | **Input** | 4142.72 MiB, 11,915,264 records |
-| **Time** | 274.38 s (15.1 MiB/s, 43,426 records/s) |
-| **Peak RSS** | 32.277 MiB |
-| **Increase over the post-import baseline** | **3.754 MiB** |
+| **Time** | 284.67 s (14.6 MiB/s, 41,856 records/s) |
+| **Peak RSS** | 33.703 MiB |
+| **Increase over the post-import baseline** | **5.059 MiB** |
 
-The same run at 1 GiB (2,978,816 records) added **5.168 MiB**. Four times the input, and
-the increase went *down* — nothing accumulates per record. Every number here comes from a
-script in this repository; see [Benchmarks](#benchmarks).
+The same run at 1 GiB (2,978,816 records) added **5.105 MiB** — four times the input and
+the increase did not move. Something that accumulated per record would make the four
+gigabyte figure four times the one gigabyte figure; it is flat to within a percent. Every
+number here comes from a script in this repository; see [Benchmarks](#benchmarks).
 
 The configuration used above reads six fields, including a nested path and a type
 conversion — the shapes a real config uses:
@@ -97,15 +98,17 @@ Three generated datasets, two configs, measured in a subprocess with `psutil`:
 ```
 dataset   fields     input MiB      records        s   MiB/s     peak    delta
 ------------------------------------------------------------------------------
-100MB     6 fields      100.57      290,900     6.61    15.2   32.742    4.297
-100MB     1 field       100.57      290,900     2.65    38.0   30.582    2.676
-1GB       6 fields     1033.65    2,978,816    67.17    15.4   33.328    5.168
-1GB       1 field      1033.65    2,978,816    27.07    38.2   30.723    2.141
-4GB       6 fields     4142.72   11,915,264   274.38    15.1   32.277    3.754
-4GB       1 field      4142.72   11,915,264   107.27    38.6   31.227    2.797
+100MB     6 fields      100.57      290,900     6.92    14.5   33.281    5.113
+100MB     1 field       100.57      290,900     2.69    37.4   31.203    2.617
+1GB       6 fields     1033.65    2,978,816    70.66    14.6   33.676    5.105
+1GB       1 field      1033.65    2,978,816    27.62    37.4   31.496    2.922
+4GB       6 fields     4142.72   11,915,264   284.67    14.6   33.703    5.059
+4GB       1 field      4142.72   11,915,264   112.04    37.0   31.500    2.973
 ```
 
 `peak` and `delta` are MiB; `delta` is against the same process's post-import baseline.
+`peak` is `PeakWorkingSetSize` — the maximum over the process's life, not the current RSS
+at the end, which reads 10–14% lower.
 The one-field rows are a control, not the headline: a single-field config is the easiest
 member of this family to run, and quoting it alone would overstate what a real config
 costs. Field count costs about **2.5×** in throughput.
@@ -154,9 +157,13 @@ every import so that two deltas are comparable.
   single text node over about 10 MB, or amplified by entities are refused rather than
   partially read. These are deliberate and there are no flags to turn them off.
 - **`--checkpoint-every` verifies the parts on disk before resuming**, which costs one
-  pass over the output: **73 ms for 18.0 MiB of CSV** on a warm cache, negligible for
+  pass over the output at about **200 MiB/s** — about 10 ms for 2 MiB of CSV, negligible for
   Parquet, whose row counts come from file metadata. It grows with the size of the
   output, not the input. Measured by `benchmarks/bench_resident.py`.
+- **A resume is dominated by starting the process, not by checking the output.** Against
+  an already-complete manifest on a 403 MiB source, the command takes about 770 ms: some
+  400 ms of that is interpreter startup and imports, and most of the rest is hashing the
+  source to confirm it has not changed. The part check itself is about 10 ms.
 
 ## Development
 
