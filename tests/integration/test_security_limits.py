@@ -20,10 +20,21 @@ one build and "Resource limit exceeded: Text node too long" on another, which fa
 for a day on a machine nobody was watching. Asserting the wording of a dependency is
 asserting something this project does not control.
 
-What is asserted instead is the **offset** the parser stopped at. That is a fingerprint of
-the limit rather than a phrase: ten megabytes into a text node, the 256th level of
-nesting, the point where the amplification factor crossed its ceiling. If one of these
-fails, the question to ask is whether the limit moved -- not whether the message changed.
+**Nor do these tests assert the column the parser stopped at.** That was the first
+attempt at a stable anchor and it is not one: the same document, the same build of this
+project, gave `column 25` on Windows and `column 7` on Linux for the amplification bomb,
+and `column 777` against `column 774` for the 100,000-level document. The column is a
+function of the build of libxml2 and of where its input buffer happened to end -- an
+implementation detail wearing the costume of a measurement. A test that passes because
+one machine's buffer boundary equals a constant is passing by coincidence, and it will
+fail on the next machine for a reason that has nothing to do with the limit.
+
+What is asserted instead is **the limit itself and which side of it a document is on**.
+Every refusal below is paired with a document shaped the same way that is *not* refused,
+and the pairing is what makes the assertion mean something: if the limit moved, one of
+the two flips. Where the limit is also a switch this project owns (`huge_tree`), the
+switch is turned on and the same document is expected to go through -- that is the
+project's A5 rule, applied.
 
 The exit code, the `error: ` prefix, the elapsed time and the absence of an output file
 carry the rest of the claim, and none of them belong to libxml2. `assert "Traceback" not
@@ -110,13 +121,10 @@ def test_every_option_the_reader_passes_is_one_of_those() -> None:
 # --- entity amplification ---------------------------------------------------
 
 
-# Where libxml2 gave up, one per limit. Asserted instead of the message text, which
-# belongs to libxml2 and has already differed between two machines running the same
-# version of this project. The number says which limit fired. The text-node figure was
-# confirmed against the CI runner, because that is the assertion that had been failing.
-AMPLIFICATION_OFFSET = "25"
-DEPTH_OFFSET = "777"
-HUGE_TEXT_OFFSET = "10027009"
+# The depth ceiling is the one limit whose value libxml2 states in the refusal, and 256
+# is a compile-time constant of the library rather than a position within the input. It
+# is the only number in a refusal message this file is willing to look at.
+DEPTH_CEILING = "256"
 
 
 def entity_bomb(levels: int = 9, fanout: int = 10) -> str:
@@ -144,13 +152,15 @@ def test_entity_amplification_is_refused(
     assert code == 1, "a bomb must not be a successful run"
     err = capsys.readouterr().err
     assert err.startswith("error: ")
-    assert AMPLIFICATION_OFFSET in err, (
-        "refused, but not at the amplification ceiling -- see the note at the top "
-        "of this file about offsets and wording"
-    )
     assert "Traceback" not in err
     assert elapsed < PROMPT_SECONDS, f"took {elapsed:.1f}s -- something is expanding"
     assert not (tmp_path / "out.csv").exists()
+
+    # No assertion on the message. The ceiling is an amplification factor and libxml2
+    # does not put the factor in the refusal, so there is no number here to anchor on --
+    # and the column it does report is a buffer boundary, not the limit. What proves the
+    # limit is the pair: this document is refused, and the fanout=2 document below goes
+    # through. See test_a_mild_entity_document_still_works.
 
 
 def test_a_mild_entity_document_still_works(tmp_path: Path) -> None:
@@ -184,7 +194,10 @@ def test_deep_nesting_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert code == 1
     err = capsys.readouterr().err
     assert err.startswith("error: ")
-    assert DEPTH_OFFSET in err, "refused, but not at the nesting limit"
+    assert DEPTH_CEILING in err, (
+        "refused, but not at the documented 256-level ceiling -- if this fails the "
+        "ceiling moved, not the column"
+    )
     assert "Traceback" not in err
     assert elapsed < PROMPT_SECONDS
     assert not (tmp_path / "out.csv").exists()
@@ -201,6 +214,21 @@ def test_a_deep_but_legal_document_is_still_refused_by_default(
 
     assert code == 1
     assert "depth" in capsys.readouterr().err
+
+
+def test_a_document_below_the_depth_ceiling_is_fine(tmp_path: Path) -> None:
+    """200 levels is under 256, so nesting is a ceiling and not a blanket ban.
+
+    The other half of `test_deep_nesting_is_refused`. Without it, a change that refused
+    every document with any nesting at all would keep that test green.
+    """
+    source = write(tmp_path, nested_document(200))
+    config = write_config(tmp_path, record="//item")
+
+    code, _ = run(source, config, tmp_path / "out.csv")
+
+    assert code == 0
+    assert (tmp_path / "out.csv").is_file()
 
 
 # --- the counter-example ----------------------------------------------------
@@ -284,7 +312,10 @@ def test_a_huge_text_node_is_refused(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert code == 1
     err = capsys.readouterr().err
     assert err.startswith("error: ")
-    assert HUGE_TEXT_OFFSET in err, "refused, but not at the ten megabyte text limit"
+    # No assertion on the position either. This one looked like a constant -- it is
+    # `10027009`, ten megabytes plus a buffer -- but it is where libxml2's input buffer
+    # ended, which is the same class of fact as the column numbers above. The pair that
+    # carries the claim is this test and test_a_text_node_just_under_the_limit_is_fine.
     assert elapsed < PROMPT_SECONDS
     assert not (tmp_path / "out.csv").exists()
 
