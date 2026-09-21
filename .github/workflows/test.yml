@@ -26,6 +26,32 @@ jobs:
           # the appearance of coverage and none of it.
           pip install -e ".[dev,gui]"
 
+      - name: Install Qt's system libraries
+        # PySide6's wheel ships the Qt shared objects and the Python bindings, not the
+        # system libraries those objects link against. Without these, `import
+        # PySide6.QtGui` raises `libEGL.so.1: cannot open shared object file` -- from
+        # inside pytest-qt's plugin, during pytest_configure, before a single test runs.
+        #
+        # The list was derived by reading the ELF NEEDED entries of Qt6Gui, Qt6XcbQpa,
+        # Qt6Widgets, Qt6OpenGL and Qt6DBus from the manylinux wheel, not by copying
+        # another project's list. NEEDED is what the loader must resolve before it will
+        # start; a `lib*.so` string found by searching the file may name a library that
+        # is meant to be absent. Four sonames were added to the obvious set on that
+        # basis: libX11.so.6, libX11-xcb.so.1, libglib-2.0.so.0 and libxcb-util.so.1.
+        #
+        # `Install` above being green while this is missing is the misleading part: the
+        # package is installed, and what is absent is lower down.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 libgl1 libfontconfig1 libfreetype6 \
+            libx11-6 libx11-xcb1 libglib2.0-0 \
+            libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb1 libxcb-util1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1
+
       - name: Lint and format check
         run: |
           ruff check .
