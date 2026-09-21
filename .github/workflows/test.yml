@@ -21,7 +21,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # The gui extra is installed so the desktop application's tests actually
+          # run here. Without it they skip, and a stage whose tests always skip has
+          # the appearance of coverage and none of it.
+          pip install -e ".[dev,gui]"
 
       - name: Lint and format check
         run: |
@@ -32,6 +35,11 @@ jobs:
         # The performance tests are excluded: they measure memory and throughput, take
         # minutes, and are not a pass/fail signal (see the performance marker in
         # pyproject.toml). Coverage is measured over the source only.
+        env:
+          # A CI runner has no display. The desktop tests build real widgets
+          # and drive the real CLI; only the windowing system is substituted,
+          # and this is the same platform the tests are developed against.
+          QT_QPA_PLATFORM: offscreen
         run: |
           pytest -q \
             --cov=src/gigaxml \
