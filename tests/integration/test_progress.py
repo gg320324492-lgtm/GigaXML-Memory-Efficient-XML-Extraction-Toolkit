@@ -113,10 +113,9 @@ def test_every_line_is_a_complete_json_object(tmp_path: pathlib.Path) -> None:
         ]
     )
 
-    for line in completed.stderr.splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)  # raises if the line is not self-contained
+    payloads = [json.loads(line) for line in completed.stderr.splitlines() if line.strip()]
+    assert payloads, "the run has to report progress at all"
+    for payload in payloads:
         assert set(payload) >= {"event", "records", "rows", "rejected", "elapsed_seconds"}
 
 
