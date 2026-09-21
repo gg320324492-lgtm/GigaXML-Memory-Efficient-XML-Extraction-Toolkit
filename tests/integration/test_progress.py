@@ -518,15 +518,16 @@ def test_the_gui_style_consumer_can_tell_progress_from_warnings(tmp_path: pathli
     assert all(isinstance(line["records"], int) for line in parsed)
 
 
-@pytest.mark.skipif(not (REPO / "data/s10.xml").is_file(), reason="dataset not generated")
-def test_a_larger_dataset_reports_a_rising_count(tmp_path: pathlib.Path) -> None:
+def test_a_larger_dataset_reports_a_rising_count(
+    s10_path: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
     """Counts only ever go up, on a dataset big enough to produce many lines."""
     config = write_config(tmp_path)
 
     completed = run_cli(
         [
             "extract",
-            str(REPO / "data/s10.xml"),
+            str(s10_path),
             "-c",
             str(config),
             "-o",
