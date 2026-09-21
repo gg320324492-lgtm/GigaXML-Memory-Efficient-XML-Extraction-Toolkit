@@ -1058,3 +1058,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # likely thing to go wrong with an unknown file, and a traceback helps nobody.
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess
+    # So that `python -m gigaxml.cli ...` works. The GUI launches the CLI as a child of
+    # its own interpreter, and this is the form that keeps working when the whole thing
+    # is frozen into an executable and there is no console script to call.
+    raise SystemExit(main())
