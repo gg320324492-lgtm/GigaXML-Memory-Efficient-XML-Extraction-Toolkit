@@ -34,7 +34,14 @@ pretty = ["rich>=13.0"]
 # The desktop application. Optional on purpose: the CLI is the product, and Qt is a
 # 150-200 MB dependency that only a user of the window needs. Nothing in gigaxml outside
 # gigaxml.gui may import it.
-gui = ["PySide6>=6.6"]
+#
+# pytest-qt belongs here rather than in dev, and that is not tidiness. It refuses to load
+# without a Qt binding, and it is loaded as a plugin -- so with it in dev, a plain
+# `pip install -e ".[dev]"` gives a pytest that dies before collecting anything:
+#   ERROR: pytest-qt requires either PySide6, PyQt5 or PyQt6 installed.
+# Keeping it with the binding means `.[dev]` runs the suite and skips the desktop tests,
+# while `.[dev,gui]` runs them. Both configurations work, which is the point.
+gui = ["PySide6>=6.6", "pytest-qt>=4.4"]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
@@ -42,7 +49,6 @@ dev = [
   "psutil>=5.9",
   "pyarrow>=14.0",
   "rich>=13.0",
-  "pytest-qt>=4.4",
 ]
 
 [project.scripts]

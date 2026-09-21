@@ -392,11 +392,13 @@ def test_the_gui_modules_do_not_need_qt() -> None:
         import sys
 
         class Blocker:
-            def find_module(self, name, path=None):
-                return self if name.split(".")[0] == "PySide6" else None
-
-            def load_module(self, name):
-                raise ImportError(f"PySide6 is blocked for this test: {name}")
+            # find_spec, not find_module: the old two-method protocol was removed in
+            # Python 3.12, and a hook that defines only those methods is never called --
+            # which makes this test pass while testing nothing at all.
+            def find_spec(self, name, path=None, target=None):
+                if name.split(".")[0] == "PySide6":
+                    raise ImportError(f"PySide6 is blocked for this test: {name}")
+                return None
 
         sys.meta_path.insert(0, Blocker())
 
@@ -405,7 +407,15 @@ def test_the_gui_modules_do_not_need_qt() -> None:
 
         assert progress.parse_line('{"event": "progress", "records": 1, "rows": 1}') is not None
         assert cli_process.cli_command(["extract"])[1:3] == ["-m", "gigaxml.cli"]
-        print("ok")
+        # Confirm the hook actually fires, so that a future Python changing the import
+        # protocol again cannot turn this into a test that silently checks nothing.
+        try:
+            import PySide6  # noqa: F401
+        except ImportError as exc:
+            assert "blocked" in str(exc)
+            print("ok (PySide6 blocked)")
+        else:
+            raise AssertionError("PySide6 imported despite the blocker")
         """
     )
     completed = subprocess.run(
@@ -414,3 +424,4 @@ def test_the_gui_modules_do_not_need_qt() -> None:
 
     assert completed.returncode == 0, completed.stderr[-600:]
     assert "ok" in completed.stdout
+    assert "blocked" in completed.stdout, "the import hook never fired, so this test proved nothing"
