@@ -45,13 +45,15 @@ def app() -> QApplication:
 
 
 @pytest.fixture
-def window(app: QApplication, qtbot: QtBot) -> MainWindow:
+def window(app: QApplication, qtbot: QtBot, tmp_path: pathlib.Path) -> MainWindow:
     # `app` is used rather than merely requested: a fixture whose parameter is renamed to
     # please the linter stops being a fixture lookup at all, and pytest then fails every
     # test in the file at setup. Asserting the application is the one this window was
     # built on is both true and worth checking.
     assert QApplication.instance() is app
-    main = MainWindow()
+    # The state directory is passed rather than defaulted: the default is the real user's
+    # configuration directory, and a test that writes there is modifying the machine.
+    main = MainWindow(state_dir=tmp_path / "state")
     qtbot.addWidget(main)
     return main
 
@@ -96,8 +98,15 @@ def wait_until(qtbot: QtBot, predicate: Callable[[], bool], timeout_ms: int = 60
 
 
 def test_the_window_opens_with_the_execution_panel(window: MainWindow) -> None:
-    assert window.tabs().count() >= 1
-    assert window.tabs().tabText(0) == "Execute"
+    """The execution panel is still here. Its tab moved when the document panel arrived.
+
+    This used to assert ``tabText(0) == "Execute"``. The tab order now follows the order
+    of the functional areas -- a document is opened, then analysed, then extracted -- so
+    the assertion is about the tab existing rather than about it being first.
+    """
+    labels = [window.tabs().tabText(index) for index in range(window.tabs().count())]
+
+    assert "Execute" in labels
     assert isinstance(window.execution_panel(), ExecutionPanel)
 
 
