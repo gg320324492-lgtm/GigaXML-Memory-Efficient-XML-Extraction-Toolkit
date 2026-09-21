@@ -32,7 +32,6 @@ from gigaxml.gui.cli_process import (
 from gigaxml.gui.progress import Progress, format_eta, fraction_done, parse_line
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
-GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
 
 CONFIG = {
     "record": "/catalog/products/product",

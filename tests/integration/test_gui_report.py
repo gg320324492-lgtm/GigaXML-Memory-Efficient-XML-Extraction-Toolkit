@@ -24,9 +24,9 @@ from gigaxml.gui.inspect_report import (
     parse_report,
     paths_to_csv,
 )
+from tests._interpreter import gigaxml_script
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
-GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
 FIXTURES = REPO / "tests/fixtures"
 
 #: A prefix bound to one namespace at the top and rebound deeper down. This is the case
@@ -38,7 +38,7 @@ REBOUND = (
 
 def inspect_json(source: pathlib.Path, *extra: str) -> dict:
     completed = subprocess.run(
-        [str(GIGAXML), "inspect", str(source), "--json", *extra],
+        [str(gigaxml_script()), "inspect", str(source), "--json", *extra],
         capture_output=True,
         text=True,
         check=False,

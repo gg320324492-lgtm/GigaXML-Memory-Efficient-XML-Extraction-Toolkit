@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -18,6 +17,7 @@ import pytest
 from gigaxml.checkpoint import CHECKPOINT_FILENAME, Checkpoint
 from gigaxml.cli import main
 from gigaxml.run import DEFAULT_RUN_REPORT_FILENAME
+from tests._interpreter import gigaxml_script
 
 DOC = (
     '<?xml version="1.0"?><root>'
@@ -688,9 +688,7 @@ def test_a_killed_run_keeps_committed_parts_and_resumes_to_the_same_result(
     A 100MB run is started, killed after two parts are committed, and then resumed.
     The concatenated result must equal what a single uninterrupted run produces.
     """
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     config = tmp_path / "big.yaml"
     config.write_text(
@@ -875,12 +873,9 @@ def test_an_incomplete_resume_with_a_mismatched_format_is_also_reported(
 ) -> None:
     """The same guarantee on the path that actually writes more parts."""
     import subprocess
-    import sys
     import time
 
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     config = tmp_path / "big.yaml"
     config.write_text(
@@ -1262,7 +1257,6 @@ def test_the_manifest_always_matches_the_disk(
     aborts, so the first part is committed and the second is not.
     """
     import subprocess
-    import sys
     import time
 
     from gigaxml.checkpoint import verify_parts
@@ -1324,11 +1318,7 @@ def test_the_manifest_always_matches_the_disk(
         )
         assert len(part_names(parts, "csv")) == 1, "the first part committed, the second did not"
     else:
-        script = Path(sys.executable).parent / (
-            "gigaxml.exe" if sys.platform == "win32" else "gigaxml"
-        )
-        if not script.exists():  # pragma: no cover - depends on the environment
-            pytest.skip(f"console script not installed at {script}")
+        script = gigaxml_script()
         config = tmp_path / "big.yaml"
         config.write_text(
             json.dumps(

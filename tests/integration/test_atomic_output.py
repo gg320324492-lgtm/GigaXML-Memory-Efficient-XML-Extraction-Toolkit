@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from gigaxml.cli import main
+from tests._interpreter import gigaxml_script
 
 GOOD = """<?xml version="1.0" encoding="UTF-8"?>
 <root>
@@ -217,9 +218,7 @@ def test_a_killed_run_leaves_no_target_at_all(s400_path: Path, tmp_path: Path) -
         encoding="utf-8",
     )
     output = tmp_path / "out.csv"
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     process = subprocess.Popen(
         [str(script), "extract", str(s400_path), "-c", str(config), "-o", str(output)],
@@ -549,12 +548,9 @@ def test_a_kill_long_after_the_start_still_leaves_no_target(
     claim, and the one closer to how an interruption actually happens.
     """
     import subprocess
-    import sys
     import time
 
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     config = tmp_path / "big.yaml"
     config.write_text(

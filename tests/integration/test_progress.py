@@ -25,9 +25,9 @@ import pytest
 
 from gigaxml.cli import main
 from gigaxml.run import PROGRESS_EVERY_DEFAULT
+from tests._interpreter import gigaxml_script
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
-GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
 
 CONFIG = {
     "record": "/catalog/products/product",
@@ -52,7 +52,7 @@ def small_dataset(tmp_path: pathlib.Path, records: int) -> pathlib.Path:
 def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     """Run through the console script so stderr is a real pipe, not a captured object."""
     return subprocess.run(
-        [str(GIGAXML), *args], capture_output=True, text=True, check=False, cwd=str(REPO)
+        [str(gigaxml_script()), *args], capture_output=True, text=True, check=False, cwd=str(REPO)
     )
 
 

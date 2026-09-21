@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
 import gigaxml
+from tests._interpreter import gigaxml_script
 
 
 def test_version_is_exposed() -> None:
@@ -23,9 +22,7 @@ def test_every_subcommand_help_renders(command: str) -> None:
     written ``%%``. A single unescaped one turns ``--help`` for that command into a
     traceback -- which is how this test came to exist.
     """
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     completed = subprocess.run(
         [str(script), command, "--help"], capture_output=True, text=True, check=False

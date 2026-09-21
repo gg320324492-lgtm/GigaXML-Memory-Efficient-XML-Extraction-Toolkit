@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +18,7 @@ import yaml
 
 from gigaxml.cli import main
 from gigaxml.inspect import generate_config, inspect_document
+from tests._interpreter import gigaxml_script
 
 TWO_RECORDS = "two_records.xml"
 
@@ -497,9 +497,7 @@ def test_a_missing_input_file_is_reported(
 
 def test_the_console_script_runs_inspect(s10_path: Path) -> None:
     """The one test that goes through a real process for the new command."""
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     completed = subprocess.run(
         [str(script), "inspect", str(s10_path), "--json"],

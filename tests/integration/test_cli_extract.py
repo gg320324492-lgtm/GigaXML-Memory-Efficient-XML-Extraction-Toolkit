@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from gigaxml.cli import main
 from gigaxml.generate import Manifest, manifest_path_for
+from tests._interpreter import gigaxml_script
 
 CONFIG = """\
 record: /catalog/products/product
@@ -227,9 +227,7 @@ def test_generate_is_unaffected(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
 def test_the_console_script_is_wired_up(s10_path: Path, tmp_path: Path) -> None:
     """The one test that goes through a real process, to cover [project.scripts]."""
-    script = Path(sys.executable).parent / ("gigaxml.exe" if sys.platform == "win32" else "gigaxml")
-    if not script.exists():  # pragma: no cover - depends on the environment
-        pytest.skip(f"console script not installed at {script}")
+    script = gigaxml_script()
 
     config = write_config(tmp_path)
     output = tmp_path / "products.csv"

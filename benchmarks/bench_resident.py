@@ -28,8 +28,12 @@ import sys
 import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from tests._interpreter import gigaxml_script  # noqa: E402
+
 DATA = REPO / "data"
-GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
 
 SIX_FIELDS = {
     "record": "/catalog/products/product",
@@ -182,7 +186,7 @@ def run_verify_check(source: pathlib.Path, work: pathlib.Path) -> dict:
     every = max(1000, 290_900 // 12)  # about twelve parts, whatever the dataset size
     built = subprocess.run(
         [
-            str(GIGAXML),
+            str(gigaxml_script()),
             "extract",
             str(source),
             "-c",

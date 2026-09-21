@@ -31,7 +31,6 @@ import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 DATA = REPO / "data"
-GIGAXML = REPO / ".venv/Scripts/gigaxml.exe"
 
 #: The benchmark config. Covers an attribute, a leaf, a nested path and a type
 #: conversion -- four of the shapes a real config uses.
