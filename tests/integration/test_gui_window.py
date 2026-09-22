@@ -98,15 +98,17 @@ def wait_until(qtbot: QtBot, predicate: Callable[[], bool], timeout_ms: int = 60
 
 
 def test_the_window_opens_with_the_execution_panel(window: MainWindow) -> None:
-    """The execution panel is still here. Its tab moved when the document panel arrived.
+    """The tabs, all of them, in the order the work is done.
 
-    This used to assert ``tabText(0) == "Execute"``. The tab order now follows the order
-    of the functional areas -- a document is opened, then analysed, then extracted -- so
-    the assertion is about the tab existing rather than about it being first.
+    This used to assert ``tabText(0) == "Execute"``. That was narrowed to "Execute is
+    somewhere in the list" when the tab order stopped starting with it, which lost the
+    count as well as the position -- a window that had quietly dropped a tab would still
+    have passed. The list is asserted whole instead: the order *is* the design, since a
+    document is opened, then analysed, then configured, then previewed, then extracted.
     """
     labels = [window.tabs().tabText(index) for index in range(window.tabs().count())]
 
-    assert "Execute" in labels
+    assert labels == ["Document", "Structure", "Fields", "Preview", "Execute"]
     assert isinstance(window.execution_panel(), ExecutionPanel)
 
 
@@ -173,6 +175,73 @@ def test_an_unreadable_config_is_reported_not_raised(
 
     with pytest.raises(ConfigError):
         panel.effective_config()
+
+
+def test_the_temporary_config_does_not_outlive_the_panel(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """It is ours, it is in the temporary folder, and nobody else will clean it up.
+
+    Overriding ``on_error`` means writing a second config, because there is no flag for it.
+    That file used to be left behind every time -- eighty-two of them had accumulated by
+    the time anybody counted.
+    """
+    panel = window.execution_panel()
+    fill(panel, tmp_path / "in.xml", write_config(tmp_path), tmp_path / "out.csv")
+    panel._on_error.setCurrentText("quarantine")
+
+    override = panel.effective_config()
+    assert override.is_file()
+
+    panel.shutdown()
+
+    assert not override.exists()
+
+
+def test_asking_twice_leaves_one_temporary_config_not_two(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    panel = window.execution_panel()
+    fill(panel, tmp_path / "in.xml", write_config(tmp_path), tmp_path / "out.csv")
+    panel._on_error.setCurrentText("quarantine")
+
+    first = panel.effective_config()
+    second = panel.effective_config()
+
+    assert first != second
+    assert not first.exists(), "one at a time, rather than one per call"
+    assert second.is_file()
+
+
+def test_closing_the_window_takes_the_temporary_config_with_it(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """Qt does not deliver ``closeEvent`` to a child widget, so the window has to say so.
+
+    Without that, closing the application would leave the last run's temporary config in
+    the temp folder -- which is the leak this is here to stop.
+    """
+    panel = window.execution_panel()
+    fill(panel, tmp_path / "in.xml", write_config(tmp_path), tmp_path / "out.csv")
+    panel._on_error.setCurrentText("quarantine")
+    override = panel.effective_config()
+    assert override.is_file()
+
+    window.close()
+
+    assert not override.exists()
+
+
+def test_a_temporary_config_that_is_not_ours_is_left_alone(tmp_path: pathlib.Path) -> None:
+    """The guard, exercised: the panel only removes files it named itself."""
+    from gigaxml.gui.panels.execution import _discard_effective_config
+
+    foreign = tmp_path / "important.json"
+    foreign.write_text("{}", encoding="utf-8")
+
+    assert _discard_effective_config(foreign) is False
+    assert foreign.is_file()
+    assert _discard_effective_config(None) is False
 
 
 # --- running for real ---------------------------------------------------------

@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -47,6 +48,35 @@ from gigaxml.gui.progress import Progress, format_eta, fraction_done
 #: interval, so nothing here assumes it fires on schedule.
 PUMP_INTERVAL_MS = 50
 
+#: The name every temporary config this panel writes begins with. See
+#: :func:`_discard_effective_config` for why it is a named constant rather than a literal
+#: in one place.
+_EFFECTIVE_PREFIX = "gigaxml-gui-"
+
+
+def _discard_effective_config(path: Path | None) -> bool:
+    """Remove a temporary config this panel wrote, and only one of those.
+
+    **The guard is the point.** This runs once per run started and once more when the
+    window closes, unattended; a removal that deletes whatever path it is handed is one
+    bad argument away from deleting something that was never ours. So it refuses anything
+    whose name does not begin with :data:`_EFFECTIVE_PREFIX`, and anything that is not a
+    file.
+
+    This is the second place in ``gigaxml.gui`` that guards a removal this way -- the
+    sampling module has the first, for its run directories. Two is not yet worth a shared
+    helper; a third would be.
+    """
+    if path is None:
+        return False
+    target = Path(path)
+    if not target.name.startswith(_EFFECTIVE_PREFIX):
+        return False
+    if not target.is_file():
+        return False
+    target.unlink(missing_ok=True)
+    return True
+
 
 class ExecutionPanel(QWidget):
     """Choose an output, run the extraction, watch it, stop it."""
@@ -59,6 +89,8 @@ class ExecutionPanel(QWidget):
         self._finished = False
         self._total: int | None = None
         self._probe: CliProcess | None = None
+        #: The temporary config the last ``effective_config()`` wrote, if it wrote one.
+        self._effective_config: Path | None = None
 
         self._build()
 
@@ -186,10 +218,30 @@ class ExecutionPanel(QWidget):
         # the CLI would reject, that is a bug here and it should fail here.
         parse_config(raw, source=str(path))
 
-        handle, name = tempfile.mkstemp(prefix="gigaxml-gui-", suffix=".json", text=True)
+        # One at a time. Each call replaces the last, and the panel removes the last when
+        # it closes -- so a session that starts a hundred runs leaves nothing behind.
+        _discard_effective_config(self._effective_config)
+        handle, name = tempfile.mkstemp(prefix=_EFFECTIVE_PREFIX, suffix=".json", text=True)
         with open(handle, "w", encoding="utf-8") as stream:  # noqa: PTH123
             json.dump(raw, stream, indent=2)
-        return Path(name)
+        self._effective_config = Path(name)
+        return self._effective_config
+
+    def shutdown(self) -> None:
+        """Give up whatever is not the user's to clean up.
+
+        Called by the window when it closes, because Qt does not deliver ``closeEvent`` to
+        a child widget -- closing the window hides and destroys the panels, it does not
+        close them -- and a temporary config left behind is exactly the sort of thing that
+        accumulates silently.
+        """
+        _discard_effective_config(self._effective_config)
+        self._effective_config = None
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt naming)
+        """Also correct when the panel itself is closed, as a test may do."""
+        self.shutdown()
+        super().closeEvent(event)
 
     # -- file pickers ------------------------------------------------------
 

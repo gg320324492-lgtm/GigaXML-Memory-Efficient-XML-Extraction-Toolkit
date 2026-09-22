@@ -33,6 +33,7 @@ from gigaxml.gui.field_rows import FIELD_TYPE_NAMES, FieldRow
 from gigaxml.gui.inspect_report import Candidate
 from gigaxml.gui.main_window import MainWindow
 from gigaxml.gui.panels.fields import HEADERS, FieldConfigPanel
+from gigaxml.gui.panels.structure import StructurePanel
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 FIXTURES = REPO / "tests" / "fixtures"
@@ -396,24 +397,200 @@ def test_the_type_dropdown_cannot_offer_something_the_library_rejects(
 # --- from a candidate ---------------------------------------------------------
 
 
-def test_regenerating_from_a_candidate_fills_the_table(window: MainWindow) -> None:
-    panel = window.field_panel()
-    panel.set_candidate(a_candidate())
+def cli_generated_fields(source: pathlib.Path, candidate: int) -> tuple[str, list[tuple[str, str]]]:
+    """What ``inspect --generate-config`` writes for a candidate, asked directly.
 
+    The point of asking the CLI rather than writing the expected list here is that the
+    expected list is the thing under test. A list typed into this file would agree with
+    whatever the panel does on the day it was typed.
+    """
+    import subprocess
+    import tempfile
+
+    import yaml
+
+    destination = pathlib.Path(tempfile.mkdtemp(prefix="cli-ref-")) / "cli.yaml"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gigaxml.cli",
+            "inspect",
+            str(source),
+            "--generate-config",
+            str(destination),
+            "--candidate",
+            str(candidate),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=REPO,
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    return (
+        payload["record"],
+        [(name, definition["path"]) for name, definition in payload["fields"].items()],
+    )
+
+
+def select_report_index(panel: StructurePanel, index: int) -> None:
+    """Select the row showing the report's candidate number ``index``.
+
+    Through the stored index, not the row number: the table sorts itself as soon as it is
+    filled, so the two are different numbers.
+    """
+    from gigaxml.gui.panels.structure import _REPORT_INDEX_ROLE
+
+    table = panel._candidates
+    for row in range(table.rowCount()):
+        if table.item(row, 0).data(_REPORT_INDEX_ROLE) == index:
+            panel.select_candidate(row)
+            return
+    raise AssertionError(f"candidate {index} is not in the table")
+
+
+def test_from_candidate_fills_the_same_fields_the_cli_would(
+    window: MainWindow, qtbot: QtBot
+) -> None:
+    """**The must-fix.** The panel's rows must equal what the CLI writes, field for field.
+
+    It used to build the list itself from ``child_tags`` alone, which silently dropped
+    every attribute: on this fixture the CLI writes four fields and the panel wrote two.
+    The comparison is against the CLI's own output, so the two cannot drift apart again
+    without this failing.
+    """
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+    select_report_index(structure, 0)
+
+    expected_record, expected_fields = cli_generated_fields(source, 1)
+    assert [name for name, _ in expected_fields] == ["id", "type", "name", "price"], (
+        "the fixture or the CLI changed; this test is about attributes being included"
+    )
+
+    panel = window.field_panel()
     panel.regenerate_from_candidate()
+    assert _wait(qtbot, lambda: not panel.is_regenerating()), "the CLI never answered"
 
-    assert panel.record_path() == RECORD
-    assert [row.path for row in panel.rows()] == ["name", "price", "@id", "@active"]
-    assert [row.name for row in panel.rows()] == ["name", "price", "id", "active"]
+    assert [(row.name, row.path) for row in panel.rows()] == expected_fields
+    assert panel.record_path() == expected_record
 
 
-def test_regenerating_without_a_candidate_says_so(window: MainWindow) -> None:
+def test_from_candidate_includes_the_candidates_attributes(
+    window: MainWindow, qtbot: QtBot
+) -> None:
+    """The attribute half, stated on its own so a failure names the thing that broke."""
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+    select_report_index(structure, 0)
+
     panel = window.field_panel()
-    panel.set_candidate(None)
+    panel.regenerate_from_candidate()
+    assert _wait(qtbot, lambda: not panel.is_regenerating())
+
+    paths = [row.path for row in panel.rows()]
+    assert "@id" in paths, paths
+    assert "@type" in paths, paths
+
+
+def test_from_candidate_asks_the_cli_rather_than_assembling_the_list(
+    window: MainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """There is one implementation, and the panel goes through it.
+
+    Checked by watching the call the CLI is reached through: a panel that built the list
+    itself would never make it.
+    """
+    from gigaxml.gui.panels import fields as fields_module
+
+    calls: list[list[str]] = []
+    original = fields_module.generate_config_args
+
+    def counting(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        produced = original(*args, **kwargs)
+        calls.append(produced)
+        return produced
+
+    monkeypatch.setattr(fields_module, "generate_config_args", counting)
+
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+    select_report_index(structure, 0)
+
+    panel = window.field_panel()
+    panel.regenerate_from_candidate()
+    assert _wait(qtbot, lambda: not panel.is_regenerating())
+
+    assert calls, "the panel did not ask the CLI for a config"
+    assert calls[0][0] == "inspect"
+    assert "--generate-config" in calls[0]
+
+
+def test_the_candidate_number_is_one_based_for_the_cli(
+    window: MainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The report index is zero-based; ``--candidate`` is not. Off by one, silently."""
+    from gigaxml.gui.panels import fields as fields_module
+
+    seen: list[list[str]] = []
+    original = fields_module.generate_config_args
+
+    def counting(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        produced = original(*args, **kwargs)
+        seen.append(produced)
+        return produced
+
+    monkeypatch.setattr(fields_module, "generate_config_args", counting)
+
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+    select_report_index(structure, 0)
+
+    panel = window.field_panel()
+    assert panel.candidate_index() == 0
+    panel.regenerate_from_candidate()
+    assert _wait(qtbot, lambda: not panel.is_regenerating())
+
+    assert seen[0][seen[0].index("--candidate") + 1] == "1"
+
+
+def test_from_candidate_needs_a_document_and_a_candidate(window: MainWindow) -> None:
+    panel = window.field_panel()
 
     panel.regenerate_from_candidate()
 
     assert "candidate" in panel.message_text()
+
+
+def test_regenerating_from_a_candidate_fills_the_table(window: MainWindow, qtbot: QtBot) -> None:
+    """Kept from 8A-7: the button does fill the table, and the record path with it."""
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+    select_report_index(structure, 0)
+
+    panel = window.field_panel()
+    panel.regenerate_from_candidate()
+    assert _wait(qtbot, lambda: not panel.is_regenerating())
+
+    assert panel.record_path() == "/catalog/products/product"
+    assert panel.result() is not None and panel.result().ok, panel.message_text()
 
 
 def test_the_window_hands_the_candidate_over(
@@ -431,6 +608,7 @@ def test_the_window_hands_the_candidate_over(
     panel = window.field_panel()
     assert panel.candidate() is not None
     panel.regenerate_from_candidate()
+    assert _wait(qtbot, lambda: not panel.is_regenerating()), "the CLI never answered"
     assert panel.result() is not None and panel.result().ok, panel.message_text()
 
 

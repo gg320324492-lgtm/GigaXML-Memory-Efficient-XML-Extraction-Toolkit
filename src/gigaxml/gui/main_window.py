@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
@@ -81,13 +81,25 @@ class MainWindow(QMainWindow):
         """
         self._documents.document_changed.connect(self._on_document_changed)
         self._structure.report_changed.connect(self._on_report_changed)
-        self._structure.candidate_changed.connect(self._fields.set_candidate)
+        self._structure.candidate_changed.connect(self._on_candidate_changed)
         self._fields.config_changed.connect(self._on_fields_changed)
 
     def _on_document_changed(self, path: str) -> None:
         self._structure.set_document(path)
         self._preview.set_source(path)
+        # The field panel needs it too: the CLI cannot write a config for a candidate
+        # without the document that candidate came from.
+        self._fields.set_source(path)
         self.statusBar().showMessage(f"opened {path}", 5000)
+
+    def _on_candidate_changed(self, candidate: object) -> None:
+        """Pass the candidate, and its number in the report, to the field panel.
+
+        The number is not the row the user clicked. The candidate table sorts itself, so
+        the view row and the report index are different numbers -- and it is the report
+        index, 1-based, that ``inspect --generate-config`` takes.
+        """
+        self._fields.set_candidate(candidate, self._structure.selected_candidate_index())
 
     def _on_report_changed(self) -> None:
         """Give the field panel what the analysis found: namespaces and the path list.
@@ -148,6 +160,16 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 (Qt naming)
         """As above. One implementation, reached from two widgets."""
         self._documents.dropEvent(event)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt naming)
+        """Let the panels give up what is not the user's to clean up.
+
+        Qt does not deliver ``closeEvent`` to a child widget: closing the window hides and
+        destroys the panels rather than closing them. Without this, a temporary config the
+        execution panel wrote would outlive the window that needed it.
+        """
+        self._execution.shutdown()
+        super().closeEvent(event)
 
     # -- accessors used by tests and by later substeps ---------------------
 

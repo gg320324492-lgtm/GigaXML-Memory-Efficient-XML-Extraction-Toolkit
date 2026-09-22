@@ -19,9 +19,11 @@ own sentence, unedited, including its own name for the table.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+import yaml
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -39,14 +41,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.field_rows import (
     FIELD_TYPE_NAMES,
     FieldRow,
     ValidationResult,
     build_config_dict,
+    rows_from_config,
     validate,
 )
 from gigaxml.gui.inspect_report import Candidate
+from gigaxml.gui.sampling import (
+    discard_run_directory,
+    generate_config_args,
+    make_run_directory,
+)
+
+#: How often the UI thread drains what the reader thread collected. Matches the other
+#: panels; the reasoning is in :mod:`gigaxml.gui.panels.execution`.
+PUMP_INTERVAL_MS = 50
 
 #: The columns, in order.
 HEADERS = ["field name", "path", "type", "required"]
@@ -73,9 +86,22 @@ class FieldConfigPanel(QWidget):
         self._result: ValidationResult | None = None
         self._path_choices: tuple[str, ...] = ()
         self._candidate: Candidate | None = None
+        self._candidate_index: int | None = None
+        self._source: Path | None = None
+        #: The config request: a child process, its own directory, its own timer.
+        self._regenerate_process: CliProcess | None = None
+        self._regenerate_directory: Path | None = None
+        self._generated_config: Path | None = None
+        self._generate_result: RunResult | None = None
+        self._generate_done = False
         self._suspend = False
 
         self._build()
+
+        self._regenerate_pump = QTimer(self)
+        self._regenerate_pump.setInterval(PUMP_INTERVAL_MS)
+        self._regenerate_pump.timeout.connect(self._drain_regenerate)
+        self._refresh_regenerate()
         self.add_row()
 
     # -- construction ------------------------------------------------------
@@ -213,33 +239,108 @@ class FieldConfigPanel(QWidget):
         self._table.setCurrentCell(target, _COLUMN_NAME)
 
     def regenerate_from_candidate(self) -> None:
-        """Fill the table from the candidate selected in the structure panel.
+        """Ask the CLI to write a config for the candidate, then show it as rows.
 
-        The record path becomes the candidate's path, and one row is made for each of its
-        direct children and each of its attributes -- which is what ``inspect
-        --generate-config`` writes, built from the report already in hand rather than by
-        starting another process.
+        **Through the CLI, not by rebuilding the list here.** ``inspect --generate-config``
+        decides what a candidate's fields are -- including that its attributes count as
+        fields -- and that decision belongs in one place. Assembling ``child_tags`` and
+        ``attribute_names`` here would be a second implementation of it, and one that stops
+        agreeing the first time the CLI's rule changes. The panel already has the machinery
+        to run a child; this is the call the structure panel makes for its example values.
+
+        Asynchronous, because it is a child process. :meth:`is_regenerating` says when it
+        has landed.
         """
-        candidate = self._candidate
-        if candidate is None:
+        source = self._source
+        index = self._candidate_index
+        if source is None or index is None:
             self._message.setText("select a candidate in the structure panel first")
             return
-        self._record.setText(candidate.path)
-        rows = [FieldRow(name=tag, path=tag) for tag in candidate.child_tags]
-        rows += [FieldRow(name=name.lstrip("@"), path=name) for name in candidate.attribute_names]
-        self.set_rows(rows)
+        if self._regenerate_process is not None:
+            return
+        discard_run_directory(self._regenerate_directory)
+        self._regenerate_directory = make_run_directory("gigaxml-generate-")
+        self._generated_config = self._regenerate_directory / "config.yaml"
+        self._message.setText("asking the CLI for a config…")
+        process = CliProcess(
+            # 1-based, matching what `inspect` prints and what the candidate table shows.
+            generate_config_args(source, self._generated_config, index + 1),
+            on_finished=self._note_generated_config,
+        )
+        self._regenerate_process = process
+        process.start()
+        self._regenerate_pump.start()
 
-    def set_candidate(self, candidate: Candidate | None) -> None:
+    def _note_generated_config(self, run: RunResult) -> None:
+        """Reader thread. Records the outcome and touches no widget."""
+        self._generate_result = run
+        self._generate_done = True
+
+    def _drain_regenerate(self) -> None:
+        """UI thread. Reads the config the CLI wrote, once it has finished writing it."""
+        if not self._generate_done:
+            return
+        self._generate_done = False
+        run = self._generate_result
+        self._regenerate_process = None
+        self._regenerate_pump.stop()
+        if run is None or not run.ok or self._generated_config is None:
+            warnings = run.warnings if run is not None else []
+            first = next((line for line in warnings if line.strip()), None)
+            self._message.setText(first or "the CLI could not write a config for this candidate")
+            return
+        if not self._generated_config.is_file():
+            self._message.setText("the CLI reported success but wrote no config")
+            return
+        payload = yaml.safe_load(self._generated_config.read_text(encoding="utf-8"))
+        record, rows = rows_from_config(payload if isinstance(payload, dict) else {})
+        if record:
+            self._record.setText(record)
+        self.set_rows(list(rows))
+
+    def is_regenerating(self) -> bool:
+        """Whether a request for a config is in flight."""
+        return self._regenerate_process is not None
+
+    def generated_config_path(self) -> Path | None:
+        """Where the config the CLI wrote is, for a caller that wants to look at it."""
+        return self._generated_config
+
+    def set_source(self, path: Path | str | None) -> None:
+        """The document the candidate was found in.
+
+        The CLI needs it: a config for a candidate cannot be written without the document
+        that candidate came from.
+        """
+        self._source = Path(path) if path is not None else None
+        self._refresh_regenerate()
+
+    def set_candidate(self, candidate: Candidate | None, index: int | None = None) -> None:
         """The candidate the "From candidate" button regenerates from.
+
+        Both halves are needed: the candidate says what to build a config for, and ``index``
+        is the number the CLI takes, which the panel cannot work out for itself -- the view
+        row and the report index are different numbers once the table has sorted itself.
 
         Set by the window when the structure panel's selection changes, so the button is
         only live when there is something to build from.
         """
         self._candidate = candidate
-        self._regenerate.setEnabled(candidate is not None)
+        self._candidate_index = index
+        self._refresh_regenerate()
 
     def candidate(self) -> Candidate | None:
         return self._candidate
+
+    def candidate_index(self) -> int | None:
+        return self._candidate_index
+
+    def _refresh_regenerate(self) -> None:
+        self._regenerate.setEnabled(
+            self._source is not None
+            and self._candidate is not None
+            and self._candidate_index is not None
+        )
 
     # -- validation --------------------------------------------------------
 
@@ -441,12 +542,8 @@ class FieldConfigPanel(QWidget):
         payload = self.as_config_dict()
         target = Path(path)
         if target.suffix.lower() == ".json":
-            import json
-
             target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             return
-        import yaml
-
         target.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
     # -- dragging rows -----------------------------------------------------

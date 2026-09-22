@@ -37,6 +37,7 @@ __all__ = [
     "FieldRow",
     "ValidationResult",
     "build_config_dict",
+    "rows_from_config",
     "validate",
 ]
 
@@ -110,6 +111,42 @@ def build_config_dict(
     if on_error is not None:
         data["on_error"] = on_error
     return data
+
+
+def rows_from_config(payload: Mapping[str, object]) -> tuple[str, tuple[FieldRow, ...]]:
+    """The record path and the rows a config mapping describes, in its own order.
+
+    Used on a config ``inspect --generate-config`` wrote, so the table ends up showing
+    exactly what the CLI would have written. **That is the point**: the decision that a
+    candidate's attributes count as fields lives in ``--generate-config``, and rebuilding
+    the same list here from ``child_tags`` and ``attribute_names`` would be a second
+    implementation of it -- one that stops agreeing the first time the CLI's rule changes.
+
+    A definition that is not a mapping, or has no usable path, is skipped rather than
+    guessed at: whatever the CLI wrote is what the project accepts, and a row invented here
+    would be a row the CLI never proposed.
+    """
+    record = payload.get("record")
+    fields = payload.get("fields")
+    rows: list[FieldRow] = []
+    if isinstance(fields, Mapping):
+        for name, definition in fields.items():
+            if not isinstance(definition, Mapping):
+                continue
+            path = definition.get("path")
+            if not isinstance(path, str):
+                continue
+            type_name = definition.get("type")
+            required = definition.get("required")
+            rows.append(
+                FieldRow(
+                    name=str(name),
+                    path=path,
+                    type_name=(type_name if isinstance(type_name, str) else DEFAULT_TYPE_NAME),
+                    required=required if isinstance(required, bool) else False,
+                )
+            )
+    return (record if isinstance(record, str) else "", tuple(rows))
 
 
 def validate(

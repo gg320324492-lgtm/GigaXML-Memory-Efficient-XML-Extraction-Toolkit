@@ -530,6 +530,9 @@ def test_the_whole_chain_works_on_a_namespaced_document(window: MainWindow, qtbo
 
     fields = window.field_panel()
     fields.regenerate_from_candidate()
+    # Waiting is new in 8A-7-FIX: the button now asks the CLI, so it is a child process
+    # rather than a loop over the candidate already in hand.
+    assert wait_until(qtbot, lambda: not fields.is_regenerating()), "the CLI never answered"
     assert fields.result() is not None and fields.result().ok, fields.message_text()
     assert fields.as_config_dict()["namespaces"] == report.namespaces, (
         "the map did not reach the config the panel would save"
