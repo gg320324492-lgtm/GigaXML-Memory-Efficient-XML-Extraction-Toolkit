@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
@@ -40,10 +40,23 @@ from PySide6.QtWidgets import (
 
 from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.inspect_report import Candidate, InspectReport, parse_report, paths_to_csv
+from gigaxml.gui.sampling import (
+    SampledTable,
+    discard_run_directory,
+    generate_config_args,
+    make_run_directory,
+    sample_args,
+    table_from,
+)
 
 #: How often the UI thread drains what the reader thread collected. Matches the execution
 #: panel; the reasoning is there.
 PUMP_INTERVAL_MS = 50
+
+#: How many records to sample when showing a candidate's example values. One: the side
+#: panel has a line per field, and the point is to show what a value *looks like* rather
+#: than to describe the column.
+EXAMPLE_ROWS = 1
 
 #: Where the report's own index is kept on a candidate row.
 #:
@@ -83,6 +96,14 @@ PATH_HEADERS = ["path", "count", "depth", "children", "shape consistency", "dist
 class StructurePanel(QWidget):
     """Analyse a document in the background and present the result."""
 
+    #: Emitted with the :class:`~gigaxml.gui.inspect_report.Candidate` the user selected,
+    #: or ``None`` when the selection is cleared. The window passes it to the field panel.
+    candidate_changed = Signal(object)
+
+    #: Emitted when a new report has been parsed. The window passes its namespaces and its
+    #: path list to the field panel, which is what completes the path boxes.
+    report_changed = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._source: Path | None = None
@@ -91,11 +112,36 @@ class StructurePanel(QWidget):
         self._finished = False
         self._report: InspectReport | None = None
 
+        # Example values. Sampling is a chain of two child processes -- write a config for
+        # the candidate, then sample it -- so it keeps its own queue, its own process and
+        # its own timer. Sharing the analysis pump would make "the analysis finished"
+        # indistinguishable from "the values arrived", and the existing tests wait on
+        # exactly that distinction.
+        self._example_steps: list[list[str]] = []
+        self._example_process: CliProcess | None = None
+        self._example_step_done = False
+        self._example_step_result: RunResult | None = None
+        self._example_step_generation = 0
+        #: Which selection the chain in flight belongs to. A user clicking down the
+        #: candidate list starts a chain per click, and the ones they have moved past are
+        #: still running; without this, the first one to report back would be shown
+        #: against whichever row happens to be selected by then.
+        self._example_generation = 0
+        self._example_table: SampledTable | None = None
+        self._example_failure = ""
+        self._example_directory: Path | None = None
+        self._example_output: Path | None = None
+        self._example_for: int | None = None
+
         self._build()
 
         self._pump = QTimer(self)
         self._pump.setInterval(PUMP_INTERVAL_MS)
         self._pump.timeout.connect(self._drain)
+
+        self._example_pump = QTimer(self)
+        self._example_pump.setInterval(PUMP_INTERVAL_MS)
+        self._example_pump.timeout.connect(self._drain_examples)
 
     # -- construction ------------------------------------------------------
 
@@ -299,6 +345,7 @@ class StructurePanel(QWidget):
             return
         self._report = report
         self._fill(report)
+        self.report_changed.emit()
 
     # -- filling the tables ------------------------------------------------
 
@@ -430,7 +477,172 @@ class StructurePanel(QWidget):
         # user clicked.
         if not isinstance(stored, int) or not 0 <= stored < len(report.candidates):
             return
-        self._detail.setPlainText(_describe_candidate(report.candidates[stored]))
+        self._request_example_values(stored)
+        # Rendered after the request, not before: the first paint has to show that values
+        # are on their way, and painting first would show "(none)" for the moment before
+        # the child starts.
+        self._render_detail()
+        self.candidate_changed.emit(report.candidates[stored])
+
+    def _render_detail(self) -> None:
+        """Repaint the side panel for whatever is selected right now."""
+        report = self._report
+        index = self.selected_candidate_index()
+        if report is None or index is None or not 0 <= index < len(report.candidates):
+            return
+        self._detail.setPlainText(
+            _describe_candidate(
+                report.candidates[index],
+                examples=self._example_table,
+                pending=self._example_pending(),
+                failure=self._example_failure,
+            )
+        )
+
+    # -- example values ----------------------------------------------------
+
+    def _example_pending(self) -> bool:
+        """Whether a sampling chain is in flight for the selected candidate."""
+        return bool(self._example_steps) or self._example_process is not None
+
+    def _request_example_values(self, index: int) -> None:
+        """Start the chain that puts real values beside the field list.
+
+        **The same mechanism the preview uses**, which is what the brief asks for: this
+        asks ``inspect`` to write a config for the candidate, then asks ``sample`` to
+        produce one record from it. Nothing here reads the document -- the values come out
+        of a child process writing a file, exactly as they do in the preview panel.
+
+        Two steps rather than one because ``sample`` needs a config, and the config for a
+        candidate is what ``inspect --generate-config`` exists to produce.
+        """
+        source = self._source
+        if source is None:
+            return
+        already = index == self._example_for and (
+            self._example_table is not None or self._example_pending()
+        )
+        if already:
+            # Re-selecting the same row must not start a second chain: the table emits a
+            # selection change on every rebuild, and each one would otherwise spawn two
+            # more children. The values already in hand are left alone.
+            return
+        self._example_for = index
+        self._example_table = None
+        self._example_failure = ""
+        # Whatever was in flight belongs to the previous selection, and its answer is no
+        # longer wanted: stop it rather than let it report into a row it does not describe.
+        self._cancel_example_chain()
+        self._example_generation += 1
+        # One directory at a time: clicking through fifty candidates should leave one
+        # directory behind, not fifty.
+        discard_run_directory(self._example_directory)
+        self._example_directory = make_run_directory("gigaxml-examples-")
+        config_path = self._example_directory / "config.yaml"
+        self._example_output = self._example_directory / "sample.csv"
+        # 1-based, matching what `inspect` prints and what the table shows.
+        self._example_steps = [
+            generate_config_args(source, config_path, index + 1),
+            sample_args(source, config_path, EXAMPLE_ROWS, self._example_output),
+        ]
+        self._start_next_example_step(self._example_generation)
+
+    def _cancel_example_chain(self) -> None:
+        """Stop the chain in flight, if there is one, and forget it."""
+        self._example_steps.clear()
+        self._example_step_done = False
+        process = self._example_process
+        self._example_process = None
+        if process is not None:
+            process.kill()
+        self._example_pump.stop()
+
+    def _start_next_example_step(self, generation: int) -> None:
+        """Launch the next child in the chain, or finish if there is none left.
+
+        ``generation`` is the selection this chain belongs to. A chain whose generation has
+        been superseded stops here rather than starting another child.
+        """
+        if generation != self._example_generation:
+            return
+        if not self._example_steps:
+            self._example_process = None
+            self._example_pump.stop()
+            self._render_detail()
+            return
+        args = self._example_steps.pop(0)
+        process = CliProcess(
+            args,
+            on_finished=lambda run, gen=generation: self._note_example_step(run, gen),
+        )
+        self._example_process = process
+        process.start()
+        self._example_pump.start()
+
+    def _note_example_step(self, run: RunResult, generation: int) -> None:
+        """Reader thread. Records the step's outcome and touches no widget."""
+        self._example_step_result = run
+        self._example_step_generation = generation
+        self._example_step_done = True
+
+    def _drain_examples(self) -> None:
+        """UI thread. Advances the chain when a step reports back."""
+        if not self._example_step_done:
+            return
+        self._example_step_done = False
+        if self._example_step_generation != self._example_generation:
+            # The user has selected something else since this child started. Its answer
+            # describes a row that is no longer the one on screen.
+            return
+        run = self._example_step_result
+        if run is None:
+            return
+        if run.killed:
+            self._example_failure = "sampling was cancelled"
+            self._example_steps.clear()
+            self._example_process = None
+            self._example_pump.stop()
+            self._render_detail()
+            return
+        if not run.ok:
+            first = next((line for line in run.warnings if line.strip()), None)
+            self._example_failure = first or f"sampling failed with exit code {run.exit_code}"
+            self._example_steps.clear()
+            self._example_process = None
+            self._example_pump.stop()
+            self._render_detail()
+            return
+        if self._example_steps:
+            # The config was written; now sample it.
+            self._start_next_example_step(self._example_generation)
+            return
+        if self._example_output is not None:
+            self._example_table = table_from(run.summary, self._example_output)
+        self._example_process = None
+        self._example_pump.stop()
+        self._render_detail()
+
+    def example_values(self) -> dict[str, str] | None:
+        """The first sampled record as field-name to value, or ``None``.
+
+        Exposed so a test can assert the values are real rather than that some text
+        appeared, which is the difference the brief cares about.
+        """
+        table = self._example_table
+        if table is None or not table.rows:
+            return None
+        return dict(zip(table.headers, table.rows[0], strict=False))
+
+    def example_failure(self) -> str:
+        return self._example_failure
+
+    def example_directory(self) -> Path | None:
+        """Where the sample behind the example values was written.
+
+        Exposed because those files are the evidence that the values came from a child
+        process rather than from anything in this one.
+        """
+        return self._example_directory
 
     def selected_candidate_index(self) -> int | None:
         """The report index of the selected candidate, or ``None``.
@@ -471,13 +683,20 @@ class StructurePanel(QWidget):
         Path(path).write_text(self.csv_text(), encoding="utf-8")
 
 
-def _describe_candidate(candidate: Candidate) -> str:
+def _describe_candidate(
+    candidate: Candidate,
+    *,
+    examples: SampledTable | None = None,
+    pending: bool = False,
+    failure: str = "",
+) -> str:
     """The side panel's text for one candidate.
 
-    Everything here comes from the JSON. **Example values are not included, because
-    ``inspect --json`` does not carry them** -- ``value_sampling`` reports only whether
-    sampling was truncated. Showing a made-up example, or one obtained by reading the
-    document in the window's process, would both be worse than saying nothing.
+    The fields, the namespaces and the evidence all come from the JSON. **The example
+    values do not, because ``inspect --json`` does not carry any** -- ``value_sampling``
+    reports only whether sampling was truncated. They come from sampling the candidate
+    through the same mechanism the preview panel uses, which is a child process writing a
+    file; nothing here reads the document.
     """
     lines = [
         candidate.path,
@@ -504,6 +723,36 @@ def _describe_candidate(candidate: Candidate) -> str:
     if candidate.missing_namespaces:
         lines += ["", "namespaces used with no prefix"]
         lines += [f"  {uri}" for uri in candidate.missing_namespaces]
+    lines += _example_lines(examples, pending=pending, failure=failure)
     if candidate.evidence:
         lines += ["", "why it was proposed", f"  {candidate.evidence}"]
     return "\n".join(lines)
+
+
+def _example_lines(
+    examples: SampledTable | None,
+    *,
+    pending: bool,
+    failure: str,
+) -> list[str]:
+    """The example-values section, which says which of the three states it is in.
+
+    A section that simply vanishes while sampling would leave the reader unable to tell
+    "no values exist" from "they are still coming".
+    """
+    if failure:
+        return ["", "example values", f"  could not be sampled: {failure}"]
+    if examples is None:
+        return ["", "example values", "  sampling…" if pending else "  (none)"]
+    if not examples.rows:
+        return [
+            "",
+            "example values",
+            "  the sample held no records, so there is nothing to show",
+        ]
+    lines = ["", f"example values (first {len(examples.rows)} of a sample)"]
+    for header, value in zip(examples.headers, examples.rows[0], strict=False):
+        lines.append(f"  {header} = {value}")
+    if examples.rejected:
+        lines.append(f"  ({examples.rejected} record(s) were rejected)")
+    return lines

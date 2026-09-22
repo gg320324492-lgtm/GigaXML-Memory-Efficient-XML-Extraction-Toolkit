@@ -271,19 +271,26 @@ def test_the_side_panel_shows_fields_and_namespaces(window: MainWindow, qtbot: Q
 def test_the_side_panel_does_not_pretend_to_have_example_values(
     window: MainWindow, qtbot: QtBot
 ) -> None:
-    """``inspect --json`` carries no sample values -- only whether sampling was truncated.
+    """**Rewritten in 8A-7, and the reason matters.**
 
-    The panel therefore says nothing about values. Inventing an example, or reading the
-    document in this process to get one, would both be worse than the gap.
+    This used to assert the section was *absent*: ``inspect --json`` carries no sample
+    values, and inventing one -- or reading the document in this process to get one --
+    would both have been worse than the gap. 8A-7 gave the panel a real source, so the
+    section is now present and the assertion has to be about something else: that it holds
+    nothing until a sample has actually arrived.
+
+    Checked synchronously, with no event loop turn in between, so "has the sample landed
+    yet" cannot make it flaky.
     """
     analyse(window, qtbot, FIXTURES / "extract_default_ns.xml")
     panel = window.structure_panel()
 
     select_path(panel, "/catalog/products/product")
-    detail = panel.detail_text().lower()
+    detail = panel.detail_text()
 
-    assert "example values" not in detail
-    assert "sample value" not in detail
+    assert "example values" in detail
+    assert "sampling…" in detail, "the panel claimed values before it had any"
+    assert " = " not in detail, "a value appeared before anything was sampled"
 
 
 # --- the namespace panel and the warnings -------------------------------------
@@ -605,9 +612,15 @@ def test_finishing_without_a_result_does_not_crash(window: MainWindow) -> None:
 
 
 def test_selecting_nothing_leaves_the_detail_pane_alone(window: MainWindow, qtbot: QtBot) -> None:
+    """**Waiting first is new in 8A-7.** The pane now updates a second time, when the
+    example values arrive, so capturing the text before that would compare a pane mid
+    sentence against one that had finished."""
     analyse(window, qtbot, FIXTURES / "extract_default_ns.xml")
     panel = window.structure_panel()
     select_path(panel, "/catalog/products/product")
+    assert wait_until(
+        qtbot, lambda: panel.example_values() is not None or panel.example_failure()
+    ), "the example values never arrived"
     before = panel.detail_text()
 
     panel._candidates.clearSelection()
