@@ -21,7 +21,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -33,12 +33,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from gigaxml.config import ConfigError, load_config, parse_config
+from gigaxml.errors import GigaXMLError
 from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.progress import Progress, format_eta, fraction_done
 
@@ -80,6 +82,22 @@ def _discard_effective_config(path: Path | None) -> bool:
 
 class ExecutionPanel(QWidget):
     """Choose an output, run the extraction, watch it, stop it."""
+
+    #: Emitted once when a run ends, whatever the outcome. The window listens so it can
+    #: look at the run report and show what went wrong; this panel does not read the report
+    #: itself, because saying what a failure means is not this panel's job.
+    finished = Signal()
+
+    #: Emitted when a run could not be started at all, with the reason and its kind.
+    #:
+    #: This is the config that will not load. There is no child process and no run report,
+    #: so it never reaches :attr:`finished` -- and it is still a failure the user has to be
+    #: told about, with the same treatment as any other.
+    #:
+    #: The second argument is the exception's class name, and it is what the window
+    #: dispatches on. It is available here and nowhere else: there is no report to read it
+    #: from, so without passing it along the advice would have to guess from the wording.
+    start_failed = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -170,6 +188,12 @@ class ExecutionPanel(QWidget):
         progress_layout.addWidget(self._bar)
         self._counts = QLabel("not started", self)
         self._counts.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # A failure puts the CLI's own message here, and those are full of Windows paths --
+        # no spaces, so wrapping alone does not help and the label's width hint grew until
+        # the window was 4340 pixels wide. Ignored means the layout decides the width.
+        self._counts.setWordWrap(True)
+        self._counts.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._counts.setMinimumWidth(1)
         progress_layout.addWidget(self._counts)
         layout.addWidget(progress_box)
 
@@ -336,10 +360,19 @@ class ExecutionPanel(QWidget):
             return
         try:
             args = self.build_args()
-        except ConfigError as exc:
-            # The project's own loader produced this, so it already says what is wrong
-            # and where. Rewording it here would only make it less precise.
+        except GigaXMLError as exc:
+            # **``GigaXMLError``, not ``ConfigError``.** The loader raises more than one
+            # kind and they do not share that parent: a field path with a namespace prefix
+            # the map does not declare raises ``FieldPathError``, which is a sibling of
+            # ``ConfigError`` rather than a child of it. Catching only ``ConfigError`` let
+            # that one escape from a button press into the event loop.
+            #
+            # The project's own loader produced this, so it already says what is wrong and
+            # where. Rewording it here would only make it less precise.
             self._counts.setText(f"config error: {exc}")
+            # And said again where the user can act on it. The panel that owns the run is
+            # not the place to explain a config -- there is no run to explain.
+            self.start_failed.emit(str(exc), type(exc).__name__)
             return
 
         self._received = []
@@ -383,6 +416,33 @@ class ExecutionPanel(QWidget):
     def run_result(self) -> RunResult | None:
         return self._run_result
 
+    # -- reading back, for the window --------------------------------------
+
+    def output_path(self) -> Path:
+        """Where the output goes, as typed. The run report lands beside it."""
+        return Path(self._output.text().strip())
+
+    def is_checkpointing(self) -> bool:
+        """Whether this run writes parts into a directory instead of one file.
+
+        The report's location depends on it: ``--output`` names the parts directory in that
+        mode, so the summary goes inside rather than beside.
+        """
+        return self._checkpoint.value() > 0
+
+    def set_on_error(self, policy: str) -> None:
+        """Choose the on-error policy, as if the user had picked it.
+
+        Here so the error panel's advice can be acted on rather than only read: pressing
+        "set on_error to quarantine" has to arrive at the same state as choosing it from
+        the list. A policy this panel does not offer is ignored rather than added -- the
+        list is the set of things the CLI accepts here, and inventing an entry would put
+        something in front of the user that the run would then reject.
+        """
+        index = self._on_error.findText(policy)
+        if index >= 0:
+            self._on_error.setCurrentIndex(index)
+
     # -- the UI-thread pump ------------------------------------------------
 
     def _drain(self) -> None:
@@ -396,6 +456,11 @@ class ExecutionPanel(QWidget):
         if self._finished:
             self._pump.stop()
             self._finish()
+            # After _finish, so whoever listens can read the widgets this panel just
+            # settled -- and always, not only on failure: the listener decides whether
+            # there is anything to say, and a panel that only spoke on failure would have
+            # to duplicate that decision.
+            self.finished.emit()
 
     def _show(self, progress: Progress) -> None:
         fraction = fraction_done(progress.records, self._total)

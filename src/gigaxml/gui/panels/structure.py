@@ -414,7 +414,17 @@ class StructurePanel(QWidget):
                 label = prefix if prefix else "<default>"
                 lines.append(f"  {label} → {uri}")
         else:
-            lines.append("this document declares no namespaces")
+            # **"Declares" was the wrong word, and this is a statement about the user's own
+            # file.** ``namespaces`` is the map the *candidate records* resolve against,
+            # not everything the document declares: a document can declare a prefix and
+            # never use it, and this is then empty. Saying it declares none would be false
+            # about their document -- and this panel is where the namespace advice sends
+            # them, so being wrong here is worse than being vague.
+            lines.append(
+                "no candidate records were found, so there are no namespaces to show"
+                if not report.candidates
+                else "the records found use no namespace prefixes"
+            )
         if report.shadowed_prefixes:
             lines.append("")
             lines.append("rebound prefixes (they mean more than one thing):")

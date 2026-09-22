@@ -23,18 +23,28 @@ from pathlib import Path
 
 from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QLabel,
     QMainWindow,
     QTabWidget,
+    QVBoxLayout,
     QWidget,
 )
 
+from gigaxml.gui.error_advice import (
+    KIND_CHECK_CONFIG,
+    KIND_FREE_TARGET,
+    KIND_NAMESPACES,
+    KIND_QUARANTINE,
+)
 from gigaxml.gui.panels.document import DocumentPanel
+from gigaxml.gui.panels.errors import ErrorPanel
 from gigaxml.gui.panels.execution import ExecutionPanel
 from gigaxml.gui.panels.fields import FieldConfigPanel
 from gigaxml.gui.panels.preview import PreviewPanel
 from gigaxml.gui.panels.structure import StructurePanel
 from gigaxml.gui.recent_files import RecentFiles, default_state_dir
+from gigaxml.gui.run_report import failure_from_stderr, read_failure
 
 #: The file the recent-documents list lives in, under the state directory.
 RECENT_FILES_NAME = "recent_files.json"
@@ -57,12 +67,19 @@ class MainWindow(QMainWindow):
         self._fields = FieldConfigPanel(self)
         self._preview = PreviewPanel(self)
         self._execution = ExecutionPanel(self)
+        self._errors = ErrorPanel(self)
+        # The error panel lives with the run rather than in a tab of its own: it is about
+        # the thing that just happened in this tab, and it is empty until something fails.
+        self._execute_tab = QWidget(self)
+        execute_layout = QVBoxLayout(self._execute_tab)
+        execute_layout.addWidget(self._execution, 1)
+        execute_layout.addWidget(self._errors)
         for panel, title in (
             (self._documents, "Document"),
             (self._structure, "Structure"),
             (self._fields, "Fields"),
             (self._preview, "Preview"),
-            (self._execution, "Execute"),
+            (self._execute_tab, "Execute"),
         ):
             self._tabs.addTab(panel, title)
         self.setCentralWidget(self._tabs)
@@ -83,6 +100,80 @@ class MainWindow(QMainWindow):
         self._structure.report_changed.connect(self._on_report_changed)
         self._structure.candidate_changed.connect(self._on_candidate_changed)
         self._fields.config_changed.connect(self._on_fields_changed)
+        self._execution.finished.connect(self._on_run_finished)
+        self._execution.start_failed.connect(self._on_run_start_failed)
+        self._errors.action_requested.connect(self._on_error_action)
+
+    def _on_run_start_failed(self, message: str, error_type: str) -> None:
+        """A run that never started, because the config would not load.
+
+        There is no report, but there is still a kind: the loader raised in this process,
+        so the exception's class is in hand even though nothing was written down. Passing
+        it through is what lets a bad namespace prefix get its own advice rather than the
+        general one -- and it is dispatch by type, which is the same rule the report path
+        follows. The message is the project's own, which is why it is shown verbatim.
+        """
+        self._errors.show_failure(
+            failure_from_stderr([message], None, error_type=error_type), [message]
+        )
+
+    def _on_run_finished(self) -> None:
+        """Say what went wrong, if anything did.
+
+        The report is where the CLI's own classification lives -- ``error.type``, the
+        exception class name -- and it is written on failure as well as on success. When
+        there is no report, the run died before the CLI could create one: that is the
+        config that will not load, and there is no type to dispatch on. It is still shown,
+        with the message and the raw output, rather than swallowed for being unclassified.
+        """
+        run = self._execution.run_result()
+        if run is None or run.killed or run.ok:
+            self._errors.clear()
+            return
+        failure = read_failure(
+            self._execution.output_path(),
+            checkpointing=self._execution.is_checkpointing(),
+        )
+        if failure is None:
+            failure = failure_from_stderr(list(run.stderr_lines), run.exit_code)
+        self._errors.show_failure(failure, list(run.stderr_lines))
+
+    def _on_error_action(self, kind: str) -> None:
+        """Do the thing the advice suggested. The panel does not know what any of it means.
+
+        Every branch ends somewhere the user can see: a setting changed, a path on the
+        clipboard, or a different tab. An advice button that only re-worded the message
+        would be decoration.
+        """
+        if kind == KIND_QUARANTINE:
+            self._execution.set_on_error("quarantine")
+            self._tabs.setCurrentWidget(self._execute_tab)
+            self.statusBar().showMessage("on_error set to quarantine", 5000)
+            return
+        if kind == KIND_FREE_TARGET:
+            failure = self._errors.failure()
+            target = failure.partial_path if failure is not None else None
+            if target is not None:
+                QApplication.clipboard().setText(str(target))
+                self.statusBar().showMessage(f"copied {target}", 5000)
+            return
+        if kind == KIND_NAMESPACES:
+            self._tabs.setCurrentWidget(self._structure)
+            # The panel is empty until the document has been analysed, and the advice says
+            # the prefixes are listed there. Saying which of the two states the user has
+            # landed in is the difference between arriving somewhere and arriving at
+            # nothing -- the panel itself cannot tell them, because an unanalysed document
+            # and a document with no namespaces look the same on screen.
+            if self._structure.report() is None:
+                self.statusBar().showMessage(
+                    "press Analyse on this tab to see what the document declares", 8000
+                )
+            else:
+                self.statusBar().showMessage("the document's namespaces are listed here", 5000)
+            return
+        if kind == KIND_CHECK_CONFIG:
+            self._tabs.setCurrentWidget(self._fields)
+            self.statusBar().showMessage("the config is in the Fields tab", 5000)
 
     def _on_document_changed(self, path: str) -> None:
         self._structure.set_document(path)
@@ -187,6 +278,9 @@ class MainWindow(QMainWindow):
 
     def execution_panel(self) -> ExecutionPanel:
         return self._execution
+
+    def error_panel(self) -> ErrorPanel:
+        return self._errors
 
     def tabs(self) -> QTabWidget:
         return self._tabs

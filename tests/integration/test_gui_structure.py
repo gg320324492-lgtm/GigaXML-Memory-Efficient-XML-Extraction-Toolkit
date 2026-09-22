@@ -755,6 +755,63 @@ def test_a_candidate_without_namespaces_says_so() -> None:
     assert "child elements" not in text, "nothing to list, so no heading for it"
 
 
+def test_the_namespace_panel_does_not_claim_the_document_declares_none(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    """**It says what the records use, not what the document declares.**
+
+    ``inspect``'s ``namespaces`` is the map the candidate records resolve against, and a
+    document can declare a prefix and never use it -- this one declares two and uses
+    neither. The panel used to say "this document declares no namespaces", which is a false
+    statement about the user's own file, and it is the panel the namespace advice sends them
+    to.
+    """
+    source = tmp_path / "declared-but-unused.xml"
+    source.write_text(
+        '<catalog xmlns:sh="urn:example:shop" xmlns:zz="urn:example:unused">'
+        "<products>"
+        '<product id="1"><name>Alpha Lamp</name></product>'
+        '<product id="2"><name>Beta Suite</name></product>'
+        "</products></catalog>",
+        encoding="utf-8",
+    )
+
+    analyse(window, qtbot, source)
+    report = window.structure_panel().report()
+    assert report is not None
+    assert report.namespaces == {}, "the records use no prefixes"
+    assert report.candidates, "but there are records"
+
+    text = window.structure_panel()._namespaces.toPlainText()
+
+    assert "declares no namespaces" not in text, "that is not true of this document"
+    assert "use no namespace prefixes" in text
+
+
+def test_the_namespace_panel_says_when_there_were_no_records(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    """The other empty case, and it has a different reason: nothing repeated, so there was
+    nothing to call a record. Saying the document declares none would be wrong here too."""
+    source = tmp_path / "single.xml"
+    source.write_text(
+        '<catalog xmlns:sh="urn:example:shop"><sh:products>'
+        '<sh:product id="1"><sh:name>Alpha</sh:name></sh:product>'
+        "</sh:products></catalog>",
+        encoding="utf-8",
+    )
+
+    analyse(window, qtbot, source)
+    report = window.structure_panel().report()
+    assert report is not None
+    assert not report.candidates
+
+    text = window.structure_panel()._namespaces.toPlainText()
+
+    assert "declares no namespaces" not in text
+    assert "no candidate records were found" in text
+
+
 def test_a_candidate_with_unprefixed_namespaces_and_evidence_shows_both() -> None:
     from gigaxml.gui.inspect_report import Candidate
 
