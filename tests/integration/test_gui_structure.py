@@ -293,6 +293,34 @@ def test_the_side_panel_does_not_pretend_to_have_example_values(
     assert " = " not in detail, "a value appeared before anything was sampled"
 
 
+# --- cancelling the example chain ---------------------------------------------
+
+
+def test_cancelling_the_example_chain_leaves_the_flag_cleared(
+    window: MainWindow, qtbot: QtBot
+) -> None:
+    """**The flag is cleared after the kill, so it stays cleared.**
+
+    ``CliProcess.kill`` waits for the callback, and the callback is what sets
+    ``_example_step_done``. Clearing the flag *before* the kill therefore cleared it and had
+    it set straight back: the line read as "forget the previous step" while doing nothing,
+    and nothing failed, because the generation check covered for it.
+
+    Asserted with **no event loop turn in between**, so this is about what
+    ``_cancel_example_chain`` leaves behind rather than about what the pump later makes of
+    it.
+    """
+    analyse(window, qtbot, FIXTURES / "extract_default_ns.xml")
+    panel = window.structure_panel()
+    select_path(panel, "/catalog/products/product")
+    assert panel._example_pending(), "no chain started"
+
+    panel._cancel_example_chain()
+
+    assert panel._example_step_done is False, "the callback set the flag again"
+    assert not panel._example_pending(), "the chain is still reported as in flight"
+
+
 # --- the namespace panel and the warnings -------------------------------------
 
 

@@ -619,6 +619,32 @@ def test_clicking_again_takes_the_candidate_selected_now(window: MainWindow, qtb
     assert not abandoned.is_running, "the abandoned request was left running"
 
 
+def test_cancelling_a_config_request_leaves_the_flag_cleared(
+    window: MainWindow, qtbot: QtBot
+) -> None:
+    """Same as the structure panel's example chain, and the same reason.
+
+    ``kill`` waits for the callback, so clearing ``_generate_done`` before it cleared the
+    flag and had the callback set it straight back. Asserted with no event loop turn in
+    between.
+    """
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+    select_report_index(structure, 0)
+
+    panel = window.field_panel()
+    panel.regenerate_from_candidate()
+    assert panel.is_regenerating(), "no request started"
+
+    panel._cancel_regenerate()
+
+    assert panel._generate_done is False, "the callback set the flag again"
+    assert not panel.is_regenerating(), "the request is still reported as in flight"
+
+
 def test_from_candidate_needs_a_document_and_a_candidate(window: MainWindow) -> None:
     panel = window.field_panel()
 

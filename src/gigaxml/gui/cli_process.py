@@ -194,6 +194,12 @@ class CliProcess:
         deadlocking. Every callback in ``gigaxml.gui`` records its result and sets a flag --
         see ``_note_finished`` in the execution, preview and structure panels -- and
         ``test_killing_from_the_callback_fails_loudly_rather_than_stalling`` pins that down.
+
+        **Because the callback has run by the time this returns, a caller that cancels
+        should clear its "handled" flag *after* calling this, not before.** Clearing it
+        first is cleared again by the callback, and the line ends up reading as "forget
+        the previous run" while doing nothing -- which is what the two ``_cancel_*``
+        methods in the structure and field panels used to do.
         """
         self._killed.set()
         process = self._process

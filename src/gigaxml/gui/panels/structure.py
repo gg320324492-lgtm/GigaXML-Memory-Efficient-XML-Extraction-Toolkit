@@ -550,11 +550,14 @@ class StructurePanel(QWidget):
     def _cancel_example_chain(self) -> None:
         """Stop the chain in flight, if there is one, and forget it."""
         self._example_steps.clear()
-        self._example_step_done = False
         process = self._example_process
         self._example_process = None
         if process is not None:
             process.kill()
+        # After kill(), not before. kill waits for the callback, and the callback is what
+        # sets this flag -- so clearing it first would be undone by the very step it is
+        # meant to forget, and the line would read as "forget it" while doing nothing.
+        self._example_step_done = False
         self._example_pump.stop()
 
     def _start_next_example_step(self, generation: int) -> None:

@@ -284,11 +284,14 @@ class FieldConfigPanel(QWidget):
 
     def _cancel_regenerate(self) -> None:
         """Stop the request in flight, if there is one, and forget it."""
-        self._generate_done = False
         process = self._regenerate_process
         self._regenerate_process = None
         if process is not None:
             process.kill()
+        # After kill(), not before. kill waits for the callback, and the callback is what
+        # sets this flag -- so clearing it first would be undone by the very step it is
+        # meant to forget, and the line would read as "forget it" while doing nothing.
+        self._generate_done = False
         self._regenerate_pump.stop()
 
     def _note_generated_config(self, run: RunResult, generation: int) -> None:
