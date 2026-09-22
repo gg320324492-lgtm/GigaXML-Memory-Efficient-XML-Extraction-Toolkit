@@ -172,18 +172,34 @@ class CliProcess:
             self._on_finished(result)
 
     def kill(self) -> None:
-        """Stop the child and wait for it to actually be gone.
+        """Stop the child and wait until nothing more will arrive from it.
 
-        Waiting matters. Returning while the child is still running would let the caller
-        read the output directory before the CLI has finished tidying it, and would make
-        "cancelled" mean "we stopped listening".
+        Waiting matters twice over, and the second one used to be missed.
+
+        Returning while the child is still running would let the caller read the output
+        directory before the CLI has finished tidying it, and would make "cancelled" mean
+        "we stopped listening".
+
+        And returning before the reader thread has finished would mean ``on_finished`` had
+        not been called yet. **"The child is gone" and "the callback has been delivered" are
+        different statements.** A caller that cancels one run and starts another needs the
+        first one's callback to have happened by then; otherwise the two answers race for
+        the same slot, and the stale one can arrive last and be the one that is kept. So the
+        join is unconditional -- it does not depend on the child having been alive when this
+        was called, which is what the old ``poll() is not None`` early return got wrong.
+
+        That is safe only because **no ``on_finished`` callback calls this method**. The
+        callback runs on the reader thread, and joining the current thread is not something
+        Python will do: it raises ``RuntimeError: cannot join current thread`` rather than
+        deadlocking. Every callback in ``gigaxml.gui`` records its result and sets a flag --
+        see ``_note_finished`` in the execution, preview and structure panels -- and
+        ``test_killing_from_the_callback_fails_loudly_rather_than_stalling`` pins that down.
         """
         self._killed.set()
         process = self._process
-        if process is None or process.poll() is not None:
-            return
-        process.kill()
-        process.wait()
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait()
         if self._reader is not None:
             self._reader.join(timeout=10)
 

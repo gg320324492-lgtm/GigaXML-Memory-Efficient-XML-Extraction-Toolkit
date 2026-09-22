@@ -66,6 +66,11 @@ class PreviewPanel(QWidget):
         self._process: CliProcess | None = None
         self._run_result: RunResult | None = None
         self._finished = False
+        #: Which run the answer in hand belongs to. Pressing Preview again replaces the run
+        #: in flight, and the answer that arrives for the old one must not be applied to
+        #: the new one's settings.
+        self._generation = 0
+        self._finished_generation = 0
         self._table: SampledTable | None = None
         self._run_directory: Path | None = None
         self._output: Path | None = None
@@ -177,12 +182,21 @@ class PreviewPanel(QWidget):
     # -- running -----------------------------------------------------------
 
     def preview(self) -> None:
-        """Start ``sample``. Returns as soon as the child is started."""
+        """Start ``sample``. Returns as soon as the child is started.
+
+        Pressing Preview while one is running means "sample with the settings as they are
+        now", so the run in flight is stopped and replaced rather than ignored. Ignoring
+        reads as the button being broken: the user changes the limit, presses it, and
+        nothing happens. Same shape as the field panel's "From candidate", and the same two
+        parts -- the generation decides which answer is the right one, the cancellation
+        decides that the other one stops running.
+        """
         if self._source is None or self._config is None:
             self._refresh_readiness()
             return
-        if self._process is not None and self._process.is_running:
-            return
+        self._cancel_run()
+        self._generation += 1
+        generation = self._generation
 
         self._run_result = None
         self._finished = False
@@ -205,15 +219,31 @@ class PreviewPanel(QWidget):
 
         process = CliProcess(
             sample_args(self._source, config_path, self._limit.value(), self._output),
-            on_finished=self._note_finished,  # reader thread: record only
+            # reader thread: record only
+            on_finished=lambda run, gen=generation: self._note_finished(run, gen),
         )
         self._process = process
         process.start()
         self._pump.start()
 
-    def _note_finished(self, run: RunResult) -> None:
+    def _cancel_run(self) -> None:
+        """Stop the run in flight, if there is one.
+
+        ``CliProcess.kill`` waits for the reader thread, so by the time this returns the
+        previous run's callback has already been delivered -- which is what lets the caller
+        start the next one without the two answers racing for the same slot.
+        """
+        process = self._process
+        if process is None:
+            return
+        process.kill()
+        self._process = None
+        self._pump.stop()
+
+    def _note_finished(self, run: RunResult, generation: int) -> None:
         """Reader thread. Records the outcome; touches no widget."""
         self._run_result = run
+        self._finished_generation = generation
         self._finished = True
 
     def cancel(self) -> None:
@@ -241,9 +271,17 @@ class PreviewPanel(QWidget):
     # -- the UI-thread pump ------------------------------------------------
 
     def _drain(self) -> None:
-        if self._finished:
-            self._pump.stop()
-            self._finish()
+        if not self._finished:
+            return
+        self._finished = False
+        if self._finished_generation != self._generation:
+            # Recorded for a run the user has replaced since. ``kill`` guarantees the
+            # callback has been delivered before the next run starts, so this is about the
+            # gap between the answer arriving and the UI thread getting a turn -- the user
+            # can press Preview again in that window.
+            return
+        self._pump.stop()
+        self._finish()
 
     def _finish(self) -> None:
         run = self._run_result

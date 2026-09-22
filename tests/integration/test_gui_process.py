@@ -378,6 +378,90 @@ def test_a_run_result_reports_ok_only_when_it_is() -> None:
 # --- the Qt-free promise -----------------------------------------------------
 
 
+# --- kill()'s contract --------------------------------------------------------
+
+
+def test_killing_a_child_that_has_already_exited_still_waits_for_its_callback(
+    tmp_path: pathlib.Path,
+) -> None:
+    """**"The child is gone" and "the callback has been delivered" are different things.**
+
+    ``kill`` used to return early when the process had already exited, and that early return
+    skipped the join on the reader thread -- while ``on_finished`` is called *from* that
+    thread. A caller that cancels one run and starts another could therefore have the first
+    run's callback arrive after the second had reported, and with a single slot to write
+    into, the stale answer was the one that survived.
+
+    **Constructed, not hoped for.** A child that exits on its own, whose callback is then
+    held open, is exactly the state the early return was reached in -- and the reason the
+    ordering never showed up from the panels: clicking twice kills a child that is still
+    running, which never took that path at all.
+
+    The callback is blocked on an event rather than merely being slow, so "did ``kill``
+    wait for it" is a fact about the code rather than a race the test might win.
+    """
+    source = small_dataset(tmp_path, 3)
+    entered = threading.Event()
+    released = threading.Event()
+    calls: list[RunResult] = []
+
+    def hold(run: RunResult) -> None:
+        calls.append(run)
+        entered.set()
+        released.wait(timeout=30)
+
+    process = CliProcess(["inspect", str(source), "--json"], on_finished=hold)
+    process.start()
+
+    deadline = time.monotonic() + 30
+    while process.is_running and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert not process.is_running, "the child never exited"
+    assert entered.wait(timeout=30), "the callback never started"
+
+    killer = threading.Thread(target=process.kill, daemon=True)
+    killer.start()
+    time.sleep(0.5)
+    waited = killer.is_alive()
+    released.set()
+    killer.join(timeout=10)
+
+    assert waited, "kill() returned while the callback was still running"
+    assert calls, "kill() returned before on_finished had been called"
+
+
+def test_killing_from_the_callback_fails_loudly_rather_than_stalling(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The precondition the unconditional join rests on, pinned down.
+
+    ``kill`` joins the reader thread, which is only safe because no ``on_finished``
+    callback calls it -- the callback *runs on* that thread, and Python refuses to join the
+    current thread. It raises rather than deadlocking, so a future callback that broke the
+    rule would fail immediately and say why, instead of hanging for the join's ten-second
+    timeout with nothing to go on.
+    """
+    source = small_dataset(tmp_path, 3)
+    failures: list[BaseException] = []
+
+    def call_kill(_: RunResult) -> None:
+        try:
+            process.kill()
+        except BaseException as exc:  # the point is to observe it, whatever it is
+            failures.append(exc)
+
+    process = CliProcess(["inspect", str(source), "--json"], on_finished=call_kill)
+    process.start()
+    assert process.join(timeout=30) is not None, "the run never finished"
+
+    assert failures, "kill() from the callback neither raised nor returned"
+    assert isinstance(failures[0], RuntimeError)
+    assert "current thread" in str(failures[0])
+
+
+# --- the module boundary ------------------------------------------------------
+
+
 def test_the_gui_modules_do_not_need_qt() -> None:
     """Run the two modules in an interpreter where importing PySide6 fails.
 

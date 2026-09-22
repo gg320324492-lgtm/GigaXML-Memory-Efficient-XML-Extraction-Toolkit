@@ -294,15 +294,14 @@ class FieldConfigPanel(QWidget):
     def _note_generated_config(self, run: RunResult, generation: int) -> None:
         """Reader thread. Records the outcome and touches no widget.
 
-        A result belonging to a superseded request is dropped **here**, not at the drain.
-        ``CliProcess.kill`` returns without joining its reader thread when the child has
-        already exited, so a request that finished on its own can report after the one that
-        replaced it -- and a single-slot mailbox would then hold the stale answer while the
-        current one was thrown away, leaving the panel waiting for something that had
-        already arrived. Only the current request may put anything in the slot.
+        No filtering by generation here. It used to filter -- a superseded request's answer
+        was dropped before it could reach the slot -- because ``CliProcess.kill`` returned
+        without joining its reader thread when the child had already exited, so a request
+        that finished on its own could report *after* the one that replaced it. That is
+        fixed where it belongs, in ``kill``: it now always waits for the callback, so by the
+        time the next request starts, the previous one has already reported. Two mechanisms
+        for one rule would only leave the next person guessing which one to trust.
         """
-        if generation != self._regenerate_generation:
-            return
         self._generate_result = run
         self._generate_generation = generation
         self._generate_done = True

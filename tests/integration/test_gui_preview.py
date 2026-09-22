@@ -631,6 +631,40 @@ def test_moving_on_stops_the_chain_you_left_behind(
     assert not abandoned.is_running, "the abandoned chain was left running"
 
 
+def test_pressing_preview_again_samples_with_the_settings_as_they_are_now(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    """**The second press must win.**
+
+    Pressing Preview while one was running used to do nothing at all, which reads as the
+    button being broken: the user changes the limit, presses it, and the table goes on
+    showing the previous run. Same shape as the field panel's "From candidate", and fixed
+    the same way -- the run in flight is stopped and replaced.
+
+    Both presses happen before the event loop is given a turn, so the first run cannot have
+    answered in between. That is what makes this deterministic rather than a race the test
+    might win for the wrong reason.
+    """
+    panel = window.preview_panel()
+    panel.set_source(document(tmp_path))
+    panel.set_config(CONFIG)
+
+    panel.set_limit(1)
+    panel.preview()
+    first = panel._process
+    assert first is not None and first.is_running, "the first run never started"
+
+    panel.set_limit(3)
+    panel.preview()
+    assert panel._process is not first, "the second press was ignored"
+
+    assert wait_until(qtbot, lambda: panel.run_result() is not None), "no run finished"
+    assert wait_until(qtbot, lambda: not panel._pump.isActive()), "the panel never drained"
+
+    assert panel.table_row_count() == 3, "the replaced run's rows survived"
+    assert not first.is_running, "the replaced run was left running"
+
+
 def test_the_preview_says_where_its_files_are(
     window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
 ) -> None:
