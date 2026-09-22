@@ -94,6 +94,10 @@ class FieldConfigPanel(QWidget):
         self._generated_config: Path | None = None
         self._generate_result: RunResult | None = None
         self._generate_done = False
+        #: Which request the child in flight belongs to, so an abandoned one cannot report
+        #: into a table that has moved on.
+        self._regenerate_generation = 0
+        self._generate_generation = 0
         self._suspend = False
 
         self._build()
@@ -256,8 +260,15 @@ class FieldConfigPanel(QWidget):
         if source is None or index is None:
             self._message.setText("select a candidate in the structure panel first")
             return
-        if self._regenerate_process is not None:
-            return
+        # Clicking again means "the one selected now", so the request in flight is
+        # abandoned rather than allowed to finish and win: leaving it would fill the table
+        # with the fields of a candidate the user has moved off. Same shape as the
+        # structure panel's example values, and the same two parts -- the generation check
+        # decides which answer is correct, the cancellation decides that the other one
+        # stops running.
+        self._cancel_regenerate()
+        self._regenerate_generation += 1
+        generation = self._regenerate_generation
         discard_run_directory(self._regenerate_directory)
         self._regenerate_directory = make_run_directory("gigaxml-generate-")
         self._generated_config = self._regenerate_directory / "config.yaml"
@@ -265,15 +276,35 @@ class FieldConfigPanel(QWidget):
         process = CliProcess(
             # 1-based, matching what `inspect` prints and what the candidate table shows.
             generate_config_args(source, self._generated_config, index + 1),
-            on_finished=self._note_generated_config,
+            on_finished=lambda run, gen=generation: self._note_generated_config(run, gen),
         )
         self._regenerate_process = process
         process.start()
         self._regenerate_pump.start()
 
-    def _note_generated_config(self, run: RunResult) -> None:
-        """Reader thread. Records the outcome and touches no widget."""
+    def _cancel_regenerate(self) -> None:
+        """Stop the request in flight, if there is one, and forget it."""
+        self._generate_done = False
+        process = self._regenerate_process
+        self._regenerate_process = None
+        if process is not None:
+            process.kill()
+        self._regenerate_pump.stop()
+
+    def _note_generated_config(self, run: RunResult, generation: int) -> None:
+        """Reader thread. Records the outcome and touches no widget.
+
+        A result belonging to a superseded request is dropped **here**, not at the drain.
+        ``CliProcess.kill`` returns without joining its reader thread when the child has
+        already exited, so a request that finished on its own can report after the one that
+        replaced it -- and a single-slot mailbox would then hold the stale answer while the
+        current one was thrown away, leaving the panel waiting for something that had
+        already arrived. Only the current request may put anything in the slot.
+        """
+        if generation != self._regenerate_generation:
+            return
         self._generate_result = run
+        self._generate_generation = generation
         self._generate_done = True
 
     def _drain_regenerate(self) -> None:
@@ -281,6 +312,11 @@ class FieldConfigPanel(QWidget):
         if not self._generate_done:
             return
         self._generate_done = False
+        if self._generate_generation != self._regenerate_generation:
+            # Belt and braces, and a different job from the filter above: this catches the
+            # case where the answer was recorded correctly and the user clicked again
+            # before the UI thread got a turn, so the answer no longer matches the row.
+            return
         run = self._generate_result
         self._regenerate_process = None
         self._regenerate_pump.stop()

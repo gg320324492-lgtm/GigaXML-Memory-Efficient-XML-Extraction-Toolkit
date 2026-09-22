@@ -454,10 +454,15 @@ def select_report_index(panel: StructurePanel, index: int) -> None:
 def test_from_candidate_fills_the_same_fields_the_cli_would(
     window: MainWindow, qtbot: QtBot
 ) -> None:
-    """**The must-fix.** The panel's rows must equal what the CLI writes, field for field.
+    """The panel's rows must equal what the CLI writes, field for field.
 
-    It used to build the list itself from ``child_tags`` alone, which silently dropped
-    every attribute: on this fixture the CLI writes four fields and the panel wrote two.
+    It used to assemble the list itself -- the candidate's child tags, then its
+    attributes. That is a second implementation of a decision the CLI already makes, that
+    a candidate's attributes count as fields, and a second implementation drifts: the day
+    ``--generate-config`` decides something else belongs in the list, a panel that builds
+    its own would keep writing the old one and nothing here would notice. It also put the
+    rows in a different order -- children first, where the CLI writes attributes first.
+
     The comparison is against the CLI's own output, so the two cannot drift apart again
     without this failing.
     """
@@ -566,6 +571,52 @@ def test_the_candidate_number_is_one_based_for_the_cli(
     assert _wait(qtbot, lambda: not panel.is_regenerating())
 
     assert seen[0][seen[0].index("--candidate") + 1] == "1"
+
+
+def test_clicking_again_takes_the_candidate_selected_now(window: MainWindow, qtbot: QtBot) -> None:
+    """Clicking "From candidate" twice must give the **second** candidate's fields.
+
+    The button used to refuse a second click while one was in flight, which reads to the
+    user as the button being broken: they clicked, and the table went on describing the row
+    they had moved off. Clicking again means "the one selected now", so the request in
+    flight is abandoned rather than allowed to win.
+
+    Same shape as the structure panel's example values, and fixed the same way: the
+    generation decides which answer is correct, the cancellation decides that the other one
+    stops running. Both are checked here.
+    """
+    source = FIXTURES / "two_records.xml"
+    window.document_panel().open_document(source)
+    structure = window.structure_panel()
+    structure.analyze()
+    assert _wait(qtbot, lambda: structure.report() is not None)
+
+    _first_record, first_fields = cli_generated_fields(source, 1)
+    second_record, second_fields = cli_generated_fields(source, 3)
+    assert first_fields != second_fields, "the fixture no longer tells the two apart"
+
+    panel = window.field_panel()
+
+    # Both clicks happen before the event loop is given a turn, so the first request cannot
+    # have answered in between. That is what makes this deterministic instead of a race the
+    # test might win for the wrong reason.
+    select_report_index(structure, 0)
+    panel.regenerate_from_candidate()
+    abandoned = panel._regenerate_process
+    assert abandoned is not None and abandoned.is_running, "the first request never started"
+
+    select_report_index(structure, 2)
+    panel.regenerate_from_candidate()
+    assert panel._regenerate_process is not abandoned, "the second click was ignored"
+
+    assert _wait(qtbot, lambda: not panel.is_regenerating()), "the CLI never answered"
+
+    assert panel.record_path() == second_record
+    assert [(row.name, row.path) for row in panel.rows()] == second_fields
+    assert first_fields != [(row.name, row.path) for row in panel.rows()], (
+        "the abandoned request filled the table"
+    )
+    assert not abandoned.is_running, "the abandoned request was left running"
 
 
 def test_from_candidate_needs_a_document_and_a_candidate(window: MainWindow) -> None:
