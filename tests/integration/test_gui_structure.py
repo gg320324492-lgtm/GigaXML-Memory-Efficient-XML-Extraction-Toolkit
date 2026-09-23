@@ -642,13 +642,22 @@ def test_finishing_without_a_result_does_not_crash(window: MainWindow) -> None:
 def test_selecting_nothing_leaves_the_detail_pane_alone(window: MainWindow, qtbot: QtBot) -> None:
     """**Waiting first is new in 8A-7.** The pane now updates a second time, when the
     example values arrive, so capturing the text before that would compare a pane mid
-    sentence against one that had finished."""
+    sentence against one that had finished.
+
+    **And the chain is not allowed to fail here.** ``/catalog/products/product`` is a
+    top-level candidate, which is the case ``inspect --generate-config`` accepts, so a
+    failure would be the chain breaking rather than the document being unusual. The ``or``
+    inside ``wait_until`` is there so a failure does not hang the test until it times out --
+    it is not there to excuse one.
+    """
     analyse(window, qtbot, FIXTURES / "extract_default_ns.xml")
     panel = window.structure_panel()
     select_path(panel, "/catalog/products/product")
     assert wait_until(
         qtbot, lambda: panel.example_values() is not None or panel.example_failure()
     ), "the example values never arrived"
+    failure = panel.example_failure()
+    assert failure == "", f"the example chain failed on a top-level candidate: {failure}"
     before = panel.detail_text()
 
     panel._candidates.clearSelection()

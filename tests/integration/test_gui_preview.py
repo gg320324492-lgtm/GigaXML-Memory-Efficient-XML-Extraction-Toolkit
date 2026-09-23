@@ -87,6 +87,32 @@ def wait_until(qtbot: QtBot, predicate: Callable[[], bool], timeout_ms: int = 60
     return predicate()
 
 
+def assert_the_chain_succeeded(structure: object) -> None:
+    """The example chain is not allowed to have failed.
+
+    Every candidate these tests select is **top-level**, which is what
+    ``inspect --generate-config`` accepts, so a failure is the chain breaking rather than
+    the document being unusual.
+
+    **The ``or structure.example_failure()`` in the ``wait_until`` is not an excuse.** It
+    is there so a failure ends the wait instead of hanging until the timeout -- that is
+    about *waiting*, not about *tolerating*. Without this check a failing chain left every
+    test green and every assertion below it comparing against a pane that had never been
+    filled in, which is how the coverage of the whole chain could disappear without a
+    single test going red.
+
+    The nested-candidate case is the exception, and it is not this helper:
+    ``test_a_chain_from_a_candidate_you_have_moved_past_does_not_report`` selects one on
+    purpose, and says so.
+
+    ``example_failure`` returns a ``str``, and its "there was no failure" value is the
+    **empty string** -- not ``None``. An ``is None`` check here would fail on every run,
+    which is how this was found.
+    """
+    failure = structure.example_failure()  # type: ignore[attr-defined]
+    assert failure == "", f"the example chain failed: {failure}"
+
+
 @pytest.fixture(scope="module")
 def big_document(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     """A document big enough that a child reading it is still alive a moment later.
@@ -418,6 +444,7 @@ def test_the_example_values_come_through_the_previews_mechanism(
     assert wait_until(
         qtbot, lambda: structure.example_values() is not None or structure.example_failure()
     )
+    assert_the_chain_succeeded(structure)
 
     assert calls, "the example values did not come through the sampling mechanism"
     assert structure.example_values() is not None
@@ -440,27 +467,36 @@ def test_the_side_panel_says_it_is_still_sampling(
     assert wait_until(
         qtbot, lambda: structure.example_values() is not None or structure.example_failure()
     )
+    assert_the_chain_succeeded(structure)
     assert "example values" in structure.detail_text()
 
 
 def test_a_document_with_no_records_says_so_rather_than_showing_nothing(
     window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
 ) -> None:
-    """An empty sample is a state, and the side panel names it."""
+    """**This document has no candidates at all, so there is no chain to wait for.**
+
+    There used to be a block here that selected candidate 0 *if there was one* and waited
+    for example values or a failure. With nothing selected it never ran, so the test
+    asserted nothing and could not fail -- one more place where the chain's fate was
+    unobserved.
+
+    What can be asserted is that the panel does not invent values for records it does not
+    have. Whether it should say something more in the empty case is a question about the
+    panel rather than about the chain, and it is not answered here.
+    """
     source = document(tmp_path, "<catalog><products/></catalog>", name="empty.xml")
     window.document_panel().open_document(source)
     structure = window.structure_panel()
     structure.analyze()
     assert wait_until(qtbot, lambda: structure.report() is not None)
 
-    if structure.report().candidates:
-        structure.select_candidate(0)
-        assert wait_until(
-            qtbot,
-            lambda: structure.example_values() is not None or structure.example_failure(),
-        )
-        text = structure.detail_text()
-        assert "example values" in text
+    report = structure.report()
+    assert report is not None
+    assert not report.candidates, "the fixture is meant to have nothing to sample"
+
+    assert structure.example_values() is None
+    assert structure.example_failure() == ""
 
 
 def test_selecting_again_does_not_start_a_second_sample(
@@ -527,6 +563,7 @@ def test_the_whole_chain_works_on_a_namespaced_document(window: MainWindow, qtbo
     assert wait_until(
         qtbot, lambda: structure.example_values() is not None or structure.example_failure()
     ), "no example values arrived"
+    assert_the_chain_succeeded(structure)
 
     fields = window.field_panel()
     fields.regenerate_from_candidate()
@@ -588,7 +625,12 @@ def test_a_chain_from_a_candidate_you_have_moved_past_does_not_report(
     nested = next(index for index, item in enumerate(report.candidates) if item.is_nested)
     top = next(index for index, item in enumerate(report.candidates) if not item.is_nested)
 
-    # Select the nested one and move on before its chain can finish.
+    # **The one place a failure is expected, and the reason it is allowed.** A nested
+    # candidate is one that sits inside another, and ``inspect --generate-config`` refuses
+    # it -- so the chain started for ``nested`` is *supposed* to fail. What is being
+    # checked is not that it succeeded but that its failure never reaches the screen: the
+    # user has moved to ``top`` by the time it reports. This is why the assertion below is
+    # ``example_failure() == ""`` rather than ``assert_the_chain_succeeded``.
     select_report_index(structure, nested)
     select_report_index(structure, top)
     assert structure._example_for == top, "the second selection did not take over"
@@ -729,6 +771,7 @@ def test_moving_between_candidates_leaves_one_directory_behind(
             and (structure.example_values() is not None or structure.example_failure())
         ),
     )
+    assert_the_chain_succeeded(structure)
     second = structure.example_directory()
 
     assert first is not None and second is not None
