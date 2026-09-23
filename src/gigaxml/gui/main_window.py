@@ -42,9 +42,15 @@ from gigaxml.gui.panels.errors import ErrorPanel
 from gigaxml.gui.panels.execution import ExecutionPanel
 from gigaxml.gui.panels.fields import FieldConfigPanel
 from gigaxml.gui.panels.preview import PreviewPanel
+from gigaxml.gui.panels.results import ResultPanel
 from gigaxml.gui.panels.structure import StructurePanel
 from gigaxml.gui.recent_files import RecentFiles, default_state_dir
-from gigaxml.gui.run_report import failure_from_stderr, read_failure
+from gigaxml.gui.run_report import (
+    failure_from_stderr,
+    left_behind,
+    read_failure,
+    read_outcome,
+)
 
 #: The file the recent-documents list lives in, under the state directory.
 RECENT_FILES_NAME = "recent_files.json"
@@ -67,12 +73,16 @@ class MainWindow(QMainWindow):
         self._fields = FieldConfigPanel(self)
         self._preview = PreviewPanel(self)
         self._execution = ExecutionPanel(self)
+        self._results = ResultPanel(self)
         self._errors = ErrorPanel(self)
-        # The error panel lives with the run rather than in a tab of its own: it is about
-        # the thing that just happened in this tab, and it is empty until something fails.
+        # The two outcome panels live with the run rather than in tabs of their own: they
+        # are about the thing that just happened in this tab, and both are empty until
+        # something happens. They are mutually exclusive, and the window is what keeps them
+        # so -- a run either finished, was interrupted, or failed.
         self._execute_tab = QWidget(self)
         execute_layout = QVBoxLayout(self._execute_tab)
         execute_layout.addWidget(self._execution, 1)
+        execute_layout.addWidget(self._results)
         execute_layout.addWidget(self._errors)
         for panel, title in (
             (self._documents, "Document"),
@@ -103,6 +113,7 @@ class MainWindow(QMainWindow):
         self._execution.finished.connect(self._on_run_finished)
         self._execution.start_failed.connect(self._on_run_start_failed)
         self._errors.action_requested.connect(self._on_error_action)
+        self._results.path_copy_requested.connect(self._on_path_copy_requested)
 
     def _on_run_start_failed(self, message: str, error_type: str) -> None:
         """A run that never started, because the config would not load.
@@ -113,30 +124,76 @@ class MainWindow(QMainWindow):
         general one -- and it is dispatch by type, which is the same rule the report path
         follows. The message is the project's own, which is why it is shown verbatim.
         """
+        self._results.clear()
         self._errors.show_failure(
             failure_from_stderr([message], None, error_type=error_type), [message]
         )
 
     def _on_run_finished(self) -> None:
-        """Say what went wrong, if anything did.
+        """Say what happened: it finished, it was stopped, or it failed.
 
-        The report is where the CLI's own classification lives -- ``error.type``, the
-        exception class name -- and it is written on failure as well as on success. When
-        there is no report, the run died before the CLI could create one: that is the
-        config that will not load, and there is no type to dispatch on. It is still shown,
-        with the message and the raw output, rather than swallowed for being unclassified.
+        **The child's own exit status is what decides, and it is asked first.** The report
+        beside the output belongs to whichever run last reached its end, and a run that is
+        stopped never overwrites it -- so for a stopped run the report is an *earlier* run's
+        answer. Reading it would report a success, or a failure of the wrong kind, for a run
+        that never got that far. Measured: a successful run to ``out.csv`` followed by a
+        killed run to the same path leaves the first run's report saying ``rows: 2``.
+
+        The report is then used for what it is good at -- the kind of a failure, and the
+        numbers of a success -- and the disk for the one thing no report can say: that the
+        run stopped partway and left work behind.
         """
         run = self._execution.run_result()
-        if run is None or run.killed or run.ok:
-            self._errors.clear()
+        if run is None:
             return
-        failure = read_failure(
-            self._execution.output_path(),
-            checkpointing=self._execution.is_checkpointing(),
+        output = self._execution.output_path()
+        checkpointing = self._execution.is_checkpointing()
+        left = left_behind(output, checkpointing=checkpointing)
+
+        if run.killed:
+            self._errors.clear()
+            self._results.show_unfinished(left)
+            return
+
+        if run.ok:
+            self._errors.clear()
+            self._results.show_summary(read_outcome(output, checkpointing=checkpointing))
+            return
+
+        # It failed. **Whether this run said anything decides where to look next**, because
+        # everything on disk can belong to an earlier run: a report is only overwritten by a
+        # run that reaches the end, and a stopped checkpointed run leaves a manifest that
+        # nothing removes.
+        #
+        # A run that failed on its own printed its error to stderr, so ``warnings`` -- stderr
+        # without the progress events -- is non-empty and the report beside the output is
+        # this run's. A run killed from outside says nothing at all, so a report that is
+        # there belongs to an earlier one. Measured: a WriterError followed by a hard kill to
+        # the same output was reported as the WriterError again, advice and all, with this
+        # run's ``.tmp`` sitting there unmentioned.
+        if run.warnings:
+            failure = read_failure(output, checkpointing=checkpointing)
+            if failure is None:
+                failure = failure_from_stderr(list(run.warnings), run.exit_code)
+            self._results.clear()
+            self._errors.show_failure(failure, list(run.stderr_lines))
+            return
+
+        if left is not None:
+            # It said nothing and work is on disk: stopped from outside, which the child
+            # cannot report on.
+            self._errors.clear()
+            self._results.show_unfinished(left)
+            return
+
+        self._results.clear()
+        self._errors.show_failure(
+            failure_from_stderr(list(run.stderr_lines), run.exit_code), list(run.stderr_lines)
         )
-        if failure is None:
-            failure = failure_from_stderr(list(run.stderr_lines), run.exit_code)
-        self._errors.show_failure(failure, list(run.stderr_lines))
+
+    def _on_path_copy_requested(self, path: str) -> None:
+        QApplication.clipboard().setText(path)
+        self.statusBar().showMessage(f"copied {path}", 5000)
 
     def _on_error_action(self, kind: str) -> None:
         """Do the thing the advice suggested. The panel does not know what any of it means.
@@ -281,6 +338,9 @@ class MainWindow(QMainWindow):
 
     def error_panel(self) -> ErrorPanel:
         return self._errors
+
+    def result_panel(self) -> ResultPanel:
+        return self._results
 
     def tabs(self) -> QTabWidget:
         return self._tabs
