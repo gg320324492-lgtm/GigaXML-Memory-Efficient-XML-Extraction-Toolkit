@@ -27,7 +27,7 @@ from gigaxml.gui.error_advice import (
 )
 from gigaxml.gui.main_window import MainWindow
 from gigaxml.gui.panels.errors import ErrorPanel
-from gigaxml.gui.run_report import RunFailure
+from gigaxml.gui.run_report import RunFailure, failure_from_stderr
 
 DOCUMENT = """<catalog><products>
 <product id="1"><name>Alpha Lamp</name></product>
@@ -402,6 +402,57 @@ def test_two_different_messages_of_the_same_type_get_the_same_advice(
     assert seen[0][0] == seen[1][0] == "FieldTypeError"
     assert seen[0][1] != seen[1][1], "the messages must differ for this to prove anything"
     assert seen[0][2] == seen[1][2] == KIND_QUARANTINE
+
+
+# --- a message that is more than one line -------------------------------------
+
+
+def test_a_multi_line_message_is_shown_whole(app: QApplication) -> None:
+    """**The detail is the part that can be acted on, and it is not on the first line.**
+
+    ``failure_from_stderr`` kept only the first non-empty line. For a one-line failure that
+    is the whole message; for the CLI's own multi-line ones it is the sentence *before* the
+    answer. A refused ``--resume`` writes "cannot resume: the run would not be the same run"
+    and then indents the two values that differ underneath it -- so keeping the first line
+    alone turned "here is what differs" into "cannot resume".
+
+    The indentation is part of the message: it is what makes the two values read as a pair
+    rather than as more prose.
+    """
+    del app
+    panel = ErrorPanel()
+    said = [
+        "error: cannot resume: the run would not be the same run.",
+        "  source content:",
+        "    checkpoint: 12345 bytes, sha256 aaa",
+        "    now:        12346 bytes, sha256 bbb",
+        "  Nothing was written.",
+    ]
+
+    panel.show_failure(failure_from_stderr(said, 1), said)
+
+    shown = panel.message_text()
+    assert shown.splitlines() == [
+        "cannot resume: the run would not be the same run.",
+        "  source content:",
+        "    checkpoint: 12345 bytes, sha256 aaa",
+        "    now:        12346 bytes, sha256 bbb",
+        "  Nothing was written.",
+    ]
+    assert "aaa" in shown and "bbb" in shown, "both values have to reach the screen"
+
+
+def test_the_raw_stderr_is_kept_as_well_as_the_message(app: QApplication) -> None:
+    """The message is the readable form and the raw output is the evidence. Showing one
+    instead of the other would make the panel a summary of something it could have shown."""
+    del app
+    panel = ErrorPanel()
+    said = ["error: something went wrong", "  with detail"]
+
+    panel.show_failure(failure_from_stderr(said, 1), said)
+
+    assert panel.message_text().startswith("something went wrong")
+    assert "  with detail" in panel._stderr.toPlainText()
 
 
 # --- the panel does not stretch the window ------------------------------------
