@@ -140,6 +140,10 @@ class ExecutionPanel(QWidget):
         config_row.addWidget(self._config)
         config_row.addWidget(config_browse)
         source_form.addRow("Config", config_row)
+        # Typing a path and leaving the field is the other way a config is chosen, and it has
+        # to sync the policy too. ``editingFinished`` rather than ``textChanged``: the latter
+        # fires per keystroke, so every prefix of the path would be a load attempt.
+        self._config.editingFinished.connect(self._sync_on_error_with_config)
 
         self._record_path = QLineEdit(self)
         self._record_path.setPlaceholderText("/catalog/products/product")
@@ -167,7 +171,25 @@ class ExecutionPanel(QWidget):
 
         self._on_error = QComboBox(self)
         self._on_error.addItems(["abort", "quarantine"])
+        self._on_error.setToolTip(
+            "What to do when one record cannot be extracted. Opening a config sets this to "
+            "what that config says; changing it afterwards overrides the config, and the "
+            "line underneath says so."
+        )
+        self._on_error.currentIndexChanged.connect(self._note_the_override)
         output_form.addRow("On error", self._on_error)
+
+        self._on_error_notice = QLabel("", self)
+        self._on_error_notice.setWordWrap(True)
+        self._on_error_notice.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._on_error_notice.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self._on_error_notice.setMinimumWidth(1)
+        # Hidden from the start, not merely empty: a widget nobody has hidden is "visible",
+        # so an empty one would read as a notice that says nothing.
+        self._on_error_notice.setVisible(False)
+        output_form.addRow(self._on_error_notice)
 
         self._checkpoint = QSpinBox(self)
         self._checkpoint.setRange(0, 100_000_000)
@@ -282,7 +304,7 @@ class ExecutionPanel(QWidget):
             self, "Choose a config", "", "Configs (*.yaml *.yml *.json);;All files (*)"
         )
         if chosen:
-            self._config.setText(chosen)
+            self.set_config(chosen)
 
     def _choose_output(self) -> None:
         chosen, _ = QFileDialog.getSaveFileName(
@@ -442,6 +464,66 @@ class ExecutionPanel(QWidget):
         index = self._on_error.findText(policy)
         if index >= 0:
             self._on_error.setCurrentIndex(index)
+
+    # -- following the config's policy -------------------------------------
+
+    def set_config(self, path: str | Path) -> None:
+        """Choose a config file, and follow the ``on_error`` it asks for.
+
+        **The panel starts out agreeing with the file.** A dropdown reading ``abort`` while
+        the file says ``quarantine`` is the panel quietly rewriting the user's config: the
+        run does what the dropdown says, and nothing tells them it did. Opening the file
+        sets the dropdown to what the file says, so a disagreement can only come from
+        someone changing the dropdown afterwards -- which is deliberate, and which the line
+        under it then states with both values.
+        """
+        self._config.setText(str(path))
+        self._sync_on_error_with_config()
+
+    def _sync_on_error_with_config(self) -> None:
+        """Take the policy from the config, if there is one to take."""
+        asked = self._configs_on_error()
+        if asked is not None:
+            self.set_on_error(asked)
+        self._note_the_override()
+
+    def _configs_on_error(self) -> str | None:
+        """The ``on_error`` the chosen config asks for, or ``None`` if it cannot be read.
+
+        **Nothing is raised and nothing is said.** :meth:`start` already reports an
+        unreadable config with the loader's own message, and a second complaint from a
+        widget that is only trying to be helpful would be noise on top of it.
+        """
+        path = self._config.text().strip()
+        if not path:
+            return None
+        try:
+            return load_config(Path(path)).on_error.value
+        except (GigaXMLError, OSError):
+            return None
+
+    def _note_the_override(self) -> None:
+        """State the disagreement, naming both values, or say nothing at all.
+
+        Silent when they agree, which is the ordinary case and the one that has to stay
+        quiet: a notice on every run is a notice nobody reads.
+        """
+        wanted = self._on_error.currentText()
+        asked = self._configs_on_error()
+        if asked is None or asked == wanted:
+            self._on_error_notice.setText("")
+            self._on_error_notice.setVisible(False)
+            return
+        self._on_error_notice.setText(f"the run will use {wanted}, overriding the config's {asked}")
+        self._on_error_notice.setVisible(True)
+
+    def on_error_notice_text(self) -> str:
+        return self._on_error_notice.text()
+
+    def is_override_noted(self) -> bool:
+        """Whether the notice is showing. ``isHidden`` rather than ``isVisible``: the panel
+        has to be readable without a window on screen."""
+        return not self._on_error_notice.isHidden()
 
     # -- the UI-thread pump ------------------------------------------------
 
