@@ -24,6 +24,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gigaxml.checkpoint import CHECKPOINT_FILENAME, Checkpoint, CheckpointError, read_checkpoint
 from gigaxml.config import ConfigError, load_config, parse_config
 from gigaxml.errors import GigaXMLError
 from gigaxml.gui.cli_process import CliProcess, RunResult
@@ -200,7 +202,29 @@ class ExecutionPanel(QWidget):
             "be continued. Off writes a single file."
         )
         output_form.addRow("Checkpoint every", self._checkpoint)
+
+        self._resume = QCheckBox("Resume the run already in that directory", self)
+        self._resume.setToolTip(
+            "Continue the run a checkpoint was made from. The tool refuses if the source "
+            "or the config has changed since, and says exactly what differs. Never turned "
+            "on for you: resuming is a decision, not a default."
+        )
+        self._resume.setEnabled(False)
+        output_form.addRow(self._resume)
+
+        self._resume_notice = QLabel("", self)
+        self._resume_notice.setWordWrap(True)
+        self._resume_notice.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._resume_notice.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._resume_notice.setMinimumWidth(1)
+        self._resume_notice.setVisible(False)
+        output_form.addRow(self._resume_notice)
         layout.addWidget(output_box)
+
+        # The two things that decide whether there is anything to resume: which directory,
+        # and whether checkpointing is on at all.
+        self._output.editingFinished.connect(self._note_resumable)
+        self._checkpoint.valueChanged.connect(self._note_resumable)
 
         progress_box = QGroupBox("Progress", self)
         progress_layout = QVBoxLayout(progress_box)
@@ -371,6 +395,10 @@ class ExecutionPanel(QWidget):
         every = self._checkpoint.value()
         if every > 0:
             args += ["--checkpoint-every", str(every)]
+        # Only when the user ticked it. A resumed run and a fresh one are different runs,
+        # and quietly continuing somebody's earlier work is not something to do for them.
+        if every > 0 and self._resume.isChecked():
+            args.append("--resume")
         return args
 
     def start(self) -> None:
@@ -451,6 +479,71 @@ class ExecutionPanel(QWidget):
         mode, so the summary goes inside rather than beside.
         """
         return self._checkpoint.value() > 0
+
+    # -- resuming ----------------------------------------------------------
+
+    def set_resume(self, resume: bool) -> None:
+        """Tick or untick Resume, as if the user had."""
+        self._resume.setChecked(resume)
+
+    def is_resuming(self) -> bool:
+        return self._resume.isChecked()
+
+    def resume_notice_text(self) -> str:
+        return self._resume_notice.text()
+
+    def is_resume_offered(self) -> bool:
+        """Whether the panel is telling the user there is something to resume.
+
+        ``isHidden`` rather than ``isVisible``: the panel has to be readable without a
+        window on screen.
+        """
+        return not self._resume_notice.isHidden()
+
+    def unfinished_run_here(self) -> Checkpoint | None:
+        """The manifest of an unfinished run in this output directory, if there is one.
+
+        Read with the project's own reader rather than by parsing JSON here: the manifest
+        has a format version and a set of required keys, and a second reader would be a
+        second answer to what a valid one is.
+        """
+        if not self.is_checkpointing():
+            return None
+        directory = self._output.text().strip()
+        if not directory:
+            return None
+        try:
+            checkpoint = read_checkpoint(Path(directory) / CHECKPOINT_FILENAME)
+        except CheckpointError:
+            # Missing, unreadable, or a format this build does not know. None of those is
+            # something to offer a resume from, and none of them is worth complaining about
+            # here -- pressing Start says what is wrong with the directory.
+            return None
+        return None if checkpoint.complete else checkpoint
+
+    def _note_resumable(self) -> None:
+        """Say there is an unfinished run here, and how far it got.
+
+        The counts come from the manifest, which is written as each part is committed --
+        they are what the tool recorded, not a guess about a directory that is by
+        definition not a finished run.
+        """
+        self._resume.setEnabled(self.is_checkpointing())
+        if not self.is_checkpointing():
+            self._resume.setChecked(False)
+        unfinished = self.unfinished_run_here()
+        if unfinished is None:
+            self._resume_notice.setText("")
+            self._resume_notice.setVisible(False)
+            return
+        parts = len(unfinished.parts)
+        noun = "part" if parts == 1 else "parts"
+        self._resume_notice.setText(
+            f"There is an unfinished run in this directory: {parts:,} {noun}, "
+            f"{unfinished.rows:,} rows, {unfinished.records_consumed:,} records consumed. "
+            "Tick Resume to continue it, or choose another directory."
+        )
+        self._resume_notice.setVisible(True)
 
     def set_on_error(self, policy: str) -> None:
         """Choose the on-error policy, as if the user had picked it.

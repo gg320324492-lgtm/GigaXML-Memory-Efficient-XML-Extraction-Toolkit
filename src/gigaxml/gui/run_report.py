@@ -263,11 +263,22 @@ def failure_from_stderr(
     With nothing to go on, ``error_type`` stays ``None`` and nothing here tries to invent
     one. Matching the wording would be the one thing worse than not classifying -- it would
     break the first time a message is reworded, and it would look like it still worked.
+
+    **Every line is kept, not just the first.** The CLI writes some failures as a short
+    sentence followed by indented detail -- a refused ``--resume`` names the source size and
+    sha256 it recorded beside the ones it found -- and that detail is the part the user can
+    act on. Taking the first line alone turns "here are the two values that differ" into
+    "cannot resume", which is the thing the CLI's own message exists to avoid. A leading
+    ``error: `` is dropped because it is the CLI's log prefix rather than part of what it
+    said; the report's ``error.message`` has no prefix, so dropping it here keeps the two
+    sources saying the same thing.
     """
-    first = next((line.strip() for line in lines if line.strip()), "")
+    said = [line.rstrip() for line in lines if line.strip()]
+    if said:
+        said[0] = said[0].strip().removeprefix("error: ")
     return RunFailure(
         error_type=error_type,
-        message=first or f"the run failed with exit code {exit_code}",
+        message="\n".join(said) or f"the run failed with exit code {exit_code}",
         output_complete=False,
         partial_path=None,
         had_report=False,

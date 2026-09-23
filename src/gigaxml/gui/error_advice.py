@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gigaxml.checkpoint import CheckpointError
 from gigaxml.errors import FieldPathError, WriterError
 from gigaxml.run import QUARANTINABLE
 
 __all__ = [
+    "KIND_CHECKPOINT",
     "KIND_CHECK_CONFIG",
     "KIND_FREE_TARGET",
     "KIND_NAMESPACES",
@@ -32,6 +34,8 @@ KIND_FREE_TARGET = "free-the-target"
 KIND_NAMESPACES = "namespaces"
 #: Look at the config -- the run never got as far as reading records.
 KIND_CHECK_CONFIG = "check-config"
+#: A checkpoint that belongs to a different source or config.
+KIND_CHECKPOINT = "checkpoint"
 
 #: The error types that mean "this record is bad" rather than "this run is broken".
 #:
@@ -69,6 +73,22 @@ def advice_for(error_type: str | None) -> Advice:
                 "On Windows this usually means the target is open in another program. "
                 "Close it and run again. Nothing is lost: the complete output is in the "
                 ".tmp file beside the target, and it can be renamed by hand."
+            ),
+        )
+    if error_type == CheckpointError.__name__:
+        return Advice(
+            kind=KIND_CHECKPOINT,
+            headline="Resuming was refused",
+            detail=(
+                "The message below is the answer, and it is not summarised here. The tool "
+                "names every component that differs with both values -- the size and "
+                "sha256 it recorded beside the ones it found, or the two config hashes -- "
+                "and putting that in different words would only lose the numbers. A "
+                "checkpoint continues the run it recorded: if the source or the config has "
+                "changed since, the parts already written belong to a different run, and "
+                "continuing would mix two of them. The other refusal is that there is no "
+                "checkpoint in that directory to resume from at all. Either way nothing was "
+                "written, so nothing is lost by stopping to look."
             ),
         )
     if error_type == FieldPathError.__name__:

@@ -31,8 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gigaxml.checkpoint import CheckpointError
 from gigaxml.gui.error_advice import (
     KIND_CHECK_CONFIG,
+    KIND_CHECKPOINT,
     KIND_FREE_TARGET,
     KIND_NAMESPACES,
     KIND_QUARANTINE,
@@ -174,7 +176,9 @@ class MainWindow(QMainWindow):
         if run.warnings:
             failure = read_failure(output, checkpointing=checkpointing)
             if failure is None:
-                failure = failure_from_stderr(list(run.warnings), run.exit_code)
+                failure = failure_from_stderr(
+                    list(run.warnings), run.exit_code, error_type=self._unreported_kind()
+                )
             self._results.clear()
             self._errors.show_failure(failure, list(run.stderr_lines))
             return
@@ -190,6 +194,22 @@ class MainWindow(QMainWindow):
         self._errors.show_failure(
             failure_from_stderr(list(run.stderr_lines), run.exit_code), list(run.stderr_lines)
         )
+
+    def _unreported_kind(self) -> str | None:
+        """What kind of failure a run that wrote no report is, when anything is known.
+
+        **Not read from the message.** The one thing worse than not classifying is
+        classifying by matching the wording: it breaks the first time a message is reworded
+        and looks like it still works until then. What this uses is a fact about the
+        *request* instead.
+
+        A refused ``--resume`` is the case this exists for. ``validate_resume`` runs before
+        the CLI has a report to write to, so that failure arrives with nothing on disk to
+        read a type from -- but the panel knows it asked to resume, and a resumed run that
+        dies before writing anything is one the checkpoint refused. A missing checkpoint
+        raises the same error, which is why the advice covers both.
+        """
+        return CheckpointError.__name__ if self._execution.is_resuming() else None
 
     def _on_path_copy_requested(self, path: str) -> None:
         QApplication.clipboard().setText(path)
@@ -231,6 +251,16 @@ class MainWindow(QMainWindow):
         if kind == KIND_CHECK_CONFIG:
             self._tabs.setCurrentWidget(self._fields)
             self.statusBar().showMessage("the config is in the Fields tab", 5000)
+            return
+        if kind == KIND_CHECKPOINT:
+            # The checkpoint lives inside the output directory, so the directory is the
+            # path worth having: it is what has to be pointed at the right source, or
+            # emptied to start over. **Copied, not removed.** Starting over means throwing
+            # away parts the user may have spent an hour on, and that is theirs to decide
+            # with the path in hand rather than something this window does for them.
+            directory = self._execution.output_path()
+            QApplication.clipboard().setText(str(directory))
+            self.statusBar().showMessage(f"copied {directory}", 5000)
 
     def _on_document_changed(self, path: str) -> None:
         self._structure.set_document(path)

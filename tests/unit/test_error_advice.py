@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import pathlib
 
+from gigaxml.checkpoint import CheckpointError
 from gigaxml.errors import (
     ConfigError,
     FieldPathError,
@@ -19,6 +20,7 @@ from gigaxml.errors import (
 )
 from gigaxml.gui.error_advice import (
     KIND_CHECK_CONFIG,
+    KIND_CHECKPOINT,
     KIND_FREE_TARGET,
     KIND_NAMESPACES,
     KIND_QUARANTINE,
@@ -90,10 +92,49 @@ def test_the_advice_never_mentions_the_message() -> None:
 
 
 def test_every_advice_says_what_to_do_not_just_what_happened() -> None:
-    for error_type in (FieldTypeError.__name__, WriterError.__name__, None):
+    for error_type in _EVERY_TYPE_WITH_ADVICE:
         advice = advice_for(error_type)
         assert advice.headline and advice.detail
         assert len(advice.detail) > 40, "a headline with no detail is not actionable"
+
+
+#: Every type ``advice_for`` branches on. A new branch belongs here too.
+_EVERY_TYPE_WITH_ADVICE = (
+    FieldTypeError.__name__,
+    MissingRequiredFieldError.__name__,
+    WriterError.__name__,
+    FieldPathError.__name__,
+    CheckpointError.__name__,
+    None,
+)
+
+
+def test_a_checkpoint_error_gets_its_own_advice() -> None:
+    """**The refusal has a kind of its own, and the kind is what the window acts on.**
+
+    A refused ``--resume`` is the case where the message is the whole answer -- the tool
+    names both values -- so the advice's job is to say what to do about it rather than to
+    restate it. The kind is how the button knows to copy the checkpoint's path.
+    """
+    advice = advice_for(CheckpointError.__name__)
+
+    assert advice.kind == KIND_CHECKPOINT
+    assert "refused" in advice.headline.lower()
+
+
+def test_no_advice_carries_markup() -> None:
+    """**These strings go into a ``QLabel``, which renders them literally.**
+
+    The checkpoint advice was written with ``**`` around its first sentence, and the panel
+    showed the asterisks. Nothing failed: the text was there, the tests compared it to
+    itself, and only photographing the panel showed it. The rest of the project's advice is
+    plain prose for the same reason.
+    """
+    for error_type in _EVERY_TYPE_WITH_ADVICE:
+        advice = advice_for(error_type)
+        for field, text in (("headline", advice.headline), ("detail", advice.detail)):
+            assert "**" not in text, f"{error_type}: {field} carries emphasis markup"
+            assert "`" not in text, f"{error_type}: {field} carries code markup"
 
 
 # --- where the report is ------------------------------------------------------

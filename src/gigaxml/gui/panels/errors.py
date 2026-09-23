@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from gigaxml.gui.error_advice import (
     KIND_CHECK_CONFIG,
+    KIND_CHECKPOINT,
     KIND_FREE_TARGET,
     KIND_NAMESPACES,
     KIND_QUARANTINE,
@@ -41,6 +42,7 @@ _ACTION_LABELS: dict[str, str] = {
     KIND_FREE_TARGET: "Copy the path of the complete output",
     KIND_NAMESPACES: "Go to the namespace panel",
     KIND_CHECK_CONFIG: "Go to the field panel",
+    KIND_CHECKPOINT: "Copy the path of the checkpoint",
 }
 
 #: Shown for an advice kind this build does not know. Reachable only if the advice module
