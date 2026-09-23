@@ -344,9 +344,15 @@ class MainWindow(QMainWindow):
 
         Qt does not deliver ``closeEvent`` to a child widget: closing the window hides and
         destroys the panels rather than closing them. Without this, a temporary config the
-        execution panel wrote would outlive the window that needed it.
+        execution panel wrote would outlive the window that needed it -- **and so would
+        every panel's child process and its run directory.** Measured: only the execution
+        panel used to be shut down here, so the preview and structure panels left their
+        children running and their directories behind, one ``run-report.json`` per abandoned
+        run, with the reader threads of those children still alive afterwards.
         """
         self._execution.shutdown()
+        self._preview.shutdown()
+        self._structure.shutdown()
         super().closeEvent(event)
 
     # -- accessors used by tests and by later substeps ---------------------

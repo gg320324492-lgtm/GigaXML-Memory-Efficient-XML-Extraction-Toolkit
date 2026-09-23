@@ -777,3 +777,39 @@ def test_moving_between_candidates_leaves_one_directory_behind(
     assert first is not None and second is not None
     assert first != second
     assert not first.exists(), "the previous candidate's directory was left behind"
+
+
+def test_closing_the_window_gives_up_the_children_and_their_directories(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    """**Qt does not deliver ``closeEvent`` to a child widget.**
+
+    Closing the window hides and destroys the panels rather than closing them, so a panel
+    that is not shut down explicitly keeps its child running, keeps its pump firing at a
+    window nobody is looking at, and never discards the directory that child wrote in. Only
+    the execution panel used to be shut down, which is why a session left
+    ``gigaxml-examples-*`` and ``gigaxml-preview-*`` directories behind -- and why the reader
+    threads of those abandoned children were still alive while the next test ran, which is
+    what the CI segfault's traceback shows.
+    """
+    panel = window.preview_panel()
+    source = document(tmp_path)
+    panel.set_source(source)
+    panel.set_config(CONFIG)
+    run_preview(panel, qtbot, 2)
+    preview_directory = panel.run_directory()
+    assert preview_directory is not None and preview_directory.is_dir()
+
+    structure = window.structure_panel()
+    window.document_panel().open_document(source)
+    structure.analyze()
+    assert wait_until(qtbot, lambda: structure.report() is not None)
+    structure.select_candidate(0)
+    assert wait_until(qtbot, lambda: structure.example_values() is not None)
+    example_directory = structure.example_directory()
+    assert example_directory is not None and example_directory.is_dir()
+
+    window.close()
+
+    assert not preview_directory.exists(), "the preview's directory outlived the window"
+    assert not example_directory.exists(), "the example directory outlived the window"

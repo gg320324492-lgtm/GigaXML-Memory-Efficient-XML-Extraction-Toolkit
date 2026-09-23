@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -245,6 +246,27 @@ class PreviewPanel(QWidget):
         self._run_result = run
         self._finished_generation = generation
         self._finished = True
+
+    def shutdown(self) -> None:
+        """Give up what the window cannot clean up when it closes.
+
+        **Qt does not deliver ``closeEvent`` to a child widget.** Closing the window hides
+        and destroys the panels rather than closing them, so without this a panel that is
+        only hidden keeps its child process running, keeps its pump firing at a window
+        nobody is looking at, and keeps the directory that child wrote in. Measured: a test
+        session leaves ``gigaxml-preview-*`` and ``gigaxml-examples-*`` directories behind,
+        each holding a finished run's ``run-report.json``, because nothing ever discarded
+        the last one -- and the reader threads of those abandoned children are still alive
+        while the next test runs.
+        """
+        self._cancel_run()
+        discard_run_directory(self._run_directory)
+        self._run_directory = None
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt naming)
+        """Also correct when the panel itself is closed, as a test may do."""
+        self.shutdown()
+        super().closeEvent(event)
 
     def cancel(self) -> None:
         if self._process is None:
