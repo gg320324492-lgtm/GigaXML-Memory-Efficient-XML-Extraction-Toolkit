@@ -304,7 +304,19 @@ class ExecutionPanel(QWidget):
         a child widget -- closing the window hides and destroys the panels, it does not
         close them -- and a temporary config left behind is exactly the sort of thing that
         accumulates silently.
+
+        **And the child and the pump, which this used to leave running.** The other two
+        panels were given the same treatment in the round that found this, and this one was
+        missed -- so a window closed mid-run left its child reading pipes, its pump firing
+        at a window nobody was looking at, and the child's two reader threads alive. Those
+        are the threads the CI segfault's traceback shows still in their loops while the
+        main thread collects garbage.
         """
+        process = self._process
+        self._process = None
+        if process is not None:
+            process.kill()
+        self._pump.stop()
         _discard_effective_config(self._effective_config)
         self._effective_config = None
 

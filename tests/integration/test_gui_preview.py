@@ -813,3 +813,42 @@ def test_closing_the_window_gives_up_the_children_and_their_directories(
 
     assert not preview_directory.exists(), "the preview's directory outlived the window"
     assert not example_directory.exists(), "the example directory outlived the window"
+
+
+def test_a_panel_closed_on_its_own_also_gives_up_its_directory(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    """The other way in. Qt does not deliver ``closeEvent`` to a child widget, so the
+    window's own handler is what does the work in practice -- but a caller that closes a
+    panel directly is a real thing, and the panel's handler has to do the same work rather
+    than only the window's.
+    """
+    panel = window.preview_panel()
+    panel.set_source(document(tmp_path))
+    panel.set_config(CONFIG)
+    run_preview(panel, qtbot, 2)
+    directory = panel.run_directory()
+    assert directory is not None and directory.is_dir()
+
+    panel.close()
+
+    assert not directory.exists(), "closing the panel left its directory behind"
+    assert panel.run_directory() is None
+
+
+def test_the_structure_panel_closed_on_its_own_also_gives_up_its_directory(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    structure = window.structure_panel()
+    window.document_panel().open_document(document(tmp_path))
+    structure.analyze()
+    assert wait_until(qtbot, lambda: structure.report() is not None)
+    structure.select_candidate(0)
+    assert wait_until(qtbot, lambda: structure.example_values() is not None)
+    directory = structure.example_directory()
+    assert directory is not None and directory.is_dir()
+
+    structure.close()
+
+    assert not directory.exists(), "closing the panel left its example directory behind"
+    assert structure.example_directory() is None

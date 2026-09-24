@@ -15,6 +15,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
+from gigaxml.gui.error_advice import KIND_CHECKPOINT
 from gigaxml.gui.main_window import MainWindow
 from gigaxml.gui.run_report import failure_from_stderr
 
@@ -325,3 +326,29 @@ def test_an_empty_stderr_still_says_something() -> None:
     failure = failure_from_stderr([], 3)
 
     assert failure.message == "the run failed with exit code 3"
+
+
+def test_the_refusals_action_copies_the_checkpoints_path(
+    window: MainWindow, qtbot: QtBot, slow_document: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """The advice says to point the panel back at the right pair, or remove the checkpoint
+    to start over. Either way the user needs to know where the checkpoint is, and the
+    button is what gives it to them -- **copied rather than removed**, because starting over
+    means throwing away parts they may have spent an hour on.
+    """
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG, encoding="utf-8")
+    parts = tmp_path / "parts"
+    leave_a_checkpoint(window, qtbot, slow_document, config, parts)
+
+    config.write_text(CONFIG.replace("path: name", "path: '@id'"), encoding="utf-8")
+    panel = window.execution_panel()
+    panel.set_resume(True)
+    run_to_completion(window, qtbot)
+    assert window.error_panel().advice().kind == KIND_CHECKPOINT
+    QApplication.clipboard().setText("")
+
+    window.error_panel().action_requested.emit(KIND_CHECKPOINT)
+
+    assert str(parts) in QApplication.clipboard().text()
+    assert parts.is_dir(), "the checkpoint was removed rather than pointed at"

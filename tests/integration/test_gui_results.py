@@ -769,3 +769,51 @@ def _hold_exclusively(path: pathlib.Path):  # noqa: ANN202 - a Win32 handle
             kernel32.CloseHandle(handle)
 
     return Holder()
+
+
+def test_closing_the_window_stops_a_run_that_is_in_flight(
+    window: MainWindow, qtbot: QtBot, slow_document: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """**A window that closes mid-run used to leave the child reading pipes.**
+
+    Qt does not deliver ``closeEvent`` to a child widget, so the panels are shut down from
+    the window's own handler. This panel's ``shutdown`` discarded the temporary config and
+    nothing else, so the child, its two reader threads and the pump all outlived the window
+    -- the same defect the other two panels had, in the panel that starts the most children.
+    Those reader threads are what the CI segfault's traceback shows still in their loops.
+    """
+    config = write(tmp_path / "config.yaml", CONFIG)
+    output = tmp_path / "out.csv"
+    panel = window.execution_panel()
+    panel._source.setText(str(slow_document))
+    panel._config.setText(str(config))
+    panel._output.setText(str(output))
+
+    panel.start()
+    wait_until(qtbot, panel.is_running, timeout_ms=30_000)
+
+    window.close()
+
+    assert not panel.is_running(), "the child outlived the window"
+    assert not panel._pump.isActive(), "the pump outlived the window"
+
+
+def test_the_panel_closed_on_its_own_also_stops_its_run(
+    window: MainWindow, qtbot: QtBot, slow_document: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """The other way in, for the same reason as the window's: a caller that closes a panel
+    directly has to get the same work done."""
+    config = write(tmp_path / "config.yaml", CONFIG)
+    output = tmp_path / "out.csv"
+    panel = window.execution_panel()
+    panel._source.setText(str(slow_document))
+    panel._config.setText(str(config))
+    panel._output.setText(str(output))
+
+    panel.start()
+    wait_until(qtbot, panel.is_running, timeout_ms=30_000)
+
+    panel.close()
+
+    assert not panel.is_running(), "closing the panel left its child running"
+    assert not panel._pump.isActive(), "closing the panel left its pump running"
