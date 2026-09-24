@@ -29,6 +29,7 @@ from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from gigaxml.gui import sampling
+from gigaxml.gui.cli_process import RunResult
 from gigaxml.gui.main_window import MainWindow
 from gigaxml.gui.panels import structure as structure_module
 from gigaxml.gui.panels.preview import PreviewPanel
@@ -136,11 +137,42 @@ def big_document(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return path
 
 
-def run_preview(panel: PreviewPanel, qtbot: QtBot, limit: int) -> None:
+def run_preview(
+    panel: PreviewPanel, qtbot: QtBot, limit: int, *, may_fail: str | None = None
+) -> None:
+    """Run a preview and wait for it to be over **and to have worked**.
+
+    ``run_result() is not None`` says the child finished; it does not say it succeeded. A
+    failed sample still sets a result, and the panel still fills a table from it -- an empty
+    one, which is the right thing to show the user. So a test that waited only for "it
+    finished" went on to compare against that empty table and failed on
+    ``requested == 0``, which reads like the panel losing the limit rather than the child
+    refusing the config. ``run.ok`` is what makes the assertions below mean what they say.
+
+    ``may_fail`` is for the tests whose whole point is a run that stops -- ``abort`` on a
+    record that cannot be extracted. It takes **the text the child has to have said**, not a
+    boolean: a test that expects a refusal should not also accept a crash, and passing
+    ``True`` here would let exactly that through.
+    """
     panel.set_limit(limit)
     panel.preview()
     assert wait_until(qtbot, lambda: panel.run_result() is not None), "sample never finished"
     assert wait_until(qtbot, lambda: not panel._pump.isActive()), "the panel never drained"
+    run = panel.run_result()
+    assert run is not None
+    if may_fail is None:
+        assert run.ok, "the sample failed: " + _said(run)
+    else:
+        assert not run.ok, "this run was expected to stop, and it did not"
+        assert may_fail in _said(run), f"stopped for the wrong reason: {_said(run)}"
+
+
+def _said(run: RunResult) -> str:
+    """What the child wrote, for a failure message that names the cause."""
+    lines = [line.strip() for line in run.stderr_lines if line.strip()]
+    if not lines:
+        lines = [line.strip() for line in run.warnings if line.strip()]
+    return " | ".join(lines)[-400:] or f"exit code {run.exit_code}"
 
 
 def select_path(panel, path: str) -> None:  # noqa: ANN001 - a StructurePanel
@@ -325,7 +357,9 @@ def test_abort_never_produces_rejections(
         }
     )
 
-    run_preview(panel, qtbot, 3)
+    # **This run is meant to stop.** `abort` on a record that cannot be extracted is the
+    # point of the test, so the failure is named rather than merely allowed.
+    run_preview(panel, qtbot, 3, may_fail="not convertible")
 
     assert panel.rejected_row_count() == 0
     assert panel.rejected_tab_label() == "Rejected (0)"
@@ -852,3 +886,41 @@ def test_the_structure_panel_closed_on_its_own_also_gives_up_its_directory(
 
     assert not directory.exists(), "closing the panel left its example directory behind"
     assert structure.example_directory() is None
+
+
+#: A quantity that is not a number, for the one test that needs the child to refuse.
+UNPARSEABLE = CATALOGUE.replace("<qty>5</qty>", "<qty>x</qty>")
+
+INT_CONFIG = {
+    "record": RECORD,
+    "fields": {
+        "id": {"path": "@id"},
+        "name": {"path": "name"},
+        "qty": {"path": "qty", "type": "int"},
+    },
+}
+
+
+def test_a_failed_sample_arrives_as_a_failure_not_as_a_missing_limit(
+    window: MainWindow, qtbot: QtBot, tmp_path: pathlib.Path
+) -> None:
+    """**The wait has to say "and it worked", not only "it finished".**
+
+    A failed sample still sets a result, and the panel still fills a table from it -- empty,
+    which is the right thing to show the user. So a test that waited only for "it finished"
+    went on to compare against that empty table and failed on ``requested == 0``, which
+    reads like the panel losing the limit rather than the child refusing the config.
+
+    This pins the difference: the failure has to arrive as itself, saying what the child
+    said. The panel's own behaviour is not in question -- an empty table and a status line
+    naming the failure is the right thing to show.
+    """
+    panel = window.preview_panel()
+    panel.set_source(document(tmp_path, UNPARSEABLE))
+    panel.set_config(INT_CONFIG)
+
+    with pytest.raises(AssertionError) as raised:
+        run_preview(panel, qtbot, 2)
+
+    assert "the sample failed" in str(raised.value)
+    assert "not convertible" in str(raised.value), str(raised.value)
