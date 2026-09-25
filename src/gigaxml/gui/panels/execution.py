@@ -312,10 +312,25 @@ class ExecutionPanel(QWidget):
         are the threads the CI segfault's traceback shows still in their loops while the
         main thread collects garbage.
         """
+        # Idempotent: the window closes this panel and a test may also close the
+        # panel itself, and both routes land here. Without this, anything that
+        # destroys the C++ objects (deleteLater, say) runs twice, and the second
+        # pass touches what the first one freed.
+        if getattr(self, "_shut_down", False):
+            return
+        self._shut_down = True
         process = self._process
         self._process = None
         if process is not None:
             process.kill()
+        # **The probe too.** This panel starts a second child -- `inspect <source> --json` --
+        # to count the records for the progress bar, and it was the one thing shutdown()
+        # did not touch. A window closed while it was in flight left that child reading
+        # pipes, and its on_finished callback reaches for widgets that are on their way out.
+        probe = self._probe
+        self._probe = None
+        if probe is not None:
+            probe.kill()
         self._pump.stop()
         _discard_effective_config(self._effective_config)
         self._effective_config = None

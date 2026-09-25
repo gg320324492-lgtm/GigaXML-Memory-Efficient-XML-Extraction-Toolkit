@@ -43,3 +43,6 @@ Thumbs.db
 # untracked. Committing something from here on purpose needs `git add -f`, and that
 # friction is the point.
 docs/
+
+# 本机临时工作区（pytest --basetemp / 探针产物）。只在本机，永不提交。
+.scratch/

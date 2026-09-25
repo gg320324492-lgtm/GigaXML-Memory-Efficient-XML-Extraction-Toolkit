@@ -87,7 +87,13 @@ def slow_document(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
 @pytest.fixture
 def window(app: QApplication, tmp_path: pathlib.Path) -> MainWindow:
     del app
-    return MainWindow(state_dir=tmp_path / "state")
+    main = MainWindow(state_dir=tmp_path / "state")
+    # **Close it on the way out.** Without this the window outlives its test:
+    # closeEvent never fires, the panels' shutdown() never runs, and their pumps
+    # stay in Qt's timer list -- which is what fires into a dead object during the
+    # next test's waitUntil. See the core dump in 8A-32.
+    yield main
+    main.close()
 
 
 def wait_until(qtbot: QtBot, predicate: Callable[[], bool], timeout_ms: int = 60_000) -> bool:

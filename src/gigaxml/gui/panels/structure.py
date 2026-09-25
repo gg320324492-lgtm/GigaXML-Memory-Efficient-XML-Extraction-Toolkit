@@ -316,6 +316,13 @@ class StructurePanel(QWidget):
         behind, each holding a finished run's ``run-report.json``, and the reader threads of
         those abandoned children are still alive while the next test runs.
         """
+        # Idempotent: the window closes this panel and a test may also close the
+        # panel itself, and both routes land here. Without this, anything that
+        # destroys the C++ objects (deleteLater, say) runs twice, and the second
+        # pass touches what the first one freed.
+        if getattr(self, "_shut_down", False):
+            return
+        self._shut_down = True
         self._cancel_example_chain()
         discard_run_directory(self._example_directory)
         self._example_directory = None

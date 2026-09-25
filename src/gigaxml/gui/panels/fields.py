@@ -282,6 +282,22 @@ class FieldConfigPanel(QWidget):
         process.start()
         self._regenerate_pump.start()
 
+    def shutdown(self) -> None:
+        """Give up what the window cannot clean up when it closes.
+
+        **This panel had no shutdown at all.** The window called execution, preview and
+        structure on close and never called this one, so the regenerate pump kept firing at
+        a window nobody was looking at and its child kept reading pipes. That is the shape
+        the CI segfault's stack shows: a timer firing into something that is already gone.
+
+        Idempotent for the same reason the other three are: the window closes this panel and
+        a test may also close the panel itself, and both routes land here.
+        """
+        if getattr(self, "_shut_down", False):
+            return
+        self._shut_down = True
+        self._cancel_regenerate()
+
     def _cancel_regenerate(self) -> None:
         """Stop the request in flight, if there is one, and forget it."""
         process = self._regenerate_process

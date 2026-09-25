@@ -353,6 +353,7 @@ class MainWindow(QMainWindow):
         self._execution.shutdown()
         self._preview.shutdown()
         self._structure.shutdown()
+        self._fields.shutdown()
         super().closeEvent(event)
 
     # -- accessors used by tests and by later substeps ---------------------
