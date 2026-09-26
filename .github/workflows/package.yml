@@ -445,16 +445,24 @@ jobs:
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          # Both shapes, named: the Windows onedir ships as a zip, the other two as
-          # tar.gz, and the Windows installer travels inside its platform's artifact and
-          # is attached by the one extension that names it. The glob used to be
-          # artifacts/*/*.zip, which matches neither the tar.gz files nor, once the paths
-          # above are right, anything in this tree.
+          # Both archive shapes, named: the Windows onedir ships as a zip, the other two
+          # as tar.gz, and the installer is attached by its own name. The first rehearsal
+          # run attached five files because "*.exe under anything" matched twice: the
+          # installer, and the frozen executable sitting bare in its artifact directory.
+          # That second file is a build intermediate, not a deliverable -- PyInstaller's
+          # onedir layout keeps the executable's dependencies in _internal beside it, so
+          # alone it is 3.7 MiB that downloads, refuses to start, and sits on a page next
+          # to the zip that actually contains the program. Deliverables are attached by
+          # name; whatever happens to match a loose glob is not.
           files: |
             artifacts/*.zip
             artifacts/*.tar.gz
-            artifacts/**/*.exe
+            artifacts/**/GigaXML-Setup-*.exe
           fail_on_unmatched_files: true
+          # A rehearsal tag names itself rc, and the page it produces should say so with
+          # the same visibility that keeps it off PyPI: a pre-release badge is the one
+          # thing a downloader reads before choosing a file.
+          prerelease: ${{ contains(github.ref_name, 'rc') }}
           body_path: packaging/RELEASE_NOTES.md
           draft: false
 
