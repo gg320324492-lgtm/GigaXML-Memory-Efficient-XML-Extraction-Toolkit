@@ -1,0 +1,330 @@
+name: package
+
+# A tag builds the three platform artifacts and attaches them to a Release.
+#
+# `workflow_dispatch` is kept so a build can be tried by hand without cutting a tag -- which
+# matters here, because the smoke test below is the only thing standing between "the matrix
+# went green" and "the binary works", and that is worth being able to run on demand.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build as (a dry run does not attach anything)"
+        required: true
+        default: "v0.0.0-dryrun"
+
+permissions:
+  contents: write  # to attach artifacts to the Release
+
+jobs:
+  # One job per platform. `fail-fast: false` so a macOS failure does not cancel the Windows
+  # build: the three artifacts are independent, and losing two of them because one runner
+  # was busy tells a user nothing about whether the other two would have worked.
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            exe: gigaxml-gui/gigaxml-gui.exe
+            artifact: gigaxml-gui-windows
+          - os: macos-13
+            platform: macos
+            exe: gigaxml-gui/gigaxml-gui
+            artifact: gigaxml-gui-macos
+          - os: ubuntu-22.04
+            platform: linux
+            exe: gigaxml-gui/gigaxml-gui
+            artifact: gigaxml-gui-linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Qt's system libraries (Linux)
+        # The manylinux PySide6 wheel ships Qt's own shared objects and the Python
+        # bindings, but not the system libraries those objects link against. Without these
+        # the frozen binary dies with `libEGL.so.1: cannot open shared object file` --
+        # which is a different failure from the one a missing module produces, and the
+        # one this step exists to prevent.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 libgl1 libfontconfig1 libfreetype6 \
+            libx11-6 libx11-xcb1 libglib2.0-0 \
+            libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb1 libxcb-util1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui]"
+          pip install pyinstaller
+
+      - name: Generate the icon and version resources
+        # Generated rather than committed, so all three platforms produce byte-identical
+        # inputs from one source and a Windows-only asset cannot go missing on a runner.
+        run: |
+          python -m tools.make_icon --check || python -m tools.make_icon
+          python -m tools.make_version_info
+
+      - name: Build
+        run: |
+          python -m PyInstaller packaging/gigaxml.spec --noconfirm \
+            --distpath dist --workpath build
+
+      # ------------------------------------------------------------------
+      # The smoke test. This is the step that makes the matrix mean something.
+      #
+      # "PyInstaller exited 0" says the build ran. It does not say the binary starts, that
+      # it finds the CLI it packed in, or that the progress stream a window depends on
+      # actually arrives. Gate 11 G6 could not check any of this on one machine and said
+      # so; this is where it is checked, per platform, on the platform it will run on.
+      #
+      # The false-green worth remembering: pointing a normal interpreter at a frozen-style
+      # command line returns 0 and prints the *interpreter's* version, because the
+      # interpreter ate the arguments. `python -c 'print(1)' --version` is not a test of a
+      # frozen binary. So every assertion below runs the artifact, and the version is
+      # compared against the package rather than against a constant written here.
+      # ------------------------------------------------------------------
+      - name: Smoke test the artifact
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          EXE="${{ matrix.exe }}"
+          echo "artifact: $EXE"
+
+          if [ ! -f "$EXE" ]; then
+            echo "::error::the artifact was not produced at $EXE"
+            ls -R dist || true
+            exit 1
+          fi
+          chmod +x "$EXE" || true
+
+          size_bytes=$(du -sb "$(dirname "$EXE")" | cut -f1)
+          echo "size: $size_bytes bytes ($(echo "scale=1; $size_bytes/1048576" | bc) MiB)"
+
+          # 1. The window starts. Driven by the real entry point, with no document, so it
+          #    opens and can then be closed -- the cheapest possible proof that Qt loaded,
+          #    that the plugins were bundled, and that nothing is missing at import time.
+          echo "--- starting the window"
+          "$EXE" &
+          pid=$!
+          sleep 8
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "window process alive after 8s: ok"
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+            kill -9 "$pid" 2>/dev/null || true
+          else
+            wait "$pid" || rc=$?
+            echo "::error::the window exited instead of opening (rc=${rc:-?})"
+            exit 1
+          fi
+
+          # 2. --version comes from OUR parser, and matches the package version.
+          echo "--- version"
+          reported=$("$EXE" --version)
+          echo "artifact says: $reported"
+          expected=$(python -c "import gigaxml; print(gigaxml.__version__)")
+          echo "package says:  gigaxml $expected"
+          case "$reported" in
+            *"$expected"*) echo "version matches the package" ;;
+            *) echo "::error::version mismatch: artifact '$reported' vs package '$expected'"
+               exit 1 ;;
+          esac
+
+          # 3. The CLI is really inside the artifact, and the extraction really runs.
+          #    `inspect` is used because it needs no config file, so a failure here can only
+          #    mean the binary or its bundled CLI, not a mistyped path.
+          echo "--- generating and inspecting through the artifact only"
+          work=$(mktemp -d)
+          "$EXE" generate --size 2MB --seed 7 -o "$work/small.xml"
+          "$EXE" inspect "$work/small.xml" --json > "$work/report.json"
+          python - "$work/report.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              report = json.load(handle)
+          assert report["elements_seen"] > 0, report
+          assert report["candidates"], report
+          print(f"inspect through the artifact: {report['elements_seen']} elements, "
+                f"{len(report['candidates'])} candidates")
+          PY
+
+          # 4. And an extraction, which is the path a window actually drives: the progress
+          #    stream has to arrive, or a packaged GUI shows a frozen bar on a real file.
+          echo "--- extracting with progress, checking the stream is not empty"
+          cat > "$work/config.json" <<'JSON'
+          {"record": "/catalog/products/product",
+           "fields": {"product_id": {"path": "@id"}, "name": {"path": "name"}}}
+          JSON
+          "$EXE" extract "$work/small.xml" -c "$work/config.json" \
+            -o "$work/out.csv" --format csv --progress > "$work/progress.txt"
+          lines=$(grep -c '"event": "progress"' "$work/progress.txt" || true)
+          echo "progress lines seen: $lines"
+          if [ "$lines" -lt 1 ]; then
+            echo "::error::no progress lines: a packaged window's progress bar would never move"
+            exit 1
+          fi
+          rows=$(( $(wc -l < "$work/out.csv") - 1 ))
+          echo "rows written: $rows"
+          if [ "$rows" -lt 1 ]; then
+            echo "::error::the extraction wrote no rows"
+            exit 1
+          fi
+
+          echo "SMOKE TEST PASSED on ${{ matrix.platform }}"
+
+      # macOS: a .app bundle and a .dmg, because a bare binary is not what a user runs.
+      - name: Package the macOS app
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          # The bundle is a directory with Contents/MacOS/<exe> and Info.plist. PyInstaller's
+          # BUNDLE target would need the whole spec restructured, so the bundle is assembled
+          # here: the same onedir output, wrapped in the layout Finder expects.
+          app="dist/GigaXML.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp -R dist/gigaxml-gui/* "$app/Contents/MacOS/"
+          cp assets/gigaxml.icns "$app/Contents/Resources/icon.icns"
+          version=$(python -c "import gigaxml; print(gigaxml.__version__)")
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>gigaxml-gui</string>
+            <key>CFBundleIdentifier</key><string>com.gigaxml.app</string>
+            <key>CFBundleName</key><string>GigaXML</string>
+            <key>CFBundleShortVersionString</key><string>$version</string>
+            <key>CFBundleIconFile</key><string>icon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          echo "built $app"
+          # Unsigned on purpose -- the runner has no Developer ID, and pretending
+          # otherwise would be worse than saying so. See the signing section of the notes.
+
+      - name: Build the macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          appdmg="$RUNNER_TEMP/dmg"
+          mkdir -p "$appdmg"
+          cp -R dist/GigaXML.app "$appdmg/"
+          ln -s /Applications "$appdmg/Applications"
+          hdiutil create -volname GigaXML -srcfolder "$appdmg" -ov -format UDZO dist/GigaXML.dmg
+          echo "built dist/GigaXML.dmg"
+
+      # Linux: an AppImage, which needs the runtime's FUSE, so it is built here rather than
+      # left to a step that silently skips when the runner has no FUSE.
+      - name: Build the Linux AppImage
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends desktop-file-utils fuse || true
+          chmod +x dist/gigaxml-gui/gigaxml-gui
+          desktop-file-install --dir=/usr/share/applications \
+            --set-name=GigaXML \
+            --set-comment="Memory-efficient XML extraction" \
+            --set-icon=gigaxml \
+            dist/gigaxml-gui/gigaxml-gui || true
+          # appimagetool wants the AppDir laid out in a particular shape; the onedir output
+          # is already almost exactly that, so it is wrapped rather than rebuilt.
+          appdir="$RUNNER_TEMP/AppDir"
+          rm -rf "$appdir"
+          mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/1024x1024/apps"
+          cp -R dist/gigaxml-gui/. "$appdir/usr/bin/"
+          cp assets/gigaxml-1024.png "$appdir/gigaxml.png"
+          cat > "$appdir/AppRun" <<'APPRUN'
+          #!/bin/sh
+          # AppImage entry point: everything packed in usr/bin beside this script.
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          exec "$HERE/usr/bin/gigaxml-gui" "$@"
+          APPRUN
+          chmod +x "$appdir/AppRun"
+          cp assets/gigaxml-1024.png "$appdir/usr/share/icons/hicolor/1024x1024/apps/gigaxml.png"
+          cat > "$appdir/gigaxml.desktop" <<DESKTOP
+          [Desktop Entry]
+          Type=Application
+          Name=GigaXML
+          Comment=Memory-efficient XML extraction
+          Exec=gigaxml-gui
+          Icon=gigaxml
+          Categories=Utility;Development;
+          DESKTOP
+          cp "$appdir/gigaxml.desktop" "$appdir/usr/share/applications/"
+          wget -q -O "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          "$RUNNER_TEMP/appimagetool" --no-appstream "$appdir" dist/GigaXML-x86_64.AppImage
+          echo "built dist/GigaXML-x86_64.AppImage"
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/gigaxml-gui/**
+            dist/GigaXML.app
+            dist/GigaXML.dmg
+            dist/GigaXML-x86_64.AppImage
+          if-no-files-found: error
+
+  # The Release is made once, after all three platforms are done, so a partial build never
+  # produces a release that looks complete.
+  #
+  # `workflow_dispatch` runs do not publish: a tag is the only thing that creates a
+  # release, and a hand-triggered dry run must not be able to create one by accident.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble the archives
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # zips for Windows, tar.gz for the other two: a tar.gz on Windows loses
+          # the executable bit, and a zip on Unix is the wrong habit to teach.
+          for dir in */; do
+            name="${dir%/}"
+            if [ "$name" = "gigaxml-gui-windows" ]; then
+              (cd "$name" && zip -r "../../$name.zip" . -x '*.DS_Store')
+            else
+              tar -czf "$name.tar.gz" -C "$name" .
+            fi
+          done
+          ls -la
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*/*.zip
+          fail_on_unmatched_files: false
+          body_path: packaging/RELEASE_NOTES.md
+          draft: false

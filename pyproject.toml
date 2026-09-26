@@ -49,6 +49,7 @@ dev = [
   "psutil>=5.9",
   "pyarrow>=14.0",
   "rich>=13.0",
+  "pyinstaller>=6.10",
 ]
 
 [project.scripts]

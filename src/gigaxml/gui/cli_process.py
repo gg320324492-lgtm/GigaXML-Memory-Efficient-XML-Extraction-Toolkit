@@ -36,11 +36,20 @@ def cli_command(args: Sequence[str]) -> list[str]:
 
     ``python -m gigaxml`` cannot work -- there is no package ``__main__`` -- and the
     console script is a file beside the interpreter that may not be on ``PATH``. Running
-    ``gigaxml.cli`` as a module needs only the interpreter, which is what makes it keep
-    working once this application is frozen into an executable: ``sys.executable`` is then
-    the frozen binary, and a module launch is not available, so the frozen build passes
-    its own path instead. See :func:`cli_command_for`.
+    ``gigaxml.cli`` as a module needs only the interpreter.
+
+    **Frozen, there is no module to launch, so this asks itself instead.** ``sys.executable``
+    is then the frozen binary itself, and ``-m`` is not available to it -- passing ``-m`` to
+    a frozen build hands those arguments to a program that has no module system, and the
+    run fails in a way that looks like the application ignoring its arguments. The frozen
+    binary dispatches to the CLI on a leading subcommand, so the same list works for both.
+
+    ``getattr`` rather than ``hasattr`` because a PyInstaller build sets
+    ``sys.frozen`` while a normal interpreter leaves the attribute absent entirely, and
+    reading it directly is an ``AttributeError`` waiting to happen.
     """
+    if getattr(sys, "frozen", False):
+        return cli_command_for(sys.executable, args)
     return [sys.executable, "-m", "gigaxml.cli", *args]
 
 

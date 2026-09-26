@@ -170,13 +170,14 @@ def test_the_command_runs_this_interpreter_as_a_module() -> None:
 def test_the_frozen_command_drops_the_module_form() -> None:
     """A frozen build has no interpreter to be a module *of*, so `-m` must not appear.
 
-    **This is the half of Gate 11 G6 that can be checked without a frozen binary.** Whether
-    the built executable starts and what its ``--version`` prints needs a real PyInstaller
-    build on three platforms, which is Phase 8B's job. What *is* checkable here is the
-    command construction, and it is worth checking: a frozen build that still passed
-    ``-m gigaxml.cli`` would hand those arguments to a program that has no module system,
-    and the failure would look like "the packaged app ignores its arguments" rather than
-    like a build error, which is a much harder thing to diagnose from a bug report.
+    **This is the construction half of Gate 11 G6.** Whether the built executable starts
+    and what its ``--version`` prints needs a real PyInstaller build, which is checked in
+    ``tests/performance/test_frozen_binary.py`` -- that file drives the artifact and asserts
+    the child it spawns is the artifact. What is checked here is the command construction,
+    and it is worth checking on its own: a frozen build that still passed ``-m
+    gigaxml.cli`` would hand those arguments to a program that has no module system, and
+    the failure would look like "the packaged app ignores its arguments" rather than like a
+    build error, which is much harder to diagnose from a bug report.
     """
     command = cli_command_for("C:/fake/gigaxml-gui.exe", ["extract", "x.xml"])
 
@@ -193,6 +194,67 @@ def test_the_frozen_command_drops_the_module_form() -> None:
         "C:/fake/gigaxml-gui.exe",
         "--help",
     ]
+
+
+def test_cli_command_asks_the_frozen_binary_itself_when_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production path must branch on ``sys.frozen``, not on a test-only argument.
+
+    ``CliProcess.start`` calls :func:`cli_command` and nothing else, so this is the function
+    that decides whether a packaged window can reach its CLI at all. Before it learned to
+    branch, a frozen build received ``[exe, "-m", "gigaxml.cli", ...]`` -- arguments a frozen
+    program cannot use, which is why the packaged window could not run a job.
+
+    Setting the flag rather than passing a parameter matters: a build-time switch nobody
+    sets is a build-time switch that is not set.
+    """
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "C:/dist/gigaxml-gui/gigaxml-gui.exe")
+
+    command = cli_command(["extract", "a.xml"])
+
+    assert command == ["C:/dist/gigaxml-gui/gigaxml-gui.exe", "extract", "a.xml"]
+    assert "-m" not in command
+
+
+def test_cli_command_uses_the_module_form_when_not_frozen() -> None:
+    """And the ordinary case is unchanged, which is the half that would regress silently.
+
+    A fix that made every environment look frozen would still pass the test above.
+    """
+    assert "frozen" not in sys.__dict__ or not getattr(sys, "frozen", False)
+
+    command = cli_command(["extract", "a.xml"])
+
+    assert command[0] == sys.executable
+    assert command[1:3] == ["-m", "gigaxml.cli"]
+    assert command[3:] == ["extract", "a.xml"]
+
+
+def test_a_missing_frozen_attribute_is_not_an_attribute_error() -> None:
+    """A normal interpreter has no ``frozen`` attribute at all, not ``frozen = False``.
+
+    Reading ``sys.frozen`` directly raises ``AttributeError`` on every ordinary run, so the
+    lookup has to be a ``getattr``. This test is a guard on that one word.
+    """
+    script = (
+        "import sys\n"
+        "assert not hasattr(sys, 'frozen'), 'this interpreter unexpectedly has the flag'\n"
+        "from gigaxml.gui.cli_process import cli_command\n"
+        "command = cli_command(['inspect', 'a.xml'])\n"
+        "assert command[1:3] == ['-m', 'gigaxml.cli'], command\n"
+        "print('ok')\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO),
+    )
+    assert completed.returncode == 0, completed.stderr[-600:]
+    assert "ok" in completed.stdout
 
 
 def test_a_short_run_produces_a_summary_and_no_progress(tmp_path: pathlib.Path) -> None:
