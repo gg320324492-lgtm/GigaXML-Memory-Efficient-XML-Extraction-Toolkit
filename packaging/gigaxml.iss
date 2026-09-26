@@ -21,7 +21,16 @@
 
 #define AppName "GigaXML"
 #define AppExeName "gigaxml-gui.exe"
-#define AppVersion "0.1.0"
+; The release version is passed in by the packaging pipeline, which reads pyproject.toml --
+; the one place the number is defined -- and hands it over as /DAppVersion=<version>. A
+; literal here was exactly the "second copy of a number that will rot" the version-resource
+; generator's own docstring warns about: this file sat at 0.1.0 through two releases of
+; everything around it, and an installer built from it would have announced itself as a
+; version that no longer existed. The default keeps a bare ISCC run working and names its
+; output honestly -- 0.0.0-dev is a claim no release page will make.
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 #define AppPublisher "GigaXML"
 #define AppURL "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit"
 
@@ -38,6 +47,10 @@ AppId={{8F2C6A41-5D3B-4E17-9C88-2A6B0D4F71E9}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
+; Without this the file properties' "File version" field is blank while "Product version"
+; carries the number -- measured on the first pipeline-built installer. Both fields come
+; from the same passed-in version, so they cannot disagree.
+VersionInfoVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}

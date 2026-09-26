@@ -134,6 +134,38 @@ jobs:
         run: |
           python -m PyInstaller packaging/gigaxml.spec --noconfirm --distpath dist --workpath build
 
+      - name: Build the Windows installer
+        # The installer is a deliverable, so the pipeline produces it -- an installer built
+        # by hand on one machine is an installer nobody else can reproduce, and its version
+        # is exactly the kind of number that drifts when a human types it. It used to sit at
+        # 0.1.0 in the script while the product had moved on, and nothing would have caught
+        # that until a user installed it; the version arrives here from pyproject.toml, the
+        # single source, and the installer script refuses to name a release it was not given.
+        #
+        # ISCC ships with this runner image today (6.7.1, checked against the
+        # actions/runner-images README on 2026-09-27), but the README gives no path and a
+        # past image dropped it once already. So the step probes for it and fails loudly
+        # rather than hardcoding a path and hoping -- "the image happens to include it" is
+        # the same species of assumption as a runner label staying alive, and this project
+        # has paid for that assumption once at length.
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then
+            echo "::error::ISCC not found at $ISCC -- the runner image no longer ships Inno Setup; install it in this workflow or pin the step to a setup action"
+            exit 1
+          fi
+          VERSION=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")
+          echo "installer version: $VERSION"
+          # MSYS_NO_PATHCONV: this step's bash is Git Bash, and Git Bash rewrites a
+          # leading-slash argument like /DAppVersion into a Windows path before ISCC sees
+          # it -- measured locally, where ISCC then reported "You may not specify more
+          # than one script filename" and built nothing. The macro has to survive as the
+          # compiler-switch shape ISCC defines, not as a drive letter.
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/DAppVersion=$VERSION" packaging/gigaxml.iss
+
       # ------------------------------------------------------------------
       # The smoke test. This is the step that makes the matrix mean something.
       #
@@ -361,6 +393,7 @@ jobs:
           name: ${{ matrix.artifact }}
           path: |
             dist/gigaxml-gui/**
+            dist/installer/**
             dist/GigaXML.app
             dist/GigaXML.dmg
             dist/GigaXML-x86_64.AppImage
@@ -413,11 +446,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # Both shapes, named: the Windows onedir ships as a zip, the other two as
-          # tar.gz. The glob used to be artifacts/*/*.zip, which matches neither the
-          # tar.gz files nor, once the paths above are right, anything in this tree.
+          # tar.gz, and the Windows installer travels inside its platform's artifact and
+          # is attached by the one extension that names it. The glob used to be
+          # artifacts/*/*.zip, which matches neither the tar.gz files nor, once the paths
+          # above are right, anything in this tree.
           files: |
             artifacts/*.zip
             artifacts/*.tar.gz
+            artifacts/**/*.exe
           fail_on_unmatched_files: true
           body_path: packaging/RELEASE_NOTES.md
           draft: false
@@ -439,7 +475,11 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A tag whose name carries "rc" is a rehearsal: it exercises the build and the
+    # release assembly -- the parts that had never run -- while this job stands down,
+    # because a version uploaded to PyPI cannot be deleted, only yanked, and the number
+    # stays taken for ever. The real release is an rc-free tag.
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc')
     environment: pypi
     permissions:
       id-token: write

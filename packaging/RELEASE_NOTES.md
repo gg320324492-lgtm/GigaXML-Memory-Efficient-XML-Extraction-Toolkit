@@ -68,6 +68,16 @@ for how to reproduce them.
    `%APPDATA%\GigaXML`.
 3. Run `gigaxml-gui\gigaxml-gui.exe`.
 
+There is also an installer, `GigaXML-Setup-0.9.0.exe`, built by the same pipeline as the
+zip — its version comes from the package, not from a hand-typed file. It installs per
+user, so there is no administrator prompt: no services, no drivers, just the application
+into a folder you own, with a Start-menu shortcut and an optional desktop one. Its
+uninstaller removes the installation directory entirely — after an uninstall the only
+thing that survives is your settings under `%APPDATA%\GigaXML`, which is deliberate, so
+a reinstall keeps your configuration. **It is unsigned, exactly like the zip**: the same
+SmartScreen warning, the same one-time allow — see
+[Unsigned binaries](#unsigned-binaries).
+
 ### macOS
 
 **This build is Apple Silicon (arm64) and it will not start on an Intel Mac.** There is no
