@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from gigaxml.gui.cli_process import CliProcess, RunResult
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.sampling import (
     SampledTable,
     discard_run_directory,
@@ -93,20 +94,20 @@ class PreviewPanel(QWidget):
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
-        self._run = QPushButton("Preview", self)
+        self._run = QPushButton(tr("Preview"), self)
         self._run.clicked.connect(self.preview)
-        self._cancel = QPushButton("Cancel", self)
+        self._cancel = QPushButton(tr("Cancel"), self)
         self._cancel.clicked.connect(self.cancel)
         self._cancel.setEnabled(False)
         controls.addWidget(self._run)
         controls.addWidget(self._cancel)
-        controls.addWidget(QLabel("rows", self))
+        controls.addWidget(QLabel(tr("rows"), self))
         self._limit = QSpinBox(self)
         self._limit.setRange(1, 1_000_000)
         self._limit.setValue(5)
-        self._limit.setToolTip("How many records to sample, passed to `sample -n`.")
+        self._limit.setToolTip(tr("How many records to sample, passed to `sample -n`."))
         controls.addWidget(self._limit)
-        self._status = QLabel("nothing sampled yet", self)
+        self._status = QLabel(tr("nothing sampled yet"), self)
         self._status.setObjectName("preview_status")
         self._status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         controls.addWidget(self._status, 1)
@@ -122,7 +123,7 @@ class PreviewPanel(QWidget):
         self._rows.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._rows.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         rows_layout.addWidget(self._rows)
-        self._tabs.addTab(rows_page, "Sample")
+        self._tabs.addTab(rows_page, tr("Sample"))
 
         rejected_page = QWidget(self)
         rejected_layout = QVBoxLayout(rejected_page)
@@ -169,16 +170,20 @@ class PreviewPanel(QWidget):
         self._run.setEnabled(ready)
         if ready:
             # Only replaces a "waiting for" message, so a finished run's summary is not
-            # wiped out by an unrelated refresh.
-            if self._status.text().startswith("waiting for"):
-                self._status.setText("ready to preview")
+            # wiped out by an unrelated refresh. Both waiting templates begin with the
+            # same prefix, which is what makes matching on one of them enough.
+            if self._status.text().startswith(tr("waiting for {} and {}").split("{}")[0]):
+                self._status.setText(tr("ready to preview"))
             return
         missing = []
         if self._source is None:
-            missing.append("a document")
+            missing.append(tr("a document"))
         if self._config is None:
-            missing.append("a config the CLI accepts")
-        self._status.setText("waiting for " + " and ".join(missing))
+            missing.append(tr("a config the CLI accepts"))
+        if len(missing) == 1:
+            self._status.setText(tr("waiting for {}").format(missing[0]))
+        else:
+            self._status.setText(tr("waiting for {} and {}").format(missing[0], missing[1]))
 
     # -- running -----------------------------------------------------------
 
@@ -203,7 +208,7 @@ class PreviewPanel(QWidget):
         self._finished = False
         self._table = None
         self._clear_tables()
-        self._status.setText("sampling…")
+        self._status.setText(tr("sampling…"))
         self._run.setEnabled(False)
         self._cancel.setEnabled(True)
 
@@ -279,7 +284,7 @@ class PreviewPanel(QWidget):
         if self._process is None:
             return
         self._cancel.setEnabled(False)
-        self._status.setText("cancelling…")
+        self._status.setText(tr("cancelling…"))
         self._process.kill()
 
     def is_running(self) -> bool:
@@ -319,7 +324,7 @@ class PreviewPanel(QWidget):
         if run is None:
             return
         if run.killed:
-            self._status.setText("cancelled")
+            self._status.setText(tr("cancelled"))
             return
         if self._output is None:
             return
@@ -328,18 +333,20 @@ class PreviewPanel(QWidget):
         self._fill(sampled)
         if not run.ok:
             first = next((line for line in run.warnings if line.strip()), None)
-            self._status.setText(first or f"sample failed with exit code {run.exit_code}")
+            self._status.setText(
+                first or tr("sample failed with exit code {}").format(run.exit_code)
+            )
             return
         self._status.setText(self._describe(sampled))
 
     def _describe(self, sampled: SampledTable) -> str:
-        parts = [f"{sampled.row_count} row(s) shown"]
+        parts = [tr("{} row(s) shown").format(sampled.row_count)]
         if sampled.written != sampled.row_count:
-            parts.append(f"the CLI wrote {sampled.written}")
+            parts.append(tr("the CLI wrote {}").format(sampled.written))
         if sampled.rejected:
-            parts.append(f"{sampled.rejected} rejected")
+            parts.append(tr("{} rejected").format(sampled.rejected))
         if sampled.short_of_request:
-            parts.append("the document ran out before the limit")
+            parts.append(tr("the document ran out before the limit"))
         return "  ·  ".join(parts)
 
     # -- filling the tables ------------------------------------------------
@@ -374,13 +381,15 @@ class PreviewPanel(QWidget):
         # Said in words, because an empty grid does not distinguish "nothing was rejected"
         # from "the rejections were not collected".
         self._rejected_note.setText(
-            "No records were rejected in this sample. Rejections are only collected when "
-            "the config sets on_error: quarantine, and only if some record fails to "
-            "extract."
+            tr(
+                "No records were rejected in this sample. Rejections are only collected when "
+                "the config sets on_error: quarantine, and only if some record fails to "
+                "extract."
+            )
         )
 
     def _set_rejected_label(self, count: int) -> None:
-        self._tabs.setTabText(1, f"Rejected ({count})")
+        self._tabs.setTabText(1, tr("Rejected ({})").format(count))
 
     # -- what the widgets are showing --------------------------------------
 

@@ -25,6 +25,7 @@ from typing import Any
 __all__ = [
     "DEFAULTS",
     "FORMATS",
+    "LANGUAGES",
     "ON_ERROR",
     "THEMES",
     "Settings",
@@ -41,11 +42,20 @@ FORMATS = ("csv", "jsonl", "parquet")
 #: What to do when one record cannot be extracted.
 ON_ERROR = ("abort", "quarantine")
 
+#: The interface languages. These are the *values* the settings file holds; the labels a
+#: user sees live in the settings panel, and each is written in the language it names --
+#: the standard way to let a reader who cannot read the current language find their own.
+#: ``en`` is the default because the interface has always been English: a new setting that
+#: changed what every existing user saw on first launch would be this project's "the
+#: suffix and the error policy decided by accident" bug wearing a feature's clothes.
+LANGUAGES = ("en", "zh")
+
 #: The value every setting has before the user touches anything. One mapping, so a caller
 #: adding a setting has exactly one place to add its default and one place to document it.
 DEFAULTS: dict[str, Any] = {
     "batch_size": 1000,
     "format": "csv",
+    "language": "en",
     "on_error": "abort",
     "theme": "system",
 }
@@ -73,6 +83,8 @@ def _coerce(key: str, value: object) -> object:
         return DEFAULTS[key]
     if key == "format":
         return value if value in FORMATS else DEFAULTS[key]
+    if key == "language":
+        return value if value in LANGUAGES else DEFAULTS[key]
     if key == "on_error":
         return value if value in ON_ERROR else DEFAULTS[key]
     if key == "theme":
@@ -91,6 +103,7 @@ class Settings:
 
     batch_size: int = DEFAULTS["batch_size"]
     format: str = DEFAULTS["format"]
+    language: str = DEFAULTS["language"]
     on_error: str = DEFAULTS["on_error"]
     theme: str = DEFAULTS["theme"]
 
@@ -98,6 +111,7 @@ class Settings:
         return {
             "batch_size": self.batch_size,
             "format": self.format,
+            "language": self.language,
             "on_error": self.on_error,
             "theme": self.theme,
         }

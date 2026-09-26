@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from gigaxml.gui.cli_process import CliProcess, RunResult
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.inspect_report import Candidate, InspectReport, parse_report, paths_to_csv
 from gigaxml.gui.sampling import (
     SampledTable,
@@ -92,6 +93,11 @@ class _NumericItem(QTableWidgetItem):
 
 CANDIDATE_HEADERS = ["path", "score", "count", "shape consistency", "nested inside"]
 PATH_HEADERS = ["path", "count", "depth", "children", "shape consistency", "distinct shapes"]
+
+
+def _headers(headers: list[str]) -> list[str]:
+    """The table headers as displayed. The constants stay the identity tests know."""
+    return [tr(header) for header in headers]
 
 
 class StructurePanel(QWidget):
@@ -150,24 +156,26 @@ class StructurePanel(QWidget):
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
-        self._analyze = QPushButton("Analyse", self)
+        self._analyze = QPushButton(tr("Analyse"), self)
         self._analyze.clicked.connect(self.analyze)
-        self._cancel = QPushButton("Cancel", self)
+        self._cancel = QPushButton(tr("Cancel"), self)
         self._cancel.clicked.connect(self.cancel)
         self._cancel.setEnabled(False)
         controls.addWidget(self._analyze)
         controls.addWidget(self._cancel)
-        controls.addWidget(QLabel("max paths", self))
+        controls.addWidget(QLabel(tr("max paths"), self))
         self._max_paths = QSpinBox(self)
         self._max_paths.setRange(0, 100_000_000)
-        self._max_paths.setSpecialValueText("default")
+        self._max_paths.setSpecialValueText(tr("default"))
         self._max_paths.setValue(0)
         self._max_paths.setToolTip(
-            "Stop tracking distinct paths after this many. Off uses inspect's own default. "
-            "Hitting the cap is reported in the warnings, never silently."
+            tr(
+                "Stop tracking distinct paths after this many. Off uses inspect's own default. "
+                "Hitting the cap is reported in the warnings, never silently."
+            )
         )
         controls.addWidget(self._max_paths)
-        self._status = QLabel("no document analysed", self)
+        self._status = QLabel(tr("no document analysed"), self)
         self._status.setObjectName("structure_status")
         self._status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         controls.addWidget(self._status, 1)
@@ -182,17 +190,17 @@ class StructurePanel(QWidget):
         layout.addWidget(self._warnings)
 
         self._search = QLineEdit(self)
-        self._search.setPlaceholderText("filter rows by path…")
+        self._search.setPlaceholderText(tr("filter rows by path…"))
         self._search.textChanged.connect(self._apply_filter)
         layout.addWidget(self._search)
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
 
-        candidates_box = QGroupBox("Record candidates", self)
+        candidates_box = QGroupBox(tr("Record candidates"), self)
         candidates_layout = QVBoxLayout(candidates_box)
         self._candidates = QTableWidget(0, len(CANDIDATE_HEADERS), self)
         self._candidates.setObjectName("candidate_table")
-        self._candidates.setHorizontalHeaderLabels(CANDIDATE_HEADERS)
+        self._candidates.setHorizontalHeaderLabels(_headers(CANDIDATE_HEADERS))
         self._candidates.setSortingEnabled(True)
         self._candidates.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._candidates.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -201,32 +209,32 @@ class StructurePanel(QWidget):
         candidates_layout.addWidget(self._candidates)
         splitter.addWidget(candidates_box)
 
-        detail_box = QGroupBox("Selected candidate", self)
+        detail_box = QGroupBox(tr("Selected candidate"), self)
         detail_layout = QVBoxLayout(detail_box)
         self._detail = QTextBrowser(self)
         self._detail.setObjectName("candidate_detail")
         detail_layout.addWidget(self._detail)
         splitter.addWidget(detail_box)
 
-        namespaces_box = QGroupBox("Namespaces", self)
+        namespaces_box = QGroupBox(tr("Namespaces"), self)
         namespaces_layout = QVBoxLayout(namespaces_box)
         self._namespaces = QTextBrowser(self)
         self._namespaces.setObjectName("namespace_panel")
         namespaces_layout.addWidget(self._namespaces)
         splitter.addWidget(namespaces_box)
 
-        paths_box = QGroupBox("All paths", self)
+        paths_box = QGroupBox(tr("All paths"), self)
         paths_layout = QVBoxLayout(paths_box)
         self._paths = QTableWidget(0, len(PATH_HEADERS), self)
         self._paths.setObjectName("path_table")
-        self._paths.setHorizontalHeaderLabels(PATH_HEADERS)
+        self._paths.setHorizontalHeaderLabels(_headers(PATH_HEADERS))
         self._paths.setSortingEnabled(True)
         self._paths.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._paths.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         paths_layout.addWidget(self._paths)
 
         export_row = QHBoxLayout()
-        self._export = QPushButton("Export paths as CSV…", self)
+        self._export = QPushButton(tr("Export paths as CSV…"), self)
         self._export.clicked.connect(self.choose_export_path)
         self._export.setEnabled(False)
         export_row.addStretch(1)
@@ -241,7 +249,9 @@ class StructurePanel(QWidget):
     def set_document(self, path: Path | str | None) -> None:
         """Point the panel at a document. Does not start anything."""
         self._source = Path(path) if path is not None else None
-        self._status.setText(f"ready to analyse {self._source}" if self._source else "no document")
+        self._status.setText(
+            tr("ready to analyse {}").format(self._source) if self._source else tr("no document")
+        )
         self._analyze.setEnabled(self._source is not None)
 
     def document(self) -> Path | None:
@@ -271,7 +281,7 @@ class StructurePanel(QWidget):
     def analyze(self) -> None:
         """Start ``inspect --json``. Returns as soon as the child is started."""
         if self._source is None:
-            self._status.setText("open a document first")
+            self._status.setText(tr("open a document first"))
             return
         if self._process is not None and self._process.is_running:
             return
@@ -280,7 +290,7 @@ class StructurePanel(QWidget):
         self._finished = False
         self._report = None
         self._clear_tables()
-        self._status.setText("analysing…")
+        self._status.setText(tr("analysing…"))
         self._analyze.setEnabled(False)
         self._cancel.setEnabled(True)
 
@@ -302,7 +312,7 @@ class StructurePanel(QWidget):
         if self._process is None:
             return
         self._cancel.setEnabled(False)
-        self._status.setText("cancelling…")
+        self._status.setText(tr("cancelling…"))
         self._process.kill()
 
     def shutdown(self) -> None:
@@ -369,12 +379,14 @@ class StructurePanel(QWidget):
         if run is None:
             return
         if run.killed:
-            self._status.setText("cancelled")
+            self._status.setText(tr("cancelled"))
             return
         report = parse_report(run.summary)
         if report is None:
             first = next((line for line in run.warnings if line.strip()), None)
-            self._status.setText(first or f"inspect failed with exit code {run.exit_code}")
+            self._status.setText(
+                first or tr("inspect failed with exit code {}").format(run.exit_code)
+            )
             return
         self._report = report
         self._fill(report)
@@ -397,8 +409,9 @@ class StructurePanel(QWidget):
         self._fill_warnings(report)
         self._export.setEnabled(bool(report.paths))
         self._status.setText(
-            f"{report.elements_seen:,} elements · {len(report.candidates)} candidates · "
-            f"{len(report.paths):,} paths"
+            tr("{} elements · {} candidates · {} paths").format(
+                f"{report.elements_seen:,}", len(report.candidates), f"{len(report.paths):,}"
+            )
         )
 
     def _fill_candidates(self, report: InspectReport) -> None:
@@ -415,7 +428,7 @@ class StructurePanel(QWidget):
                 _NumericItem(f"{candidate.score:.3f}", candidate.score),
                 _NumericItem(f"{candidate.count:,}", candidate.count),
                 _NumericItem(f"{candidate.shape_consistency:.1%}", candidate.shape_consistency),
-                QTableWidgetItem(f"[inside {nested}]" if nested else ""),
+                QTableWidgetItem(tr("[inside {}]").format(nested) if nested else ""),
             ]
             for column, item in enumerate(cells):
                 self._candidates.setItem(row, column, item)
@@ -430,7 +443,7 @@ class StructurePanel(QWidget):
                 QTableWidgetItem(entry.path),
                 _NumericItem(f"{entry.count:,}", entry.count),
                 _NumericItem(str(entry.depth), entry.depth),
-                QTableWidgetItem("yes" if entry.has_children else "no"),
+                QTableWidgetItem(tr("yes") if entry.has_children else tr("no")),
                 _NumericItem(f"{entry.shape_consistency:.1%}", entry.shape_consistency),
                 _NumericItem(str(entry.distinct_shapes), entry.distinct_shapes),
             ]
@@ -454,18 +467,18 @@ class StructurePanel(QWidget):
             # about their document -- and this panel is where the namespace advice sends
             # them, so being wrong here is worse than being vague.
             lines.append(
-                "no candidate records were found, so there are no namespaces to show"
+                tr("no candidate records were found, so there are no namespaces to show")
                 if not report.candidates
-                else "the records found use no namespace prefixes"
+                else tr("the records found use no namespace prefixes")
             )
         if report.shadowed_prefixes:
             lines.append("")
-            lines.append("rebound prefixes (they mean more than one thing):")
+            lines.append(tr("rebound prefixes (they mean more than one thing):"))
             for prefix in report.shadowed_prefixes:
                 lines.append(f"  {prefix}")
         if report.unmapped_namespaces:
             lines.append("")
-            lines.append("namespaces used with no prefix:")
+            lines.append(tr("namespaces used with no prefix:"))
             for uri in report.unmapped_namespaces:
                 lines.append(f"  {uri}")
         self._namespaces.setPlainText("\n".join(lines))
@@ -644,7 +657,7 @@ class StructurePanel(QWidget):
         if run is None:
             return
         if run.killed:
-            self._example_failure = "sampling was cancelled"
+            self._example_failure = tr("sampling was cancelled")
             self._example_steps.clear()
             self._example_process = None
             self._example_pump.stop()
@@ -652,7 +665,9 @@ class StructurePanel(QWidget):
             return
         if not run.ok:
             first = next((line for line in run.warnings if line.strip()), None)
-            self._example_failure = first or f"sampling failed with exit code {run.exit_code}"
+            self._example_failure = first or tr("sampling failed with exit code {}").format(
+                run.exit_code
+            )
             self._example_steps.clear()
             self._example_process = None
             self._example_pump.stop()
@@ -719,7 +734,7 @@ class StructurePanel(QWidget):
 
     def choose_export_path(self) -> None:
         chosen, _ = QFileDialog.getSaveFileName(
-            self, "Export paths", "", "CSV (*.csv);;All files (*)"
+            self, tr("Export paths"), "", "CSV (*.csv);;All files (*)"
         )
         if chosen:
             self.export_csv(Path(chosen))
@@ -727,6 +742,11 @@ class StructurePanel(QWidget):
     def export_csv(self, path: Path | str) -> None:
         """Write the path table. Raises nothing for an empty report; writes the header."""
         Path(path).write_text(self.csv_text(), encoding="utf-8")
+
+
+def _labelled(label: str, value: str) -> str:
+    """One aligned line of the side panel: a translated label, padded to the column."""
+    return f"{tr(label):<18} {value}"
 
 
 def _describe_candidate(
@@ -747,31 +767,31 @@ def _describe_candidate(
     lines = [
         candidate.path,
         "",
-        f"score              {candidate.score:.4f}",
-        f"occurrences        {candidate.count:,}",
-        f"shape consistency  {candidate.shape_consistency:.1%}",
-        f"repeat score       {candidate.repeat_score:.3f}",
-        f"depth              {candidate.depth}",
-        f"nested inside      {candidate.nested_inside or '(top level)'}",
+        _labelled("score", f"{candidate.score:.4f}"),
+        _labelled("occurrences", f"{candidate.count:,}"),
+        _labelled("shape consistency", f"{candidate.shape_consistency:.1%}"),
+        _labelled("repeat score", f"{candidate.repeat_score:.3f}"),
+        _labelled("depth", str(candidate.depth)),
+        _labelled("nested inside", candidate.nested_inside or tr("(top level)")),
     ]
     if candidate.child_tags:
-        lines += ["", "child elements"]
+        lines += ["", tr("child elements")]
         lines += [f"  {tag}" for tag in candidate.child_tags]
     if candidate.attribute_names:
-        lines += ["", "attributes"]
+        lines += ["", tr("attributes")]
         lines += [f"  {name}" for name in candidate.attribute_names]
-    lines += ["", "namespaces"]
+    lines += ["", tr("namespaces")]
     if candidate.namespaces:
         for prefix, uri in sorted(candidate.namespaces.items()):
             lines.append(f"  {prefix if prefix else '<default>'} → {uri}")
     else:
-        lines.append("  (none)")
+        lines.append(f"  {tr('(none)')}")
     if candidate.missing_namespaces:
-        lines += ["", "namespaces used with no prefix"]
+        lines += ["", tr("namespaces used with no prefix")]
         lines += [f"  {uri}" for uri in candidate.missing_namespaces]
     lines += _example_lines(examples, pending=pending, failure=failure)
     if candidate.evidence:
-        lines += ["", "why it was proposed", f"  {candidate.evidence}"]
+        lines += ["", tr("why it was proposed"), f"  {candidate.evidence}"]
     return "\n".join(lines)
 
 
@@ -787,18 +807,22 @@ def _example_lines(
     "no values exist" from "they are still coming".
     """
     if failure:
-        return ["", "example values", f"  could not be sampled: {failure}"]
+        return ["", tr("example values"), f"  {tr('could not be sampled: {}').format(failure)}"]
     if examples is None:
-        return ["", "example values", "  sampling…" if pending else "  (none)"]
+        return [
+            "",
+            tr("example values"),
+            f"  {tr('sampling…')}" if pending else f"  {tr('(none)')}",
+        ]
     if not examples.rows:
         return [
             "",
-            "example values",
-            "  the sample held no records, so there is nothing to show",
+            tr("example values"),
+            f"  {tr('the sample held no records, so there is nothing to show')}",
         ]
-    lines = ["", f"example values (first {len(examples.rows)} of a sample)"]
+    lines = ["", tr("example values (first {} of a sample)").format(len(examples.rows))]
     for header, value in zip(examples.headers, examples.rows[0], strict=False):
         lines.append(f"  {header} = {value}")
     if examples.rejected:
-        lines.append(f"  ({examples.rejected} record(s) were rejected)")
+        lines.append(f"  {tr('({} record(s) were rejected)').format(examples.rejected)}")
     return lines

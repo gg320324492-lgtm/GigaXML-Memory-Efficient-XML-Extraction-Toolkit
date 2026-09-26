@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from gigaxml.gui.batch_queue import BatchQueue
 from gigaxml.gui.cli_process import CliProcess, RunResult
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.settings import FORMATS
 
 __all__ = ["PUMP_INTERVAL_MS", "BatchPanel"]
@@ -46,6 +47,8 @@ __all__ = ["PUMP_INTERVAL_MS", "BatchPanel"]
 #: a flag -- it may not touch a widget -- so something on the UI thread has to notice.
 PUMP_INTERVAL_MS = 50
 
+#: The table's columns. Translated where they are displayed, so the constant stays the
+#: identity the tests and this file know.
 _COLUMNS = ("Source", "State", "Detail")
 
 #: The file extension each output format implies, so ``-o`` and ``--format`` agree. The CLI
@@ -84,40 +87,44 @@ class BatchPanel(QWidget):
 
         top = QHBoxLayout()
         self._config = QLineEdit(self)
-        self._config.setPlaceholderText("config file")
-        top.addWidget(QLabel("Config", self))
+        self._config.setPlaceholderText(tr("config file"))
+        top.addWidget(QLabel(tr("Config"), self))
         top.addWidget(self._config, 2)
         self._format = QComboBox(self)
         # From ``FORMATS`` rather than a literal, so this combo and :data:`_SUFFIXES` cannot
-        # drift apart. See the note there.
-        self._format.addItems(list(FORMATS))
-        top.addWidget(QLabel("Format", self))
+        # drift apart. See the note there. Each item carries its value in its data, and the
+        # reads below go through ``currentData``: this selection becomes a ``--format``
+        # flag and half of an output file name, and the label is the part translation may
+        # rewrite.
+        for value in FORMATS:
+            self._format.addItem(tr(value), value)
+        top.addWidget(QLabel(tr("Format"), self))
         top.addWidget(self._format, 1)
         layout.addLayout(top)
 
         buttons = QHBoxLayout()
-        self._add = QPushButton("Add documents…", self)
+        self._add = QPushButton(tr("Add documents…"), self)
         self._add.clicked.connect(self._choose_documents)
         buttons.addWidget(self._add)
         self._output = QLineEdit(self)
-        self._output.setPlaceholderText("output directory")
+        self._output.setPlaceholderText(tr("output directory"))
         buttons.addWidget(self._output, 2)
-        self._start = QPushButton("Start", self)
+        self._start = QPushButton(tr("Start"), self)
         self._start.clicked.connect(self.start)
         buttons.addWidget(self._start)
-        self._cancel = QPushButton("Cancel", self)
+        self._cancel = QPushButton(tr("Cancel"), self)
         self._cancel.clicked.connect(self.cancel)
         self._cancel.setEnabled(False)
         buttons.addWidget(self._cancel)
         layout.addLayout(buttons)
 
         self._table = QTableWidget(0, len(_COLUMNS), self)
-        self._table.setHorizontalHeaderLabels(list(_COLUMNS))
+        self._table.setHorizontalHeaderLabels([tr(column) for column in _COLUMNS])
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._table, 1)
 
-        self._summary = QLabel("No documents queued.", self)
+        self._summary = QLabel(tr("No documents queued."), self)
         layout.addWidget(self._summary)
 
         # The only timer this panel owns. It exists to look at a flag the reader thread
@@ -142,7 +149,9 @@ class BatchPanel(QWidget):
         self._refresh()
 
     def _choose_documents(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileNames(self, "Add documents", "", "XML (*.xml *.xml.gz)")
+        chosen, _ = QFileDialog.getOpenFileNames(
+            self, tr("Add documents"), "", "XML (*.xml *.xml.gz)"
+        )
         if chosen:
             self.add_documents(list(chosen))
 
@@ -169,9 +178,12 @@ class BatchPanel(QWidget):
             "-c",
             self._config.text().strip(),
             "-o",
-            str(job_output / f"rows{_SUFFIXES.get(self._format.currentText(), '.csv')}"),
+            # The value, not the label -- twice over: once as the file's suffix, once as
+            # the ``--format`` flag. Both reach the CLI and the disk, and neither may
+            # follow the language of the interface.
+            str(job_output / f"rows{_SUFFIXES.get(self._format.currentData(), '.csv')}"),
             "--format",
-            self._format.currentText(),
+            self._format.currentData(),
             "--progress",
         ]
 
@@ -227,7 +239,11 @@ class BatchPanel(QWidget):
         outcome = self._outcome
         if job is not None:
             ok = outcome is not None and outcome.exit_code == 0
-            detail = "" if ok else (f"exit {outcome.exit_code}" if outcome else "no result")
+            detail = (
+                ""
+                if ok
+                else (tr("exit {}").format(outcome.exit_code) if outcome else tr("no result"))
+            )
             self._queue.note_finished(job, ok=ok, detail=detail)
         self._refresh()
         self._start_next()
@@ -258,14 +274,21 @@ class BatchPanel(QWidget):
         rows = self._queue.rows()
         self._table.setRowCount(len(rows))
         for index, (name, state, detail) in enumerate(rows):
-            for column, text in enumerate((name, state, detail)):
+            # The state is a stored value -- it also goes into the queue's JSON -- so the
+            # translation happens here, at the moment it becomes a table cell, and never
+            # in the queue itself.
+            for column, text in enumerate((name, tr(state), detail)):
                 item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 self._table.setItem(index, column, item)
         counts = self._queue.counts()
         self._summary.setText(
-            f"{counts['done']} done, {counts['failed']} failed, "
-            f"{counts['skipped']} skipped, {counts['waiting'] + counts['running']} to go"
+            tr("{} done, {} failed, {} skipped, {} to go").format(
+                counts["done"],
+                counts["failed"],
+                counts["skipped"],
+                counts["waiting"] + counts["running"],
+            )
         )
         self.progress_changed.emit(counts["done"] + counts["failed"] + counts["skipped"], len(rows))
 

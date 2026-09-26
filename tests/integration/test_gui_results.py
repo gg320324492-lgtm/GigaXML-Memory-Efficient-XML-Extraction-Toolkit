@@ -185,7 +185,11 @@ def test_a_run_that_rejected_records_says_how_many_and_where(
     assert outcome.rejected == 1
     assert outcome.rejected_path is not None
     detail = results.detail_text()
-    assert "1 record was rejected" in detail, detail
+    # The summary line is a label ("rejected: 1 record — see <path>") rather than a
+    # sentence, so the count and the path are what the assertion pins down; the exact
+    # wording around them is the panel's to choose, in either language.
+    assert "1 record" in detail, detail
+    assert "rejected" in detail, detail
     assert str(outcome.rejected_path) in detail
 
 

@@ -51,6 +51,7 @@ from gigaxml.gui.field_rows import (
     rows_from_config,
     validate,
 )
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.inspect_report import Candidate
 from gigaxml.gui.sampling import (
     discard_run_directory,
@@ -128,17 +129,19 @@ class FieldConfigPanel(QWidget):
     def _build(self) -> None:
         layout = QVBoxLayout(self)
 
-        record_box = QGroupBox("Record", self)
+        record_box = QGroupBox(tr("Record"), self)
         record_layout = QHBoxLayout(record_box)
-        record_layout.addWidget(QLabel("record path", self))
+        record_layout.addWidget(QLabel(tr("record path"), self))
         self._record = QLineEdit(self)
         self._record.setPlaceholderText("/catalog/products/product")
         self._record.textChanged.connect(self._on_edited)
         record_layout.addWidget(self._record, 1)
-        self._regenerate = QPushButton("From candidate", self)
+        self._regenerate = QPushButton(tr("From candidate"), self)
         self._regenerate.setToolTip(
-            "Fill the record path and the field list from the candidate selected in the "
-            "structure panel: its direct children and its attributes."
+            tr(
+                "Fill the record path and the field list from the candidate selected in the "
+                "structure panel: its direct children and its attributes."
+            )
         )
         self._regenerate.clicked.connect(self.regenerate_from_candidate)
         record_layout.addWidget(self._regenerate)
@@ -146,7 +149,7 @@ class FieldConfigPanel(QWidget):
 
         self._table = QTableWidget(0, len(HEADERS), self)
         self._table.setObjectName("field_table")
-        self._table.setHorizontalHeaderLabels(HEADERS)
+        self._table.setHorizontalHeaderLabels([tr(header) for header in HEADERS])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         # Rows are dragged to reorder them. The move itself is done on the data and the
@@ -167,13 +170,13 @@ class FieldConfigPanel(QWidget):
             ("Move up", lambda: self.move_selected(-1)),
             ("Move down", lambda: self.move_selected(1)),
         ):
-            button = QPushButton(label, self)
+            button = QPushButton(tr(label), self)
             button.clicked.connect(slot)
             buttons.addWidget(button)
         buttons.addStretch(1)
         # No sample-size control here: the preview owns the limit, and a second spin box
         # for the same number is two places to keep in step.
-        self._export = QPushButton("Save config…", self)
+        self._export = QPushButton(tr("Save config…"), self)
         self._export.clicked.connect(self.choose_save_path)
         buttons.addWidget(self._export)
         layout.addLayout(buttons)
@@ -273,7 +276,7 @@ class FieldConfigPanel(QWidget):
         source = self._source
         index = self._candidate_index
         if source is None or index is None:
-            self._message.setText("select a candidate in the structure panel first")
+            self._message.setText(tr("select a candidate in the structure panel first"))
             return
         # Clicking again means "the one selected now", so the request in flight is
         # abandoned rather than allowed to finish and win: leaving it would fill the table
@@ -287,7 +290,7 @@ class FieldConfigPanel(QWidget):
         discard_run_directory(self._regenerate_directory)
         self._regenerate_directory = make_run_directory("gigaxml-generate-")
         self._generated_config = self._regenerate_directory / "config.yaml"
-        self._message.setText("asking the CLI for a config…")
+        self._message.setText(tr("asking the CLI for a config…"))
         process = CliProcess(
             # 1-based, matching what `inspect` prints and what the candidate table shows.
             generate_config_args(source, self._generated_config, index + 1),
@@ -356,10 +359,12 @@ class FieldConfigPanel(QWidget):
         if run is None or not run.ok or self._generated_config is None:
             warnings = run.warnings if run is not None else []
             first = next((line for line in warnings if line.strip()), None)
-            self._message.setText(first or "the CLI could not write a config for this candidate")
+            self._message.setText(
+                first or tr("the CLI could not write a config for this candidate")
+            )
             return
         if not self._generated_config.is_file():
-            self._message.setText("the CLI reported success but wrote no config")
+            self._message.setText(tr("the CLI reported success but wrote no config"))
             return
         payload = yaml.safe_load(self._generated_config.read_text(encoding="utf-8"))
         record, rows = rows_from_config(payload if isinstance(payload, dict) else {})
@@ -448,11 +453,15 @@ class FieldConfigPanel(QWidget):
 
     def _show(self, result: ValidationResult) -> None:
         if result.ok:
-            self._message.setText(f"this is a config the CLI accepts — {len(self._rows)} fields")
+            self._message.setText(
+                tr("this is a config the CLI accepts — {} fields").format(len(self._rows))
+            )
             self._message.setStyleSheet("")
         else:
             # The library's own sentence, unedited. Rewording it here would be the first
-            # step towards a second implementation of the rules behind it.
+            # step towards a second implementation of the rules behind it -- and it is a
+            # contract string from the CLI layer, the same class of text as CLI output,
+            # which is why it stays in English in every language.
             self._message.setText(result.message)
             self._message.setStyleSheet("color: #c0392b;")
         self._export.setEnabled(result.ok)
@@ -502,6 +511,11 @@ class FieldConfigPanel(QWidget):
         return editor
 
     def _type_editor(self, value: str) -> QComboBox:
+        # Deliberately label-free: the items are the config's own type names and are shown
+        # as themselves in every language, so display and value are the same string by
+        # construction and ``currentText`` cannot drift from what the config receives. The
+        # moment a translated label is wanted here, this becomes an addItem-with-data combo
+        # like the execution panel's -- the mechanism, not the wording, is the contract.
         editor = QComboBox(self)
         editor.addItems(list(FIELD_TYPE_NAMES))
         if value in FIELD_TYPE_NAMES:
@@ -621,7 +635,7 @@ class FieldConfigPanel(QWidget):
 
     def choose_save_path(self) -> None:
         chosen, _ = QFileDialog.getSaveFileName(
-            self, "Save config", "", "YAML (*.yaml);;JSON (*.json);;All files (*)"
+            self, tr("Save config"), "", "YAML (*.yaml);;JSON (*.json);;All files (*)"
         )
         if chosen:
             self.save_config(Path(chosen))

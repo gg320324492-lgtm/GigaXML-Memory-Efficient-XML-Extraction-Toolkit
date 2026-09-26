@@ -87,6 +87,12 @@ extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PTH", "RUF", "ANN", "ARG"]
+# RUF001/2/3 exist to catch a lookalike character typed by accident where ASCII was meant.
+# The interface's Chinese text in gigaxml/gui/i18n.py uses fullwidth punctuation as
+# content -- that is what written Chinese is punctuated with -- so the family is declared
+# intentional rather than silenced with a noqa on every line of the table. Anything outside
+# this list still trips the rule, which is the part of it worth keeping.
+allowed-confusables = ["，", "。", "：", "；", "！", "？", "、", "（", "）"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["gigaxml"]

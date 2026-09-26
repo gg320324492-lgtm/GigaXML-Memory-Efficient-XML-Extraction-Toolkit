@@ -40,6 +40,7 @@ from gigaxml.gui.error_advice import (
     KIND_NAMESPACES,
     KIND_QUARANTINE,
 )
+from gigaxml.gui.i18n import set_language, tr
 from gigaxml.gui.panels.batch import BatchPanel
 from gigaxml.gui.panels.document import DocumentPanel
 from gigaxml.gui.panels.errors import ErrorPanel
@@ -78,6 +79,14 @@ class MainWindow(QMainWindow):
         # ⑨ 与 ⑧ 的持久化落点,和「最近文件」同一个目录、同一个注入方式.
         self._settings_store = SettingsStore(self._state_dir / SETTINGS_FILE_NAME)
         self._config_library = ConfigLibrary(self._state_dir)
+        # The language is read before anything is built, because every panel writes its
+        # labels during construction and :mod:`gigaxml.gui.i18n` has no retranslate pass:
+        # a window built first and translated after would come up in whichever language the
+        # last launch used, with this launch's choice silently ignored until the next one.
+        # Deliberately NOT applied again from `_apply_settings`: mid-session that would
+        # mix two languages on screen, since only strings built from then on would follow.
+        # The settings panel says the change takes effect after a restart.
+        set_language(self._settings_store.read().language)
 
         self._tabs = QTabWidget(self)
         self._documents = DocumentPanel(self._recent, self)
@@ -99,13 +108,13 @@ class MainWindow(QMainWindow):
         execute_layout.addWidget(self._results)
         execute_layout.addWidget(self._errors)
         for panel, title in (
-            (self._documents, "Document"),
-            (self._structure, "Structure"),
-            (self._fields, "Fields"),
-            (self._preview, "Preview"),
-            (self._execute_tab, "Execute"),
-            (self._batch, "Batch"),
-            (self._settings, "Settings"),
+            (self._documents, tr("Document")),
+            (self._structure, tr("Structure")),
+            (self._fields, tr("Fields")),
+            (self._preview, tr("Preview")),
+            (self._execute_tab, tr("Execute")),
+            (self._batch, tr("Batch")),
+            (self._settings, tr("Settings")),
         ):
             self._tabs.addTab(panel, title)
         self.setCentralWidget(self._tabs)
@@ -115,7 +124,7 @@ class MainWindow(QMainWindow):
         self._settings.settings_changed.connect(self._apply_settings)
         self._apply_settings(self._settings_store.read())
         self._build_menus()
-        self.statusBar().showMessage("ready")
+        self.statusBar().showMessage(tr("ready"))
 
     def _connect_panels(self) -> None:
         """Introduce the panels to each other. Wired here, so none of them knows another.
@@ -230,7 +239,7 @@ class MainWindow(QMainWindow):
 
     def _on_path_copy_requested(self, path: str) -> None:
         QApplication.clipboard().setText(path)
-        self.statusBar().showMessage(f"copied {path}", 5000)
+        self.statusBar().showMessage(tr("copied {}").format(path), 5000)
 
     def _on_error_action(self, kind: str) -> None:
         """Do the thing the advice suggested. The panel does not know what any of it means.
@@ -242,14 +251,14 @@ class MainWindow(QMainWindow):
         if kind == KIND_QUARANTINE:
             self._execution.set_on_error("quarantine")
             self._tabs.setCurrentWidget(self._execute_tab)
-            self.statusBar().showMessage("on_error set to quarantine", 5000)
+            self.statusBar().showMessage(tr("on_error set to quarantine"), 5000)
             return
         if kind == KIND_FREE_TARGET:
             failure = self._errors.failure()
             target = failure.partial_path if failure is not None else None
             if target is not None:
                 QApplication.clipboard().setText(str(target))
-                self.statusBar().showMessage(f"copied {target}", 5000)
+                self.statusBar().showMessage(tr("copied {}").format(target), 5000)
             return
         if kind == KIND_NAMESPACES:
             self._tabs.setCurrentWidget(self._structure)
@@ -260,14 +269,14 @@ class MainWindow(QMainWindow):
             # and a document with no namespaces look the same on screen.
             if self._structure.report() is None:
                 self.statusBar().showMessage(
-                    "press Analyse on this tab to see what the document declares", 8000
+                    tr("press Analyse on this tab to see what the document declares"), 8000
                 )
             else:
-                self.statusBar().showMessage("the document's namespaces are listed here", 5000)
+                self.statusBar().showMessage(tr("the document's namespaces are listed here"), 5000)
             return
         if kind == KIND_CHECK_CONFIG:
             self._tabs.setCurrentWidget(self._fields)
-            self.statusBar().showMessage("the config is in the Fields tab", 5000)
+            self.statusBar().showMessage(tr("the config is in the Fields tab"), 5000)
             return
         if kind == KIND_CHECKPOINT:
             # The checkpoint lives inside the output directory, so the directory is the
@@ -277,7 +286,7 @@ class MainWindow(QMainWindow):
             # with the path in hand rather than something this window does for them.
             directory = self._execution.output_path()
             QApplication.clipboard().setText(str(directory))
-            self.statusBar().showMessage(f"copied {directory}", 5000)
+            self.statusBar().showMessage(tr("copied {}").format(directory), 5000)
 
     def _on_document_changed(self, path: str) -> None:
         self._structure.set_document(path)
@@ -285,7 +294,7 @@ class MainWindow(QMainWindow):
         # The field panel needs it too: the CLI cannot write a config for a candidate
         # without the document that candidate came from.
         self._fields.set_source(path)
-        self.statusBar().showMessage(f"opened {path}", 5000)
+        self.statusBar().showMessage(tr("opened {}").format(path), 5000)
 
     def _on_candidate_changed(self, candidate: object) -> None:
         """Pass the candidate, and its number in the report, to the field panel.
@@ -319,32 +328,34 @@ class MainWindow(QMainWindow):
         self._preview.set_config(self._fields.valid_config_dict())
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
+        file_menu = self.menuBar().addMenu(tr("&File"))
 
-        open_action = QAction("&Open document…", self)
+        open_action = QAction(tr("&Open document…"), self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._documents.choose_document)
         file_menu.addAction(open_action)
 
-        save_action = QAction("&Save config…", self)
+        save_action = QAction(tr("&Save config…"), self)
         save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self._fields.choose_save_path)
         file_menu.addAction(save_action)
 
-        quit_action = QAction("&Quit", self)
+        quit_action = QAction(tr("&Quit"), self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
-        help_menu = self.menuBar().addMenu("&Help")
-        about = QAction("&About", self)
+        help_menu = self.menuBar().addMenu(tr("&Help"))
+        about = QAction(tr("&About"), self)
         about.triggered.connect(self._show_about)
         help_menu.addAction(about)
 
     def _show_about(self) -> None:
         from gigaxml import __version__
 
-        self.statusBar().showMessage(f"GigaXML {__version__} — the CLI does the work", 5000)
+        self.statusBar().showMessage(
+            tr("GigaXML {} — the CLI does the work").format(__version__), 5000
+        )
 
     # -- dropping on the window --------------------------------------------
 
@@ -452,7 +463,7 @@ class MainWindow(QMainWindow):
 
 def placeholder(title: str) -> QLabel:
     """A label for a tab that is not built yet, so the window says so rather than lying."""
-    return QLabel(f"{title}: not built yet")
+    return QLabel(tr("{}: not built yet").format(title))
 
 
 __all__ = ["RECENT_FILES_NAME", "MainWindow", "placeholder"]

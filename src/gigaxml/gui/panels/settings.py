@@ -25,8 +25,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.settings import (
     FORMATS,
+    LANGUAGES,
     MAX_BATCH_SIZE,
     MIN_BATCH_SIZE,
     ON_ERROR,
@@ -44,6 +46,11 @@ _THEME_LABELS = {
     "light": "Light",
     "dark": "Dark",
 }
+
+#: What the language combo shows, keyed by the stored value. Each name is written in the
+#: language it selects -- the one place a user who cannot read the current interface can
+#: still find their own -- so these are deliberately *not* run through ``tr``.
+_LANGUAGE_LABELS = {"en": "English", "zh": "中文"}
 
 
 class SettingsPanel(QWidget):
@@ -71,53 +78,66 @@ class SettingsPanel(QWidget):
         self._batch_size.setRange(MIN_BATCH_SIZE, MAX_BATCH_SIZE)
         self._batch_size.setValue(current.batch_size)
         self._batch_size.setToolTip(
-            "How many records the CLI holds before writing. Larger is faster and uses more "
-            "memory; the tool warns above the point where that matters."
+            tr(
+                "How many records the CLI holds before writing. Larger is faster and uses more "
+                "memory; the tool warns above the point where that matters."
+            )
         )
-        form.addRow("Default batch size", self._batch_size)
+        form.addRow(tr("Default batch size"), self._batch_size)
 
+        # Every combo below carries its value in the item's data and every read goes
+        # through ``currentData``: these values are written into the settings file and
+        # handed to the CLI, so they are data, while the labels are the part translation
+        # may rewrite. Reading them back through the label -- the way the theme used to be
+        # recovered by matching against ``_THEME_LABELS`` -- would go silently wrong the
+        # moment a label was translated, which is the same trap the execution panel's
+        # ``currentText`` reads were.
         self._format = QComboBox(self)
-        self._format.addItems(list(FORMATS))
-        self._format.setCurrentText(current.format)
-        form.addRow("Default output format", self._format)
+        for value in FORMATS:
+            self._format.addItem(tr(value), value)
+        self._format.setCurrentIndex(self._format.findData(current.format))
+        form.addRow(tr("Default output format"), self._format)
 
         self._on_error = QComboBox(self)
-        self._on_error.addItems(list(ON_ERROR))
-        self._on_error.setCurrentText(current.on_error)
-        form.addRow("Default on error", self._on_error)
+        for value in ON_ERROR:
+            self._on_error.addItem(tr(value), value)
+        self._on_error.setCurrentIndex(self._on_error.findData(current.on_error))
+        form.addRow(tr("Default on error"), self._on_error)
 
         self._theme = QComboBox(self)
-        self._theme.addItems([_THEME_LABELS[name] for name in THEMES])
-        self._theme.setCurrentText(_THEME_LABELS[current.theme])
-        form.addRow("Theme", self._theme)
+        for value in THEMES:
+            self._theme.addItem(tr(_THEME_LABELS[value]), value)
+        self._theme.setCurrentIndex(self._theme.findData(current.theme))
+        form.addRow(tr("Theme"), self._theme)
+
+        self._language = QComboBox(self)
+        for value in LANGUAGES:
+            self._language.addItem(_LANGUAGE_LABELS[value], value)
+        self._language.setCurrentIndex(self._language.findData(current.language))
+        form.addRow(tr("Language"), self._language)
+        # Said where the choice is made, because this panel writes on every change and a
+        # user who sees the rest of the interface stay in the old language is otherwise
+        # looking at something that reads as broken. The panels render their strings when
+        # they are built, so the new language arrives with the next launch.
+        self._language_note = QLabel(tr("Takes effect after restart"), self)
+        self._language_note.setWordWrap(True)
+        form.addRow("", self._language_note)
 
         layout.addLayout(form)
 
-        self._where = QLabel(f"Kept in {store.store}", self)
+        self._where = QLabel(tr("Kept in {}").format(store.store), self)
         self._where.setWordWrap(True)
         self._where.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._where)
         layout.addStretch(1)
 
         self._batch_size.valueChanged.connect(self._save)
-        self._format.currentTextChanged.connect(self._save)
-        self._on_error.currentTextChanged.connect(self._save)
-        self._theme.currentTextChanged.connect(self._save)
+        self._format.currentIndexChanged.connect(self._save)
+        self._on_error.currentIndexChanged.connect(self._save)
+        self._theme.currentIndexChanged.connect(self._save)
+        self._language.currentIndexChanged.connect(self._save)
 
     # -- reading -----------------------------------------------------------
-
-    def _theme_value(self) -> str:
-        """The stored theme name for whatever the combo is showing.
-
-        The stored value is what the rest of the application switches on, so the labels
-        are a display concern -- which means going back from a label to a value is a
-        lookup, and one that has to fall back rather than fail.
-        """
-        shown = self._theme.currentText()
-        for name, label in _THEME_LABELS.items():
-            if label == shown:
-                return name
-        return "system"
 
     def current(self) -> Settings:
         """The settings as the controls currently describe them."""
@@ -142,9 +162,10 @@ class SettingsPanel(QWidget):
         try:
             updated = self._store.set(
                 batch_size=self._batch_size.value(),
-                format=self._format.currentText(),
-                on_error=self._on_error.currentText(),
-                theme=self._theme_value(),
+                format=self._format.currentData(),
+                language=self._language.currentData(),
+                on_error=self._on_error.currentData(),
+                theme=self._theme.currentData(),
             )
         finally:
             self._loading = False

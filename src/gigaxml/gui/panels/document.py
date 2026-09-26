@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from gigaxml.gui.document_info import DOCUMENT_SUFFIXES, describe, looks_like_document
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.recent_files import RecentFiles
 
 #: Where the path is kept on a recent-files row. Stored rather than parsed back out of the
@@ -85,7 +86,7 @@ class DocumentPanel(QWidget):
         layout = QVBoxLayout(self)
 
         open_row = QHBoxLayout()
-        self._open = QPushButton("Open document…", self)
+        self._open = QPushButton(tr("Open document…"), self)
         self._open.clicked.connect(self.choose_document)
         open_row.addWidget(self._open)
         open_row.addStretch(1)
@@ -99,7 +100,7 @@ class DocumentPanel(QWidget):
         self._info.setObjectName("document_info")
         layout.addWidget(self._info)
 
-        recent_box = QGroupBox("Recent documents", self)
+        recent_box = QGroupBox(tr("Recent documents"), self)
         recent_layout = QVBoxLayout(recent_box)
         self._list = QListWidget(self)
         self._list.setObjectName("recent_list")
@@ -107,9 +108,9 @@ class DocumentPanel(QWidget):
         recent_layout.addWidget(self._list)
 
         buttons = QHBoxLayout()
-        self._forget = QPushButton("Remove from list", self)
+        self._forget = QPushButton(tr("Remove from list"), self)
         self._forget.clicked.connect(self._remove_selected)
-        self._clear = QPushButton("Clear list", self)
+        self._clear = QPushButton(tr("Clear list"), self)
         self._clear.clicked.connect(self._clear_recent)
         buttons.addStretch(1)
         buttons.addWidget(self._forget)
@@ -122,7 +123,7 @@ class DocumentPanel(QWidget):
         layout.addWidget(recent_box)
         layout.addStretch(1)
 
-        self._drag_hint = QLabel("or drag an .xml or .xml.gz file onto this window", self)
+        self._drag_hint = QLabel(tr("or drag an .xml or .xml.gz file onto this window"), self)
         self._drag_hint.setObjectName("drag_hint")
         layout.addWidget(self._drag_hint)
 
@@ -132,9 +133,9 @@ class DocumentPanel(QWidget):
         """The file dialog. Offers exactly the suffixes a drop is allowed to be."""
         chosen, _ = QFileDialog.getOpenFileName(
             self,
-            "Open a document",
+            tr("Open a document"),
             "",
-            "XML documents (*.xml *.xml.gz);;All files (*)",
+            tr("XML documents (*.xml *.xml.gz);;All files (*)"),
         )
         if chosen:
             self.open_document(Path(chosen))
@@ -148,9 +149,9 @@ class DocumentPanel(QWidget):
         """
         target = Path(path)
         if not looks_like_document(target):
+            suffixes = f" {tr('or')} ".join(DOCUMENT_SUFFIXES)
             self._info.setText(
-                f"not a document: {target} "
-                f"(expected an existing {' or '.join(DOCUMENT_SUFFIXES)} file)"
+                tr("not a document: {} (expected an existing {} file)").format(target, suffixes)
             )
             return False
 
@@ -208,7 +209,9 @@ class DocumentPanel(QWidget):
         self._list.clear()
         missing = 0
         for entry in self._recent.entries():
-            item = QListWidgetItem(entry.name if entry.exists else f"{entry.name}  (missing)")
+            item = QListWidgetItem(
+                entry.name if entry.exists else tr("{}  (missing)").format(entry.name)
+            )
             item.setData(_PATH_ROLE, str(entry.path))
             item.setToolTip(str(entry.path))
             if not entry.exists:
@@ -219,9 +222,10 @@ class DocumentPanel(QWidget):
             # Said in words as well as in grey, because colour alone is not a message and
             # a user whose drive is unplugged deserves to be told what happened.
             self._recent_note.setText(
-                f"{missing} of these files are not there at the moment. They are kept so "
-                f"you can see what you had; opening one will say so rather than fail "
-                f"silently."
+                tr(
+                    "{} of these files are not there at the moment. They are kept so you "
+                    "can see what you had; opening one will say so rather than fail silently."
+                ).format(missing)
             )
         else:
             self._recent_note.setText("")
@@ -250,14 +254,14 @@ class DocumentPanel(QWidget):
 
     def _show_info(self) -> None:
         if self._path is None:
-            self._info.setText("no document open")
+            self._info.setText(tr("no document open"))
             return
         info = describe(self._path)
-        when = info.modified.strftime("%Y-%m-%d %H:%M:%S") if info.modified else "unknown"
+        when = info.modified.strftime("%Y-%m-%d %H:%M:%S") if info.modified else tr("unknown")
         parts = [
             str(info.path),
             f"{info.size_mib:.2f} MiB ({info.size_bytes:,} bytes)",
-            f"modified {when}",
+            tr("modified {}").format(when),
         ]
         note = info.estimate_note()
         if note:
@@ -295,7 +299,7 @@ class DocumentPanel(QWidget):
         """
         candidate = first_local_file(event.mimeData())
         if candidate is None:
-            self._info.setText("that drop carried no file")
+            self._info.setText(tr("that drop carried no file"))
             event.ignore()
             return
         if not self.open_document(candidate):

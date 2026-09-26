@@ -31,6 +31,8 @@ import pathlib
 from dataclasses import dataclass
 from datetime import datetime
 
+from gigaxml.gui.i18n import tr
+
 __all__ = [
     "DOCUMENT_SUFFIXES",
     "INSPECT_MIB_PER_SECOND",
@@ -87,14 +89,13 @@ class DocumentInfo:
             return ""
         if seconds >= 60:
             minutes = seconds / 60
-            return (
-                f"analysis reads the whole document: expect roughly {minutes:.0f} min "
-                f"({self.size_mib:.0f} MiB at about {rate:.0f} MiB/s)"
-            )
-        return (
-            f"analysis reads the whole document: expect roughly {seconds:.0f} s "
-            f"({self.size_mib:.0f} MiB at about {rate:.0f} MiB/s)"
-        )
+            return tr(
+                "analysis reads the whole document: expect roughly {} min "
+                "({} MiB at about {} MiB/s)"
+            ).format(f"{minutes:.0f}", f"{self.size_mib:.0f}", f"{rate:.0f}")
+        return tr(
+            "analysis reads the whole document: expect roughly {} s ({} MiB at about {} MiB/s)"
+        ).format(f"{seconds:.0f}", f"{self.size_mib:.0f}", f"{rate:.0f}")
 
 
 def describe(path: pathlib.Path | str) -> DocumentInfo:

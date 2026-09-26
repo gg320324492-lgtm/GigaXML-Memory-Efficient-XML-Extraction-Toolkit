@@ -106,3 +106,22 @@ def namespaced_dataset(tmp_path: Path) -> Iterator[Path]:
     path = tmp_path / "namespaced.xml"
     generate_dataset(path, size="256KB", seed=GATE_SEED, namespace="urn:example:catalog")
     yield path
+
+
+@pytest.fixture(autouse=True)
+def _interface_language_reset() -> Iterator[None]:
+    """Pin the interface language to English for the duration of every test.
+
+    ``gigaxml.gui.i18n`` keeps its current language in module state: a window sets it from
+    its own stored settings when it is built. A test that builds a Chinese window would
+    otherwise leave that choice behind for every test that runs after it -- and any of them
+    that builds a bare panel, which inherits the ambient language instead of reading a
+    settings file, would then assert against Chinese text it has never asked for. The
+    window is the only thing that sets the language in production, so resetting between
+    tests costs production code nothing and makes every test's language explicit.
+    """
+    from gigaxml.gui import i18n
+
+    i18n.set_language(i18n.FALLBACK_LANGUAGE)
+    yield
+    i18n.set_language(i18n.FALLBACK_LANGUAGE)

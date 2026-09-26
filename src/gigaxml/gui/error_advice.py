@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from gigaxml.checkpoint import CheckpointError
 from gigaxml.errors import FieldPathError, WriterError
+from gigaxml.gui.i18n import tr
 from gigaxml.run import QUARANTINABLE
 
 __all__ = [
@@ -57,8 +58,8 @@ def advice_for(error_type: str | None) -> Advice:
     if error_type in _QUARANTINABLE:
         return Advice(
             kind=KIND_QUARANTINE,
-            headline="A record did not match the field types you gave",
-            detail=(
+            headline=tr("A record did not match the field types you gave"),
+            detail=tr(
                 "Setting on_error to quarantine skips the records that fail and keeps the "
                 "rest. The run will finish, and the skipped records go to the rejection "
                 "log — so the output is complete for every record that matched, and the "
@@ -68,8 +69,8 @@ def advice_for(error_type: str | None) -> Advice:
     if error_type == WriterError.__name__:
         return Advice(
             kind=KIND_FREE_TARGET,
-            headline="The finished file could not be put in place",
-            detail=(
+            headline=tr("The finished file could not be put in place"),
+            detail=tr(
                 "On Windows this usually means the target is open in another program. "
                 "Close it and run again. Nothing is lost: the complete output is in the "
                 ".tmp file beside the target, and it can be renamed by hand."
@@ -78,8 +79,8 @@ def advice_for(error_type: str | None) -> Advice:
     if error_type == CheckpointError.__name__:
         return Advice(
             kind=KIND_CHECKPOINT,
-            headline="Resuming was refused",
-            detail=(
+            headline=tr("Resuming was refused"),
+            detail=tr(
                 "The message below is the answer, and it is not summarised here. The tool "
                 "names every component that differs with both values -- the size and "
                 "sha256 it recorded beside the ones it found, or the two config hashes -- "
@@ -94,8 +95,8 @@ def advice_for(error_type: str | None) -> Advice:
     if error_type == FieldPathError.__name__:
         return Advice(
             kind=KIND_NAMESPACES,
-            headline="A field path uses a namespace prefix the config does not declare",
-            detail=(
+            headline=tr("A field path uses a namespace prefix the config does not declare"),
+            detail=tr(
                 "The namespace panel lists the prefixes in scope for the records the "
                 "document has, which is what the paths are resolved against — so it is "
                 "where the difference is visible: a prefix that is not there is one the "
@@ -106,8 +107,8 @@ def advice_for(error_type: str | None) -> Advice:
         )
     return Advice(
         kind=KIND_CHECK_CONFIG,
-        headline="The run stopped before it read any records",
-        detail=(
+        headline=tr("The run stopped before it read any records"),
+        detail=tr(
             "This is usually the config rather than the document — a path that does not "
             "match, or a namespace prefix the config never declared. The field panel "
             "checks both as you edit, so a config that fails here is one that was changed "

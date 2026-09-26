@@ -44,7 +44,9 @@ from gigaxml.checkpoint import CHECKPOINT_FILENAME, Checkpoint, CheckpointError,
 from gigaxml.config import ConfigError, load_config, parse_config
 from gigaxml.errors import GigaXMLError
 from gigaxml.gui.cli_process import CliProcess, RunResult
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.progress import Progress, format_eta, fraction_done
+from gigaxml.gui.settings import FORMATS, ON_ERROR
 
 #: How often the UI thread drains what the reader thread collected. 50 ms is under the
 #: threshold where a person notices a stall, and the work it does is a handful of widget
@@ -127,25 +129,25 @@ class ExecutionPanel(QWidget):
     def _build(self) -> None:
         layout = QVBoxLayout(self)
 
-        source_box = QGroupBox("Source", self)
+        source_box = QGroupBox(tr("Source"), self)
         source_form = QFormLayout(source_box)
         self._source = QLineEdit(self)
-        self._source.setPlaceholderText("an .xml or .xml.gz file")
-        browse = QPushButton("Browse…", self)
+        self._source.setPlaceholderText(tr("an .xml or .xml.gz file"))
+        browse = QPushButton(tr("Browse…"), self)
         browse.clicked.connect(self.choose_source)
         source_row = QHBoxLayout()
         source_row.addWidget(self._source)
         source_row.addWidget(browse)
-        source_form.addRow("Input file", source_row)
+        source_form.addRow(tr("Input file"), source_row)
 
         self._config = QLineEdit(self)
-        self._config.setPlaceholderText("a YAML or JSON config")
-        config_browse = QPushButton("Browse…", self)
+        self._config.setPlaceholderText(tr("a YAML or JSON config"))
+        config_browse = QPushButton(tr("Browse…"), self)
         config_browse.clicked.connect(self._choose_config)
         config_row = QHBoxLayout()
         config_row.addWidget(self._config)
         config_row.addWidget(config_browse)
-        source_form.addRow("Config", config_row)
+        source_form.addRow(tr("Config"), config_row)
         # Typing a path and leaving the field is the other way a config is chosen, and it has
         # to sync the policy too. ``editingFinished`` rather than ``textChanged``: the latter
         # fires per keystroke, so every prefix of the path would be a load attempt.
@@ -154,36 +156,48 @@ class ExecutionPanel(QWidget):
         self._record_path = QLineEdit(self)
         self._record_path.setPlaceholderText("/catalog/products/product")
         self._record_path.setToolTip(
-            "Used only to find the total for the progress bar, by asking `inspect`. "
-            "The extraction itself takes the record path from the config."
+            tr(
+                "Used only to find the total for the progress bar, by asking `inspect`. "
+                "The extraction itself takes the record path from the config."
+            )
         )
-        source_form.addRow("Record path (for the total)", self._record_path)
+        source_form.addRow(tr("Record path (for the total)"), self._record_path)
         layout.addWidget(source_box)
 
-        output_box = QGroupBox("Output", self)
+        output_box = QGroupBox(tr("Output"), self)
         output_form = QFormLayout(output_box)
         self._output = QLineEdit(self)
-        self._output.setPlaceholderText("where to write the rows")
-        output_browse = QPushButton("Browse…", self)
+        self._output.setPlaceholderText(tr("where to write the rows"))
+        output_browse = QPushButton(tr("Browse…"), self)
         output_browse.clicked.connect(self._choose_output)
         output_row = QHBoxLayout()
         output_row.addWidget(self._output)
         output_row.addWidget(output_browse)
-        output_form.addRow("Output", output_row)
+        output_form.addRow(tr("Output"), output_row)
 
+        # Every item carries its value in the item's data, and every read of a choice goes
+        # through ``currentData``: the label is translatable, the value is not. These two
+        # values are written into a config file and a ``--format`` flag, so a combo whose
+        # display had been translated while the reads still used ``currentText`` would hand
+        # the CLI Chinese where it required English -- with every widget on screen looking
+        # perfectly normal.
         self._format = QComboBox(self)
-        self._format.addItems(["csv", "jsonl", "parquet"])
-        output_form.addRow("Format", self._format)
+        for value in FORMATS:
+            self._format.addItem(tr(value), value)
+        output_form.addRow(tr("Format"), self._format)
 
         self._on_error = QComboBox(self)
-        self._on_error.addItems(["abort", "quarantine"])
+        for value in ON_ERROR:
+            self._on_error.addItem(tr(value), value)
         self._on_error.setToolTip(
-            "What to do when one record cannot be extracted. Opening a config sets this to "
-            "what that config says; changing it afterwards overrides the config, and the "
-            "line underneath says so."
+            tr(
+                "What to do when one record cannot be extracted. Opening a config sets this to "
+                "what that config says; changing it afterwards overrides the config, and the "
+                "line underneath says so."
+            )
         )
         self._on_error.currentIndexChanged.connect(self._note_the_override)
-        output_form.addRow("On error", self._on_error)
+        output_form.addRow(tr("On error"), self._on_error)
 
         self._on_error_notice = QLabel("", self)
         self._on_error_notice.setWordWrap(True)
@@ -199,19 +213,23 @@ class ExecutionPanel(QWidget):
 
         self._checkpoint = QSpinBox(self)
         self._checkpoint.setRange(0, 100_000_000)
-        self._checkpoint.setSpecialValueText("off")
+        self._checkpoint.setSpecialValueText(tr("off"))
         self._checkpoint.setValue(0)
         self._checkpoint.setToolTip(
-            "Commit the output in parts of this many records, so an interrupted run can "
-            "be continued. Off writes a single file."
+            tr(
+                "Commit the output in parts of this many records, so an interrupted run can "
+                "be continued. Off writes a single file."
+            )
         )
-        output_form.addRow("Checkpoint every", self._checkpoint)
+        output_form.addRow(tr("Checkpoint every"), self._checkpoint)
 
-        self._resume = QCheckBox("Resume the run already in that directory", self)
+        self._resume = QCheckBox(tr("Resume the run already in that directory"), self)
         self._resume.setToolTip(
-            "Continue the run a checkpoint was made from. The tool refuses if the source "
-            "or the config has changed since, and says exactly what differs. Never turned "
-            "on for you: resuming is a decision, not a default."
+            tr(
+                "Continue the run a checkpoint was made from. The tool refuses if the source "
+                "or the config has changed since, and says exactly what differs. Never turned "
+                "on for you: resuming is a decision, not a default."
+            )
         )
         self._resume.setEnabled(False)
         output_form.addRow(self._resume)
@@ -230,13 +248,13 @@ class ExecutionPanel(QWidget):
         self._output.editingFinished.connect(self._note_resumable)
         self._checkpoint.valueChanged.connect(self._note_resumable)
 
-        progress_box = QGroupBox("Progress", self)
+        progress_box = QGroupBox(tr("Progress"), self)
         progress_layout = QVBoxLayout(progress_box)
         self._bar = QProgressBar(self)
         self._bar.setRange(0, 100)
         self._bar.setValue(0)
         progress_layout.addWidget(self._bar)
-        self._counts = QLabel("not started", self)
+        self._counts = QLabel(tr("not started"), self)
         self._counts.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         # A failure puts the CLI's own message here, and those are full of Windows paths --
         # no spaces, so wrapping alone does not help and the label's width hint grew until
@@ -248,9 +266,9 @@ class ExecutionPanel(QWidget):
         layout.addWidget(progress_box)
 
         buttons = QHBoxLayout()
-        self._start = QPushButton("Start", self)
+        self._start = QPushButton(tr("Start"), self)
         self._start.clicked.connect(self.start)
-        self._cancel = QPushButton("Cancel", self)
+        self._cancel = QPushButton(tr("Cancel"), self)
         self._cancel.clicked.connect(self.cancel)
         self._cancel.setEnabled(False)
         buttons.addStretch(1)
@@ -280,7 +298,9 @@ class ExecutionPanel(QWidget):
         if not original:
             raise ConfigError("no config chosen")
         path = Path(original)
-        wanted = self._on_error.currentText()
+        # The value, never the label: this string goes into a config file, and the label
+        # is the part that translation is allowed to change.
+        wanted = self._on_error.currentData()
 
         loaded = load_config(path)
         if loaded.on_error.value == wanted:
@@ -348,7 +368,7 @@ class ExecutionPanel(QWidget):
 
     def choose_source(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(
-            self, "Choose a document", "", "XML documents (*.xml *.xml.gz);;All files (*)"
+            self, tr("Choose a document"), "", tr("XML documents (*.xml *.xml.gz);;All files (*)")
         )
         if chosen:
             self._source.setText(chosen)
@@ -356,14 +376,14 @@ class ExecutionPanel(QWidget):
 
     def _choose_config(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(
-            self, "Choose a config", "", "Configs (*.yaml *.yml *.json);;All files (*)"
+            self, tr("Choose a config"), "", tr("Configs (*.yaml *.yml *.json);;All files (*)")
         )
         if chosen:
             self.set_config(chosen)
 
     def _choose_output(self) -> None:
         chosen, _ = QFileDialog.getSaveFileName(
-            self, "Where to write", "", "CSV (*.csv);;JSON Lines (*.jsonl);;Parquet (*.parquet)"
+            self, tr("Where to write"), "", "CSV (*.csv);;JSON Lines (*.jsonl);;Parquet (*.parquet)"
         )
         if chosen:
             self._output.setText(chosen)
@@ -420,7 +440,9 @@ class ExecutionPanel(QWidget):
             "-o",
             self._output.text().strip(),
             "--format",
-            self._format.currentText(),
+            # The value, not the label: this is a CLI argument, and a translated label
+            # would hand the CLI a language it refuses.
+            self._format.currentData(),
             "--progress",
         ]
         if self._batch_size is not None:
@@ -449,7 +471,7 @@ class ExecutionPanel(QWidget):
         An unknown value is ignored rather than raised -- a preference file is a cache of
         choices, and refusing to open because one went stale helps nobody.
         """
-        index = self._format.findText(output_format)
+        index = self._format.findData(output_format)
         if index >= 0:
             self._format.setCurrentIndex(index)
         # Through the helper, and deliberately **not** recorded as the user's choice: a
@@ -467,7 +489,7 @@ class ExecutionPanel(QWidget):
         if self._process is not None and self._process.is_running:
             return
         if not self._source.text().strip() or not self._output.text().strip():
-            self._counts.setText("choose an input and an output first")
+            self._counts.setText(tr("choose an input and an output first"))
             return
         try:
             args = self.build_args()
@@ -480,7 +502,7 @@ class ExecutionPanel(QWidget):
             #
             # The project's own loader produced this, so it already says what is wrong and
             # where. Rewording it here would only make it less precise.
-            self._counts.setText(f"config error: {exc}")
+            self._counts.setText(tr("config error: {}").format(exc))
             # And said again where the user can act on it. The panel that owns the run is
             # not the place to explain a config -- there is no run to explain.
             self.start_failed.emit(str(exc), type(exc).__name__)
@@ -491,7 +513,7 @@ class ExecutionPanel(QWidget):
         self._finished = False
         self._bar.setValue(0)
         self._bar.setRange(0, 100)
-        self._counts.setText("starting…")
+        self._counts.setText(tr("starting…"))
         self._start.setEnabled(False)
         self._cancel.setEnabled(True)
 
@@ -518,7 +540,7 @@ class ExecutionPanel(QWidget):
         if self._process is None:
             return
         self._cancel.setEnabled(False)
-        self._counts.setText("cancelling…")
+        self._counts.setText(tr("cancelling…"))
         self._process.kill()
 
     def is_running(self) -> bool:
@@ -598,11 +620,12 @@ class ExecutionPanel(QWidget):
             self._resume_notice.setVisible(False)
             return
         parts = len(unfinished.parts)
-        noun = "part" if parts == 1 else "parts"
+        noun = tr("part") if parts == 1 else tr("parts")
         self._resume_notice.setText(
-            f"There is an unfinished run in this directory: {parts:,} {noun}, "
-            f"{unfinished.rows:,} rows, {unfinished.records_consumed:,} records consumed. "
-            "Tick Resume to continue it, or choose another directory."
+            tr(
+                "There is an unfinished run in this directory: {} {}, {} rows, {} records "
+                "consumed. Tick Resume to continue it, or choose another directory."
+            ).format(f"{parts:,}", noun, f"{unfinished.rows:,}", f"{unfinished.records_consumed:,}")
         )
         self._resume_notice.setVisible(True)
 
@@ -620,7 +643,7 @@ class ExecutionPanel(QWidget):
         So the notice is re-derived here explicitly rather than left to the signal. A policy
         this combo does not offer is ignored, as everywhere else.
         """
-        index = self._on_error.findText(policy)
+        index = self._on_error.findData(policy)
         if index < 0:
             return False
         self._on_error.setCurrentIndex(index)
@@ -639,7 +662,7 @@ class ExecutionPanel(QWidget):
         list is the set of things the CLI accepts here, and inventing an entry would put
         something in front of the user that the run would then reject.
         """
-        index = self._on_error.findText(policy)
+        index = self._on_error.findData(policy)
         if index < 0:
             return
         # Recorded, not just applied. This is what lets `_note_the_override` say "your
@@ -734,13 +757,13 @@ class ExecutionPanel(QWidget):
         to stay quiet: a notice on every run is a notice nobody reads.
         """
         asked = self._configs_on_error()
-        effective = self._on_error.currentText()
+        effective = self._on_error.currentData()
         chosen = self._user_on_error
 
         if asked is not None and asked != effective:
             # (1) The dropdown wins over the file, and the user can see both values.
             self._on_error_notice.setText(
-                f"the run will use {effective}, overriding the config's {asked}"
+                tr("the run will use {}, overriding the config's {}").format(effective, asked)
             )
             self._on_error_notice.setVisible(True)
             return
@@ -749,14 +772,18 @@ class ExecutionPanel(QWidget):
             if asked is not None:
                 # (2) The file won, and the user's own choice is what got dropped.
                 self._on_error_notice.setText(
-                    f"this config sets on_error to {effective}, replacing your choice of {chosen}"
+                    tr("this config sets on_error to {}, replacing your choice of {}").format(
+                        effective, chosen
+                    )
                 )
             else:
                 # (3) No config is open, so nothing here can be blamed on one. The wording
                 # is deliberately about the effect and the earlier choice, and says nothing
                 # about where the current value came from -- because we do not know.
                 self._on_error_notice.setText(
-                    f"the run will use {effective}, not your earlier choice of {chosen}"
+                    tr("the run will use {}, not your earlier choice of {}").format(
+                        effective, chosen
+                    )
                 )
             self._on_error_notice.setVisible(True)
             return
@@ -768,8 +795,10 @@ class ExecutionPanel(QWidget):
         return self._on_error_notice.text()
 
     def current_on_error(self) -> str:
-        """The policy the next run will use. What the dropdown currently says."""
-        return self._on_error.currentText()
+        """The policy the next run will use. What the dropdown currently holds."""
+        # ``currentData``, not ``currentText``: this is the value a config will receive, and
+        # the label above it is the part translation is allowed to rewrite.
+        return self._on_error.currentData()
 
     def user_on_error(self) -> str | None:
         """What the user last chose, or ``None`` if they have not chosen one.
@@ -815,15 +844,15 @@ class ExecutionPanel(QWidget):
             self._bar.setRange(0, 100)
             self._bar.setValue(int(fraction * 100))
 
-        parts = [f"{progress.records:,} records"]
+        parts = [tr("{} records").format(f"{progress.records:,}")]
         if self._total is not None:
-            parts[0] += f" of {self._total:,}"
-        parts.append(f"{progress.rows:,} rows")
+            parts[0] += tr(" of {}").format(f"{self._total:,}")
+        parts.append(tr("{} rows").format(f"{progress.rows:,}"))
         if progress.rejected:
-            parts.append(f"{progress.rejected:,} rejected")
+            parts.append(tr("{} rejected").format(f"{progress.rejected:,}"))
         parts.append(f"{progress.elapsed_seconds:.1f}s")
         if progress.part is not None:
-            parts.append(f"part {progress.part}")
+            parts.append(tr("part {}").format(progress.part))
         eta = format_eta(progress.elapsed_seconds, progress.records, self._total)
         if eta:
             parts.append(eta)
@@ -836,21 +865,23 @@ class ExecutionPanel(QWidget):
         if run is None:
             return
         if run.killed:
-            self._counts.setText("cancelled")
+            self._counts.setText(tr("cancelled"))
             return
         if run.ok:
             rows = (run.summary or {}).get("rows")
             self._bar.setRange(0, 100)
             self._bar.setValue(100)
             self._counts.setText(
-                f"finished — {rows:,} rows" if isinstance(rows, int) else "finished"
+                tr("finished — {} rows").format(f"{rows:,}")
+                if isinstance(rows, int)
+                else tr("finished")
             )
             return
         # The CLI's own messages are written to be read, so the first one is what the
         # user sees; the rest are kept for the detail view that comes with the error
         # panel, and are never discarded.
         first = next((line for line in run.warnings if line.strip()), None)
-        self._counts.setText(first or f"failed with exit code {run.exit_code}")
+        self._counts.setText(first or tr("failed with exit code {}").format(run.exit_code))
 
 
 def read_report_rows(report_path: Path) -> int | None:

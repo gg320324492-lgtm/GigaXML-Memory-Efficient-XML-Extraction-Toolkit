@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.run_report import LeftBehind, RunOutcome
 
 __all__ = ["ResultPanel"]
@@ -58,9 +59,14 @@ def format_elapsed(seconds: float | None) -> str | None:
 
 
 def count_of(number: int, noun: str) -> str:
-    """``1 row`` but ``2 rows``. The numbers here are small and the wrong plural is the
-    first thing a reader notices."""
-    return f"{number:,} {noun}" if number == 1 else f"{number:,} {noun}s"
+    """``1 row`` but ``2 rows``, in the interface's language.
+
+    The template is looked up whole -- ``{} row`` against ``{} rows`` -- because Chinese
+    has no plural and the English plural is an ``s``: one lookup per language instead of
+    a rule that has to know both grammars.
+    """
+    key = f"{{}} {noun}s" if number != 1 else f"{{}} {noun}"
+    return tr(key).format(f"{number:,}")
 
 
 class ResultPanel(QWidget):
@@ -112,15 +118,15 @@ class ResultPanel(QWidget):
         self._left = None
         self._unfinished = False
         if outcome is None:
-            self._headline.setText("finished")
-            self._detail.setText("the tool wrote no summary for this run")
+            self._headline.setText(tr("finished"))
+            self._detail.setText(tr("the tool wrote no summary for this run"))
             self._path.setText("")
             self._copy.setVisible(False)
         else:
-            self._headline.setText(f"finished — {count_of(outcome.rows, 'row')}")
+            self._headline.setText(tr("finished — {}").format(count_of(outcome.rows, "row")))
             self._detail.setText("\n".join(self._summary_lines(outcome)))
             self._path.setText(str(outcome.output) if outcome.output else "")
-            self._copy.setText("Copy the output path")
+            self._copy.setText(tr("Copy the output path"))
             self._copy.setVisible(outcome.output is not None)
         self._headline.setStyleSheet("")
         self.setVisible(True)
@@ -136,23 +142,23 @@ class ResultPanel(QWidget):
         self._outcome = None
         self._left = left
         self._unfinished = True
-        self._headline.setText("this run did not finish")
+        self._headline.setText(tr("this run did not finish"))
         self._headline.setStyleSheet(_WARNING_COLOUR)
         if left is None:
             self._detail.setText(
-                "It was stopped before it wrote anything, so there is no output to look at."
+                tr("It was stopped before it wrote anything, so there is no output to look at.")
             )
             self._path.setText("")
             self._copy.setVisible(False)
         elif left.is_directory:
             self._detail.setText(_parts_detail(left))
             self._path.setText(str(left.path))
-            self._copy.setText("Copy the path of the parts directory")
+            self._copy.setText(tr("Copy the path of the parts directory"))
             self._copy.setVisible(True)
         else:
             self._detail.setText(_unfinished_detail(left.path))
             self._path.setText(str(left.path))
-            self._copy.setText("Copy the path of the partial output")
+            self._copy.setText(tr("Copy the path of the partial output"))
             self._copy.setVisible(True)
         self.setVisible(True)
 
@@ -202,17 +208,20 @@ class ResultPanel(QWidget):
         lines: list[str] = []
         if outcome.rejected:
             # First, because a run that skipped records still reports success and this
-            # count is the only thing that says otherwise.
-            where = f" — see {outcome.rejected_path}" if outcome.rejected_path else ""
-            verb = "was" if outcome.rejected == 1 else "were"
-            lines.append(f"{count_of(outcome.rejected, 'record')} {verb} rejected{where}")
+            # count is the only thing that says otherwise. Phrased as a label rather than
+            # a sentence so the count needs no verb: a template with "was"/"were" in it
+            # would have to know both languages' agreement rules for no gain.
+            where = (
+                f" — {tr('see {}').format(outcome.rejected_path)}" if outcome.rejected_path else ""
+            )
+            lines.append(tr("rejected: {}").format(count_of(outcome.rejected, "record")) + where)
         else:
-            lines.append("nothing was rejected")
+            lines.append(tr("nothing was rejected"))
         elapsed = format_elapsed(outcome.elapsed_seconds)
         if elapsed is not None:
-            lines.append(f"took {elapsed}")
+            lines.append(tr("took {}").format(elapsed))
         if outcome.format:
-            lines.append(f"written as {outcome.format}")
+            lines.append(tr("written as {}").format(outcome.format))
         return lines
 
     def _on_copy(self) -> None:
@@ -234,16 +243,20 @@ def _parts_detail(left: LeftBehind) -> str:
     one thing that makes a stopped checkpointed run recoverable.
     """
     if left.recorded_parts is None:
-        return (
+        return tr(
             "The parts it finished are in this directory. It is not the whole run: the "
             "manifest does not say the source was consumed."
         )
-    rows = "" if left.recorded_rows is None else f", {left.recorded_rows:,} rows in them"
-    return (
-        f"The {count_of(left.recorded_parts, 'part')} it finished are in this directory"
-        f"{rows}. It is not the whole run: the manifest says the source was not fully "
-        "consumed, so what is here is where it got to."
+    rows = (
+        ""
+        if left.recorded_rows is None
+        else tr(", {} rows in them").format(f"{left.recorded_rows:,}")
     )
+    return tr(
+        "The {} it finished are in this directory{}. It is not the whole run: the "
+        "manifest says the source was not fully consumed, so what is here is where it "
+        "got to."
+    ).format(count_of(left.recorded_parts, "part"), rows)
 
 
 def _unfinished_detail(partial: Path) -> str:
@@ -257,15 +270,15 @@ def _unfinished_detail(partial: Path) -> str:
     """
     size = _size_of(partial)
     if size == 0:
-        return (
+        return tr(
             "The output file was started, but the run was stopped before anything was "
             "written to it. The target still holds whatever it held before."
         )
-    return (
-        f"Part of the output is on disk, {_human_size(size)} of it. It is not the finished "
-        "file: the run never got to the point of putting it in place, so the target still "
-        "holds whatever it held before. Nothing else on the disk was changed."
-    )
+    return tr(
+        "Part of the output is on disk, {} of it. It is not the finished file: the run "
+        "never got to the point of putting it in place, so the target still holds "
+        "whatever it held before. Nothing else on the disk was changed."
+    ).format(_human_size(size))
 
 
 def _size_of(path: Path) -> int:
@@ -278,7 +291,7 @@ def _size_of(path: Path) -> int:
 def _human_size(size: int) -> str:
     """A byte count in the unit that reads best."""
     if size < 1024:
-        return f"{size} bytes"
+        return tr("{} bytes").format(size)
     if size < 1024 * 1024:
         return f"{size / 1024:.0f} KB"
     return f"{size / (1024 * 1024):.1f} MB"

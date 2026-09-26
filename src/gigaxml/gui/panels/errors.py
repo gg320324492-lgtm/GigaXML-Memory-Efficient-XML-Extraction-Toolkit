@@ -31,12 +31,14 @@ from gigaxml.gui.error_advice import (
     KIND_QUARANTINE,
     Advice,
 )
+from gigaxml.gui.i18n import tr
 from gigaxml.gui.run_report import RunFailure
 
 __all__ = ["ErrorPanel", "action_label_for"]
 
 #: What the action button says, per advice kind. The wording is the whole point of the
-#: button: "Learn more" would be a button that does nothing useful.
+#: button: "Learn more" would be a button that does nothing useful. The kind is the value
+#: the window switches on and is never translated; the label is display and is.
 _ACTION_LABELS: dict[str, str] = {
     KIND_QUARANTINE: "Set on_error to quarantine",
     KIND_FREE_TARGET: "Copy the path of the complete output",
@@ -72,7 +74,7 @@ def _wrapping_label(parent: QWidget) -> QLabel:
 
 def action_label_for(advice: Advice) -> str:
     """The button's text for this advice."""
-    return _ACTION_LABELS.get(advice.kind, _FALLBACK_LABEL)
+    return tr(_ACTION_LABELS.get(advice.kind, _FALLBACK_LABEL))
 
 
 class ErrorPanel(QWidget):
@@ -113,7 +115,7 @@ class ErrorPanel(QWidget):
         buttons.addWidget(self._action)
 
         self._toggle = QToolButton(self)
-        self._toggle.setText("Show the raw output")
+        self._toggle.setText(tr("Show the raw output"))
         self._toggle.setCheckable(True)
         self._toggle.setArrowType(Qt.ArrowType.RightArrow)
         self._toggle.toggled.connect(self._on_toggled)
@@ -137,9 +139,9 @@ class ErrorPanel(QWidget):
         self._headline.setText(self._advice.headline)
         self._detail.setText(self._advice.detail)
         self._kind_line.setText(
-            "the tool did not say what kind of failure this was"
+            tr("the tool did not say what kind of failure this was")
             if failure.error_type is None
-            else f"the tool called this: {failure.error_type}"
+            else tr("the tool called this: {}").format(failure.error_type)
         )
         self._message.setText(failure.message)
         self._stderr.setPlainText("\n".join(stderr_lines))
@@ -200,7 +202,7 @@ class ErrorPanel(QWidget):
     def _on_toggled(self, checked: bool) -> None:
         self._stderr.setVisible(checked)
         self._toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
-        self._toggle.setText("Hide the raw output" if checked else "Show the raw output")
+        self._toggle.setText(tr("Hide the raw output") if checked else tr("Show the raw output"))
 
 
 def advice_for_failure(failure: RunFailure) -> Advice:
