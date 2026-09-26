@@ -11,7 +11,15 @@ from tests._interpreter import gigaxml_script
 
 
 def test_version_is_exposed() -> None:
-    assert gigaxml.__version__ == "0.1.0"
+    """The package answers with a version string of the shape a release carries.
+
+    The exact value is deliberately not pinned here: that is ``test_version.py``'s job,
+    and pinning it in a second file would make a release a two-place edit -- the very
+    accident the version tests exist to prevent.
+    """
+    parts = gigaxml.__version__.split(".")
+    assert len(parts) == 3
+    assert all(part.isdigit() for part in parts)
 
 
 @pytest.mark.parametrize("command", ["extract", "inspect", "sample", "generate"])

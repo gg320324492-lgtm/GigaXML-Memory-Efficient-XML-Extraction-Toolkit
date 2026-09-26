@@ -85,6 +85,7 @@ jobs:
         # which is a different failure from the one a missing module produces, and the
         # one this step exists to prevent.
         if: runner.os == 'Linux'
+        shell: bash
         run: |
           sudo apt-get update
           # One line, deliberately. A trailing backslash is a newline in bash and a literal
@@ -96,6 +97,10 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libfontconfig1 libfreetype6 libx11-6 libx11-xcb1 libglib2.0-0 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libxcb1 libxcb-util1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1
 
       - name: Install
+        # Declared, not inherited. Every step in this file whose script is bash says so;
+        # the four that did not were "safe" only because of which runner they happened to
+        # land on, which is a coincidence wearing a contract's clothes.
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           # Everything the pipeline itself needs comes from one declaration. PyInstaller
@@ -113,6 +118,7 @@ jobs:
         # A committed icon is a deliberate change from the original "generate it here" step:
         # generating meant every runner had to have Pillow before it could do anything, and
         # Pillow was exactly the dependency that was missing.
+        shell: bash
         run: |
           # Two steps rather than `check || generate`. The single line with `||` worked on
           # every runner it had run on, which is exactly the problem: it had only ever run
@@ -124,6 +130,7 @@ jobs:
           python -m tools.make_version_info
 
       - name: Build
+        shell: bash
         run: |
           python -m PyInstaller packaging/gigaxml.spec --noconfirm --distpath dist --workpath build
 
@@ -386,10 +393,16 @@ jobs:
           cd artifacts
           # zips for Windows, tar.gz for the other two: a tar.gz on Windows loses
           # the executable bit, and a zip on Unix is the wrong habit to teach.
+          #
+          # Every archive is written beside the directory it is made from, and the release
+          # step below globs this same directory. They used to land two levels up, in the
+          # repository root, while the glob pointed here -- and this step has never run on
+          # a real tag, so nothing would have failed until the first release silently
+          # attached nothing. Written here and globbed here, the two cannot disagree.
           for dir in */; do
             name="${dir%/}"
             if [ "$name" = "gigaxml-gui-windows" ]; then
-              (cd "$name" && zip -r "../../$name.zip" . -x '*.DS_Store')
+              (cd "$name" && zip -r "../$name.zip" . -x '*.DS_Store')
             else
               tar -czf "$name.tar.gz" -C "$name" .
             fi
@@ -399,7 +412,49 @@ jobs:
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*/*.zip
-          fail_on_unmatched_files: false
+          # Both shapes, named: the Windows onedir ships as a zip, the other two as
+          # tar.gz. The glob used to be artifacts/*/*.zip, which matches neither the
+          # tar.gz files nor, once the paths above are right, anything in this tree.
+          files: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
+          fail_on_unmatched_files: true
           body_path: packaging/RELEASE_NOTES.md
           draft: false
+
+  # The package on PyPI, for `pip install gigaxml` and `pip install "gigaxml[gui]"`.
+  #
+  # Trusted publishing, not a token: this job holds `id-token: write` and exchanges a
+  # short-lived OIDC identity for upload credentials, so there is no long-lived secret in
+  # this repository to leak and nothing to rotate. It requires a one-time *pending
+  # publisher* on pypi.org naming this repository, this workflow file and the
+  # environment below -- if that is not configured, this job fails at upload with a
+  # message from PyPI saying exactly that, and nothing partial is published.
+  #
+  # Gated on a real tag, for the same reason the release job is: a hand-triggered dry run
+  # builds everything and publishes nothing. The sdist and wheel are built here rather
+  # than downloaded from the build job because they are platform-independent -- one job,
+  # one interpreter, nothing about the three-platform matrix applies to them.
+  pypi-publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build the sdist and the wheel
+        shell: bash
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

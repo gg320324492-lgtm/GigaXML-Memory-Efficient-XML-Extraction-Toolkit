@@ -39,7 +39,20 @@ fields:
 
 ## Install
 
-Source only for now:
+From PyPI:
+
+```bash
+pip install gigaxml           # the command-line toolkit
+pip install "gigaxml[gui]"    # and the desktop application (pulls PySide6: 640 MiB installed, measured on Windows)
+```
+
+Parquet output needs the `parquet` extra (`pip install "gigaxml[parquet]"`); CSV and JSONL
+do not. The desktop application is also packaged per platform — an unsigned Windows
+build, an Apple Silicon `.dmg` and an x86_64 AppImage — under
+[Releases](https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases);
+its release notes say what each build runs on and what the unsigned warnings mean.
+
+From source, if you would rather:
 
 ```bash
 git clone https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit.git
@@ -48,8 +61,7 @@ python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # POSIX: .venv/bin/python
 ```
 
-`lxml` and `pyyaml` are the only required dependencies. Parquet output needs the
-`parquet` extra (`pip install -e ".[parquet]"`); CSV and JSONL do not.
+`lxml` and `pyyaml` are the only required dependencies.
 
 ## Thirty seconds
 
@@ -164,6 +176,13 @@ every import so that two deltas are comparable.
   an already-complete manifest on a 403 MiB source, the command takes about 770 ms: some
   400 ms of that is interpreter startup and imports, and most of the rest is hashing the
   source to confirm it has not changed. The part check itself is about 10 ms.
+- **One field value that is itself gigabytes is held in memory.** Records stream, but
+  there is no streaming mode for a single value, because there is nothing to stream it
+  into.
+- **`sample` reads what it samples into memory.** It is meant for looking at a file, not
+  for measuring one.
+- **Input is a local file, never a URL.** A `.xml.gz` file is fine; a document that lives
+  behind HTTP is out of scope.
 
 ## Development
 

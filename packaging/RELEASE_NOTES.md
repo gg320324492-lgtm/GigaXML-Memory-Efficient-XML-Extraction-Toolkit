@@ -1,6 +1,8 @@
 # GigaXML
 
-Memory-efficient XML extraction for very large files, as a desktop application.
+A production-oriented toolkit for profiling, validating and extracting structured data
+from multi-gigabyte XML files with bounded memory — as a command line and as a desktop
+application.
 
 ```bash
 pip install gigaxml
@@ -16,10 +18,10 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 0.1.0 — the version in this build's file properties, and the one the package reports |
+| **Version** | 0.9.0 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
-| **Signed** | **No — read [Unsigned binaries](#unsigned-binaries) before you install** |
+| **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
 
 - A desktop window over a streaming extractor: the window never holds your document, and
   the extraction runs in a child process, so the interface stays responsive on a file
@@ -29,6 +31,30 @@ The window does the same things: **GigaXML**
 - Batch runs one document per child process, in order, and can be stopped.
 - `inspect`, `extract`, `sample` and `generate` are all available on the command line, and
   the packaged application is the same program.
+- The interface runs in English or Chinese, chosen in the settings panel — see
+  [Languages](#languages).
+
+---
+
+## What the numbers are
+
+Measured on the machine this was built on, with the six-field configuration below — a
+nested path and a type conversion, the shapes a real config uses:
+
+| | |
+|---|---|
+| **Input** | 4142.72 MiB, 11,915,264 records |
+| **Time** | 284.67 s (14.6 MiB/s, 41,856 records/s) |
+| **Peak memory** | 33.703 MiB |
+| **Increase over the post-import baseline** | **5.059 MiB** |
+
+The same run at 1 GiB added 5.105 MiB — four times the input, and the increase did not
+move. Something accumulating per record would have made the four-gigabyte figure four
+times the one-gigabyte figure; it is flat to within a percent. A one-field configuration
+runs at 37 MiB/s and is quoted nowhere as the headline: it is the easiest member of this
+family to run, and quoting it alone would overstate what a real config costs. Every
+number here comes from a script in the repository; see the README's Benchmarks section
+for how to reproduce them.
 
 ---
 
@@ -41,9 +67,6 @@ The window does the same things: **GigaXML**
    nothing is written outside that folder except the settings file under
    `%APPDATA%\GigaXML`.
 3. Run `gigaxml-gui\gigaxml-gui.exe`.
-
-There is also an installer, `GigaXML-Setup-x.y.z.exe`, which adds a Start-menu shortcut and
-an uninstaller. **It is unsigned** — see below.
 
 ### macOS
 
@@ -70,14 +93,36 @@ pip install "gigaxml[gui]"   # and the window
 gigaxml-gui
 ```
 
+Parquet output needs the `parquet` extra: `pip install "gigaxml[parquet]"`. CSV and JSONL
+need nothing beyond the base install.
+
 ---
 
 ## Unsigned binaries
 
-**These builds are not code-signed.** Nothing here is signed, and no claim in this release
-should be read as saying otherwise. This is stated plainly because the alternative — a
-download that trips a security warning with no explanation — is how people end up
-disabling protection entirely, which is a worse outcome than a warning they understand.
+**These builds carry no Developer ID certificate.** That is what "unsigned" means here,
+and it is worth being precise, because there are two different kinds of signature on a
+macOS binary and only one of them is missing:
+
+- **Ad-hoc signing — present.** Apple Silicon refuses to execute a binary with no
+  signature at all: the kernel kills it before your double-click reaches it. Every
+  executable here is ad-hoc signed, automatically, as part of the build. This layer is
+  what makes the application *run*; it is not something you configure, check, or need to
+  think about, and the packaged application has been started and exercised on an
+  Apple Silicon machine exactly so that this claim is measured rather than assumed.
+- **Developer ID signing and notarisation — absent.** This is the layer that vouches for
+  *who* built the binary, and it is what Gatekeeper and SmartScreen ask about. It needs a
+  paid certificate and a real organisation behind it. This is the layer this release does
+  not have, and every warning below is that absence speaking, not a broken download.
+
+The distinction is stated because the two failures look nothing alike and read as each
+other: a missing ad-hoc signature is "the application cannot be opened" with no way
+forward, while a missing Developer ID is a warning with a stated workaround. What you
+will see here is the second kind. The application runs.
+
+This is stated plainly because the alternative — a download that trips a security warning
+with no explanation — is how people end up disabling protection entirely, which is a
+worse outcome than a warning they understand.
 
 ### What will happen, and what it means
 
@@ -137,6 +182,27 @@ here rather than assumed.
 
 ---
 
+## Languages
+
+The interface runs in **English and Chinese**. The language is chosen in the settings
+panel and remembered between launches; changing it takes effect the next time the
+application starts, and the panel says so beside the control. English is the default.
+
+Two kinds of text are deliberately **not** translated, in either direction:
+
+- **Command-line output stays English** — `--help`, error messages, the `--progress`
+  stream. It is written for people reading terminals and scripts, it is asserted on by
+  the project's own tests, and changing it would be changing a stable contract for
+  decoration.
+- **Field-panel validation messages stay English.** What that panel shows you is the
+  sentence the configuration library itself produced, unedited — rewording it in the
+  window would be the first step towards a second implementation of the same rules, and
+  the two would drift apart the first time either changed. So under a Chinese interface
+  you may well see a Chinese panel carrying an English validation sentence. That is
+  deliberate, not a missed translation.
+
+---
+
 ## What the window needs
 
 Nothing, once installed. The application carries its own extractor, so it does not need
@@ -149,7 +215,9 @@ For a source install:
 pip install "gigaxml[gui]"
 ```
 
-which pulls PySide6 (about 150–200 MB, the bulk of the download).
+which pulls PySide6 — a large dependency: 640 MiB installed on Windows for this release,
+measured, and the packaged downloads above are about 200 MiB apiece, which the packaging
+pipeline measures rather than estimates.
 
 ---
 
@@ -172,23 +240,59 @@ the ones a sampling approach misses.
 
 ---
 
+## Non-goals
+
+Copied from the README, where this list lives; the two are kept identical on purpose.
+
+- No full XPath 3.1 — XPath is evaluated only inside a single record subtree.
+- No arbitrary byte-offset seek/resume — XML byte offsets are not a safe parse boundary.
+- No AI/ML structure inference — confidence values are deterministic statistics.
+- No real customer data — everything runs on synthetic, reproducible datasets.
+- No fabricated benchmarks — every performance claim comes from a runnable script.
+
+---
+
 ## Known limitations
 
-- **Unsigned**, as above. This is the only one that affects installation.
-- **The macOS build is Apple Silicon only.** An Intel Mac cannot run it at all — this is
-  stated up front in [Installing](#macos) rather than discovered at first launch.
-- **The window is English only.** There is no translation yet.
-- **Very large single fields are held in memory.** Records stream, but one field value that
-  is itself gigabytes will still exhaust memory — there is no streaming mode for a single
-  value, because there is nothing to stream it into.
-- **`sample` reads what it samples into memory.** It is meant for looking at a file, not for
-  measuring one.
-- **Parquet output needs `pyarrow`**, which is not installed by default: `pip install
-  "gigaxml[parquet]"`.
-- **Checkpoint resume is per-part.** A resumed run re-reads from the last committed part,
-  so it can be slower than an uninterrupted run over the same data.
-- **No streaming input.** The document must be a local file; a `.xml.gz` file is fine, a
-  URL is not.
+Copied from the README, where this list lives; the two are kept identical on purpose.
+
+- **`--resume` re-parses and skips; it does not seek.** XML cannot be re-entered
+  mid-stream, so continuing a run means reading from the beginning and discarding the
+  records already accounted for. On a 403 MB file that costs 8.7 s against 17.1 s to
+  extract, so resuming saves roughly half of what you had already done. `--help` says so
+  too.
+- **`inspect` is slower than `extract`** — 17.3 MiB/s against 38.2 MiB/s on the same
+  1 GB file. It maintains several parallel bookkeeping stacks per element. It is also the
+  command you run once on a document, not in a loop.
+- **An inferred config treats containers as leaves.** `--generate-config` proposes direct
+  children and attributes; a field whose element has children of its own is read as
+  concatenated text, so `<tags><tag>a</tag><tag>b</tag></tags>` becomes `ab`. Nested
+  paths (`manufacturer/name`) have to be written by hand, as the generated comments say.
+- **Types are inferred from a sample**, and `decimal` is never inferred. If a field is
+  money, set `type: decimal` yourself — `float` cannot represent 49.90 exactly.
+- **Parsing limits are not configurable.** Entities are never expanded, the network is
+  never touched, and no DTD is loaded; documents nested deeper than 256 levels, carrying a
+  single text node over about 10 MB, or amplified by entities are refused rather than
+  partially read. These are deliberate and there are no flags to turn them off.
+- **`--checkpoint-every` verifies the parts on disk before resuming**, which costs one
+  pass over the output at about **200 MiB/s** — about 10 ms for 2 MiB of CSV, negligible for
+  Parquet, whose row counts come from file metadata. It grows with the size of the
+  output, not the input. Measured by `benchmarks/bench_resident.py`.
+- **A resume is dominated by starting the process, not by checking the output.** Against
+  an already-complete manifest on a 403 MiB source, the command takes about 770 ms: some
+  400 ms of that is interpreter startup and imports, and most of the rest is hashing the
+  source to confirm it has not changed. The part check itself is about 10 ms.
+- **One field value that is itself gigabytes is held in memory.** Records stream, but
+  there is no streaming mode for a single value, because there is nothing to stream it
+  into.
+- **`sample` reads what it samples into memory.** It is meant for looking at a file, not
+  for measuring one.
+- **Input is a local file, never a URL.** A `.xml.gz` file is fine; a document that lives
+  behind HTTP is out of scope.
+
+Two more, about the packaged builds specifically, are stated in their own sections above:
+there is no Developer ID certificate ([Unsigned binaries](#unsigned-binaries)), and the
+macOS build is Apple Silicon only ([Installing](#macos)).
 
 ---
 

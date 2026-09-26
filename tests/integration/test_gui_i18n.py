@@ -227,3 +227,25 @@ def test_the_settings_whitelist_and_the_translator_agree_on_what_exists() -> Non
         i18n.set_language(language)
         assert i18n.current_language() == language, language
     i18n.set_language("en")
+
+
+def test_field_type_names_are_identifiers_so_the_combo_may_skip_data_separation() -> None:
+    """The one combo allowed to read ``currentText`` is safe only while this holds.
+
+    The field-type editor displays each type as itself in every language, so its display
+    and its value are the same string by construction -- the exemption the panel's comment
+    documents. That argument is true exactly while every name is a plain identifier: the
+    moment a type is named ``0.5`` or ``not-a-type``, the display starts carrying
+    punctuation a translated label could be confused with, and the combo has to become an
+    addItem-with-data one like the execution panel's. This test is the guardrail that
+    turns the exemption from a coincidence into a contract.
+    """
+    from gigaxml.gui.field_rows import FIELD_TYPE_NAMES
+
+    assert FIELD_TYPE_NAMES, "the exemption guards a non-empty list"
+    for name in FIELD_TYPE_NAMES:
+        assert name.isidentifier(), (
+            f"{name!r} is not an identifier: the type combo's display-equals-value "
+            "exemption no longer holds, and it must switch to item data like the "
+            "execution panel's combos"
+        )
