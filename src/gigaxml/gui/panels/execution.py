@@ -452,9 +452,10 @@ class ExecutionPanel(QWidget):
         index = self._format.findText(output_format)
         if index >= 0:
             self._format.setCurrentIndex(index)
-        index = self._on_error.findText(on_error)
-        if index >= 0:
-            self._on_error.setCurrentIndex(index)
+        # Through the helper, and deliberately **not** recorded as the user's choice: a
+        # stored preference is the program handing a value back, and the notice must not
+        # claim the user picked it.
+        self._set_on_error_index(on_error)
         self._batch_size = batch_size
 
     def set_defaults_source(self, batch_size: int) -> None:
@@ -605,6 +606,30 @@ class ExecutionPanel(QWidget):
         )
         self._resume_notice.setVisible(True)
 
+    def _set_on_error_index(self, policy: str) -> bool:
+        """Point the dropdown at ``policy`` and re-derive the notice. Returns whether it moved.
+
+        **All three places that move this dropdown go through here**, and the reason is a
+        Qt trap this project has now hit twice. ``currentIndexChanged`` fires only when the
+        index actually *changes*, so ``setCurrentIndex(0)`` on a combo already sitting at 0
+        does nothing at all -- and with it, the notice that hangs off that signal keeps
+        saying whatever it last said. Measured: the user sets the dropdown back to the
+        config's value, all three values now agree, and the notice still claimed the choice
+        had been replaced, naming the value the user had just agreed to.
+
+        So the notice is re-derived here explicitly rather than left to the signal. A policy
+        this combo does not offer is ignored, as everywhere else.
+        """
+        index = self._on_error.findText(policy)
+        if index < 0:
+            return False
+        self._on_error.setCurrentIndex(index)
+        # Deliberately unconditional, including when the index did not move: the notice
+        # depends on more than the index, and the whole point is that it can be stale while
+        # the index is steady.
+        self._note_the_override()
+        return True
+
     def set_on_error(self, policy: str) -> None:
         """Choose the on-error policy, as if the user had picked it.
 
@@ -615,13 +640,17 @@ class ExecutionPanel(QWidget):
         something in front of the user that the run would then reject.
         """
         index = self._on_error.findText(policy)
-        if index >= 0:
-            # Recorded, not just applied. This is what lets `_note_the_override` say "your
-            # choice was replaced" rather than only noticing when the two *current* values
-            # disagree -- which, after a config has already overwritten the dropdown, they
-            # never do. See `_user_on_error`.
-            self._user_on_error = policy
-            self._on_error.setCurrentIndex(index)
+        if index < 0:
+            return
+        # Recorded, not just applied. This is what lets `_note_the_override` say "your
+        # choice was replaced" rather than only noticing when the two *current* values
+        # disagree -- which, after a config has already overwritten the dropdown, they
+        # never do. See `_user_on_error`.
+        self._user_on_error = policy
+        # Through the helper, which re-derives the notice. Left to the signal this would be
+        # missed whenever the value did not change, leaving a notice that says a choice was
+        # replaced when the user had just agreed to it. See `_set_on_error_index`.
+        self._set_on_error_index(policy)
 
     # -- following the config's policy -------------------------------------
 
@@ -645,14 +674,20 @@ class ExecutionPanel(QWidget):
         user's own choice, because it is also the way the error panel's advice arrives. A
         policy arriving from a file is the opposite: it is the file talking, and recording it
         as the user's choice would erase the very thing the notice needs to report. The
-        dropdown is therefore set directly, leaving ``_user_on_error`` alone.
+        dropdown is therefore moved through :meth:`_set_on_error_index`, which leaves
+        ``_user_on_error`` alone and re-derives the notice.
+
+        The final ``_note_the_override()`` is outside the ``if`` on purpose: **clearing the
+        config field also has to re-derive it.** A file that cannot be read asks for
+        nothing, and the dropdown does not move -- but the notice attached to it may still be
+        describing that file. That is the case where the panel used to keep saying "this
+        config sets..." after the config was gone.
         """
         asked = self._configs_on_error()
         if asked is not None:
-            index = self._on_error.findText(asked)
-            if index >= 0:
-                self._on_error.setCurrentIndex(index)
-        self._note_the_override()
+            self._set_on_error_index(asked)
+        else:
+            self._note_the_override()
 
     def _configs_on_error(self) -> str | None:
         """The ``on_error`` the chosen config asks for, or ``None`` if it cannot be read.
@@ -672,24 +707,28 @@ class ExecutionPanel(QWidget):
     def _note_the_override(self) -> None:
         """Say which policy the run will actually use, whenever that is not obvious.
 
-        **Two different things are reported here, and only one of them used to be.**
+        **One rule governs every branch below: the notice may only assert what is
+        certainly true.** That sounds like a style preference and is not -- it is the whole
+        fix. An earlier version of this method reported "this config sets on_error to X,
+        replacing your choice of Y" whenever the remembered choice differed from the
+        dropdown, **without checking whether a config was even open**. Measured, with the
+        config field cleared: the panel still said "this config sets...", about a config that
+        no longer existed. A user reading that goes looking for a file to go and fix.
 
-        The first is the one this was written for: the dropdown disagrees with the config,
-        so the run will use the dropdown's value instead of the file's. Measured: dropdown
-        ``quarantine``, config ``abort``, and the line under them reads "the run will use
-        quarantine, overriding the config's abort".
+        So the notice names the *cause* only when there is a cause to name, and otherwise
+        states the effect, which stays true either way.
 
-        The second is the one that was missing, and it is the more annoying of the two,
-        because it is **silent in exactly the case where the user acted**. The user picks
-        ``quarantine``; they then open a config that says ``abort``; ``set_config`` follows
-        the file, as it should, and the dropdown now reads ``abort``. Comparing the two
-        current values finds them equal, so the notice is empty -- and the user's choice has
-        disappeared with nothing said. Measured: ``notice == ""``, ``noticed == False``, and
-        a run that quarantines nothing.
+        Three situations, and they are genuinely different:
 
-        So the user's own choice is remembered separately in ``_user_on_error`` and compared
-        against what will actually happen. When the two differ, the notice says so in those
-        words.
+        1. **The dropdown disagrees with the file.** The run will use the dropdown's value.
+            Both values are on screen, so this needs no explanation beyond naming them.
+        2. **A config changed the dropdown away from the user's choice.** The run will use
+            the file's value, and the user's own choice is what got dropped. Saying only
+            "the run will use abort" would be true and useless -- the dropdown already says
+            abort. What the user cannot see is that *they* had said something else.
+        3. **The dropdown differs from the remembered choice and no config explains it.**
+            Something else moved it -- the settings panel, a saved preference. The config is
+            not the story here and must not be named as if it were.
 
         Silent when nothing is in dispute, which is the ordinary case and the one that has
         to stay quiet: a notice on every run is a notice nobody reads.
@@ -699,7 +738,7 @@ class ExecutionPanel(QWidget):
         chosen = self._user_on_error
 
         if asked is not None and asked != effective:
-            # The dropdown wins over the file, and the user can see both values.
+            # (1) The dropdown wins over the file, and the user can see both values.
             self._on_error_notice.setText(
                 f"the run will use {effective}, overriding the config's {asked}"
             )
@@ -707,12 +746,18 @@ class ExecutionPanel(QWidget):
             return
 
         if chosen is not None and chosen != effective:
-            # The file won, and the user's own choice is what got dropped. Saying only
-            # "the run will use abort" would be true and useless -- the dropdown already
-            # says abort. What the user cannot see is that *they* had said something else.
-            self._on_error_notice.setText(
-                f"this config sets on_error to {effective}, replacing your choice of {chosen}"
-            )
+            if asked is not None:
+                # (2) The file won, and the user's own choice is what got dropped.
+                self._on_error_notice.setText(
+                    f"this config sets on_error to {effective}, replacing your choice of {chosen}"
+                )
+            else:
+                # (3) No config is open, so nothing here can be blamed on one. The wording
+                # is deliberately about the effect and the earlier choice, and says nothing
+                # about where the current value came from -- because we do not know.
+                self._on_error_notice.setText(
+                    f"the run will use {effective}, not your earlier choice of {chosen}"
+                )
             self._on_error_notice.setVisible(True)
             return
 

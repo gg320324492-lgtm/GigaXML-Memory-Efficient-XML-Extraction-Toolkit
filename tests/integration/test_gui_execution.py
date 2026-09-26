@@ -290,3 +290,140 @@ def test_an_unreadable_config_leaves_the_choice_alone(
     assert panel.user_on_error() == "quarantine"
     assert panel.current_on_error() == "quarantine", "an unreadable file changed the policy"
     assert not panel.is_override_noted()
+
+
+# --- 8A-9 residual: a notice that has stopped being true -------------------------
+#
+# The first round of 8A-9 was tested only on the side where the notice should *appear*. The
+# defect that survived it is entirely on the other side: a notice that outlives the fact it
+# was reporting. It had two causes, and only one of them was a missing call.
+#
+# The Qt trap: ``currentIndexChanged`` fires only when the index *changes*, so setting the
+# dropdown to the value it already holds emits nothing, and the notice hangs off that signal.
+# Measured at the time: 0 firings, and the notice unchanged. The second cause was in the
+# wording, which named a config whether or not one was open.
+
+
+def test_the_notice_goes_away_when_the_user_agrees_with_the_config(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """The case the first round never tested: all three values agree, and it must be silent.
+
+    Setting the dropdown back to what the config asked for does not move the combo -- it is
+    already there -- so the signal never fires and the notice kept claiming the user's
+    choice had been replaced, naming ``quarantine`` while the user was looking at ``abort``.
+    """
+    config = write(tmp_path / "plain.yaml", PLAIN)
+    panel = window.execution_panel()
+    panel.set_on_error("quarantine")
+    panel.set_config(config)
+    assert panel.is_override_noted(), "precondition: the notice is showing"
+
+    panel.set_on_error("abort")  # the user agrees with the config
+
+    assert panel.current_on_error() == "abort"
+    assert panel.user_on_error() == "abort"
+    assert not panel.is_override_noted(), "the notice outlived the disagreement"
+    assert panel.on_error_notice_text() == "", panel.on_error_notice_text()
+
+
+def test_clearing_the_config_stops_claiming_a_config_says_anything(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """No config open means nothing may be blamed on a config.
+
+    Measured before the fix: the config field cleared, and the panel still said "this config
+    sets on_error to abort" -- about a file that was no longer there. A user reading that
+    goes looking for a file to go and fix.
+    """
+    config = write(tmp_path / "plain.yaml", PLAIN)
+    panel = window.execution_panel()
+    panel.set_on_error("quarantine")
+    panel.set_config(config)
+    assert panel.is_override_noted(), "precondition: the notice is showing"
+
+    panel.set_config("")
+
+    notice = panel.on_error_notice_text()
+    assert "this config" not in notice, f"the panel still blames a config that is gone: {notice}"
+    # What it may still say is the effect and the earlier choice, which remain true.
+    assert "abort" in notice and "quarantine" in notice, notice
+
+
+def test_a_value_pushed_in_without_a_config_is_reported_without_blaming_a_file(
+    window: MainWindow,
+) -> None:
+    """The settings panel pushing a value is a real change, and must be reported.
+
+    But with no config open there is nothing to point at, so the notice states the effect and
+    names the earlier choice without saying where the current value came from -- because the
+    panel does not know.
+    """
+    panel = window.execution_panel()
+    panel.set_on_error("quarantine")
+    assert not panel.is_override_noted(), "precondition: nothing to report yet"
+
+    panel.apply_defaults(output_format="csv", on_error="abort", batch_size=1000)
+
+    notice = panel.on_error_notice_text()
+    assert panel.is_override_noted(), "a pushed-in value went unreported"
+    assert "config" not in notice, f"blames a config that was never opened: {notice}"
+    assert "abort" in notice and "quarantine" in notice, notice
+
+
+def test_a_pushed_in_value_is_not_remembered_as_the_user_having_chosen_it(
+    window: MainWindow,
+) -> None:
+    """A stored preference is the program handing a value back, not a choice.
+
+    If it were recorded as the user's own, a later config would report replacing a choice
+    they never made -- the 8A-9 failure reached by a different route, and invisible from
+    whichever test looked at the dropdown alone.
+    """
+    panel = window.execution_panel()
+    panel.set_on_error("quarantine")
+
+    panel.apply_defaults(output_format="csv", on_error="abort", batch_size=1000)
+
+    assert panel.user_on_error() == "quarantine", (
+        "a pushed-in preference was recorded as the user's own choice"
+    )
+
+
+def test_a_value_pushed_in_for_a_user_who_never_chose_says_nothing(
+    window: MainWindow,
+) -> None:
+    """There is no earlier choice to report, so there is nothing to say.
+
+    A panel that invented one would put "not your earlier choice of ..." in front of a user
+    who has no earlier choice -- the same failure as a stale notice, in a fresh window.
+    """
+    panel = window.execution_panel()
+
+    panel.apply_defaults(output_format="csv", on_error="abort", batch_size=1000)
+
+    assert panel.user_on_error() is None
+    assert not panel.is_override_noted()
+    assert panel.on_error_notice_text() == ""
+
+
+def test_the_notice_is_re_derived_even_when_the_value_does_not_change(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """The general case behind all of the above: same value, different facts.
+
+    Every way this panel moves the dropdown goes through one helper, because the signal only
+    fires on a change and the notice depends on more than the dropdown. Re-deriving from a
+    state the panel can actually be in -- the value steady, the config gone -- is the only
+    thing that catches it.
+    """
+    config = write(tmp_path / "quarantine.yaml", QUARANTINING)
+    panel = window.execution_panel()
+    panel.set_config(config)
+    assert not panel.is_override_noted(), "precondition: agreeing is quiet"
+
+    # The dropdown does not move here, so nothing about the widgets changes either.
+    panel.set_config(config)
+
+    assert panel.current_on_error() == "quarantine"
+    assert not panel.is_override_noted()
