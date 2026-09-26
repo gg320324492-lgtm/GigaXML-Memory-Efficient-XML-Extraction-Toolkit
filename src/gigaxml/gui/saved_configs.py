@@ -16,16 +16,17 @@ answer to "is this config valid", and the two would drift.
 
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import re
 
-from gigaxml.gui.recent_files import RecentFiles
+from gigaxml.gui.recent_files import RecentEntry, RecentFiles
 
 __all__ = [
-    "SAVED_DIR_NAME",
     "RECENT_CONFIGS_NAME",
-    "SavedConfig",
+    "SAVED_DIR_NAME",
     "ConfigLibrary",
+    "SavedConfig",
 ]
 
 #: Where saved configs live under the state directory.
@@ -123,10 +124,8 @@ class ConfigLibrary:
     def remove(self, name: str) -> None:
         """Forget a saved config. The user asking is the only reason to delete a file."""
         target = self._dir / f"{pathlib.Path(name).stem}.yaml"
-        try:
+        with contextlib.suppress(OSError):
             target.unlink()
-        except OSError:
-            pass
 
     # -- recent ------------------------------------------------------------
 
@@ -138,7 +137,7 @@ class ConfigLibrary:
         """Recently opened configs, most recent first, without touching the filesystem."""
         return self._recent.paths()
 
-    def recent_entries(self):
+    def recent_entries(self) -> tuple[RecentEntry, ...]:
         """Recently opened configs, each marked with whether it is still there."""
         return self._recent.entries()
 

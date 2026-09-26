@@ -21,16 +21,16 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 __all__ = [
-    "JobState",
-    "Job",
     "BatchQueue",
+    "Job",
+    "JobState",
 ]
 
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     """Where a job has got to.
 
     A string enum so the state can go straight into a table cell or a JSON file without a

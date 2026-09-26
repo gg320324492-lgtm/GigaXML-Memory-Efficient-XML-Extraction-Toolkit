@@ -61,7 +61,9 @@ def test_a_failed_job_does_not_stop_the_queue(tmp_path: pathlib.Path) -> None:
     assert queue.next_job() is good
 
 
-def test_the_queue_reports_itself_done_only_when_everything_has_stopped(tmp_path: pathlib.Path) -> None:
+def test_the_queue_reports_itself_done_only_when_everything_has_stopped(
+    tmp_path: pathlib.Path,
+) -> None:
     queue = BatchQueue()
     queue.add(tmp_path / "a.xml", tmp_path / "out-a")
     queue.add(tmp_path / "b.xml", tmp_path / "out-b")
@@ -84,6 +86,7 @@ def test_a_skipped_job_counts_as_stopped(tmp_path: pathlib.Path) -> None:
 
 
 def test_an_empty_queue_is_done(tmp_path: pathlib.Path) -> None:
+    del tmp_path  # an empty queue writes nothing, so no store is needed
     assert BatchQueue().done is True
     assert BatchQueue().next_job() is None
 

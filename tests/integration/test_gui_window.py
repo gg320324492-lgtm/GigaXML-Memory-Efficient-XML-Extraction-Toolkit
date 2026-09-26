@@ -23,9 +23,10 @@ from PySide6.QtCore import QElapsedTimer, QTimer
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
-from gigaxml.gui.main_window import MainWindow
+from gigaxml.gui.main_window import SETTINGS_FILE_NAME, MainWindow
 from gigaxml.gui.panels.execution import ExecutionPanel, read_report_rows
 from gigaxml.gui.progress import Progress
+from gigaxml.gui.settings import SettingsStore
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 
@@ -108,7 +109,18 @@ def test_the_window_opens_with_the_execution_panel(window: MainWindow) -> None:
     """
     labels = [window.tabs().tabText(index) for index in range(window.tabs().count())]
 
-    assert labels == ["Document", "Structure", "Fields", "Preview", "Execute"]
+    # The first five are the workflow: opened, analysed, configured, previewed, extracted.
+    # Batch and Settings sit after it because they are not steps in it -- Batch runs the
+    # same job over several documents, and Settings changes what the job defaults to.
+    assert labels == [
+        "Document",
+        "Structure",
+        "Fields",
+        "Preview",
+        "Execute",
+        "Batch",
+        "Settings",
+    ]
     assert isinstance(window.execution_panel(), ExecutionPanel)
 
 
@@ -441,3 +453,25 @@ def test_a_run_with_no_source_does_not_start(window: MainWindow) -> None:
 
     assert not panel.is_running()
     assert "choose an input" in panel._counts.text()
+
+
+def test_stored_preferences_reach_the_run(app: QApplication, tmp_path: pathlib.Path) -> None:
+    """⑨ is only real if a stored preference lands on the controls that use it.
+
+    A preferences panel that writes a file and changes nothing is a panel that lies. This
+    writes the file the way the panel would, opens a window over the same state directory
+    the way a real run would, and asks what the execution panel is now showing.
+    """
+    del app  # the fixture boots QApplication; the test needs no handle on it
+    state = tmp_path / "state"
+    SettingsStore(state / SETTINGS_FILE_NAME).set(
+        batch_size=250, format="jsonl", on_error="quarantine"
+    )
+
+    window = MainWindow(state_dir=state)
+    panel = window.execution_panel()
+
+    assert panel._format.currentText() == "jsonl"
+    assert panel._on_error.currentText() == "quarantine"
+    assert panel._batch_size == 250
+    window.close()

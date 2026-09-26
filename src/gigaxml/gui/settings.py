@@ -24,9 +24,9 @@ from typing import Any
 
 __all__ = [
     "DEFAULTS",
-    "THEMES",
     "FORMATS",
     "ON_ERROR",
+    "THEMES",
     "Settings",
     "SettingsStore",
 ]
@@ -57,7 +57,7 @@ MIN_BATCH_SIZE = 1
 MAX_BATCH_SIZE = 10_000_000
 
 
-def _coerce(key: str, value: Any) -> Any:
+def _coerce(key: str, value: object) -> object:
     """Turn a stored value into one this module is willing to hand out.
 
     A stored file is not trusted: it may have been edited by hand, written by an older
@@ -156,7 +156,7 @@ class SettingsStore:
         temporary.write_text(json.dumps(settings.as_dict(), indent=2), encoding="utf-8")
         temporary.replace(self._store)
 
-    def set(self, **changes: Any) -> Settings:
+    def set(self, **changes: object) -> Settings:
         """Write ``changes`` on top of what is stored, and return the result.
 
         The write is a read-modify-write of the whole file rather than a patch, because

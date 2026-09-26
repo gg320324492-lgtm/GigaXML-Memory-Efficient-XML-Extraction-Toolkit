@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -39,12 +40,14 @@ from gigaxml.gui.error_advice import (
     KIND_NAMESPACES,
     KIND_QUARANTINE,
 )
+from gigaxml.gui.panels.batch import BatchPanel
 from gigaxml.gui.panels.document import DocumentPanel
 from gigaxml.gui.panels.errors import ErrorPanel
 from gigaxml.gui.panels.execution import ExecutionPanel
 from gigaxml.gui.panels.fields import FieldConfigPanel
 from gigaxml.gui.panels.preview import PreviewPanel
 from gigaxml.gui.panels.results import ResultPanel
+from gigaxml.gui.panels.settings import SettingsPanel
 from gigaxml.gui.panels.structure import StructurePanel
 from gigaxml.gui.recent_files import RecentFiles, default_state_dir
 from gigaxml.gui.run_report import (
@@ -53,9 +56,12 @@ from gigaxml.gui.run_report import (
     read_failure,
     read_outcome,
 )
+from gigaxml.gui.saved_configs import ConfigLibrary
+from gigaxml.gui.settings import Settings, SettingsStore
 
 #: The file the recent-documents list lives in, under the state directory.
 RECENT_FILES_NAME = "recent_files.json"
+SETTINGS_FILE_NAME = "settings.json"
 
 
 class MainWindow(QMainWindow):
@@ -67,16 +73,22 @@ class MainWindow(QMainWindow):
         self.resize(1100, 720)
         self.setAcceptDrops(True)
 
-        self._recent = RecentFiles((state_dir or default_state_dir()) / RECENT_FILES_NAME)
+        self._state_dir = state_dir or default_state_dir()
+        self._recent = RecentFiles(self._state_dir / RECENT_FILES_NAME)
+        # ⑨ 与 ⑧ 的持久化落点,和「最近文件」同一个目录、同一个注入方式.
+        self._settings_store = SettingsStore(self._state_dir / SETTINGS_FILE_NAME)
+        self._config_library = ConfigLibrary(self._state_dir)
 
         self._tabs = QTabWidget(self)
         self._documents = DocumentPanel(self._recent, self)
         self._structure = StructurePanel(self)
-        self._fields = FieldConfigPanel(self)
+        self._fields = FieldConfigPanel(self, library=self._config_library)
         self._preview = PreviewPanel(self)
         self._execution = ExecutionPanel(self)
         self._results = ResultPanel(self)
         self._errors = ErrorPanel(self)
+        self._batch = BatchPanel(self)
+        self._settings = SettingsPanel(self._settings_store, self)
         # The two outcome panels live with the run rather than in tabs of their own: they
         # are about the thing that just happened in this tab, and both are empty until
         # something happens. They are mutually exclusive, and the window is what keeps them
@@ -92,11 +104,16 @@ class MainWindow(QMainWindow):
             (self._fields, "Fields"),
             (self._preview, "Preview"),
             (self._execute_tab, "Execute"),
+            (self._batch, "Batch"),
+            (self._settings, "Settings"),
         ):
             self._tabs.addTab(panel, title)
         self.setCentralWidget(self._tabs)
 
         self._connect_panels()
+        # ⑨ 设置要「真的生效」:窗口一开就把存下来的偏好应用到该应用的地方.
+        self._settings.settings_changed.connect(self._apply_settings)
+        self._apply_settings(self._settings_store.read())
         self._build_menus()
         self.statusBar().showMessage("ready")
 
@@ -339,6 +356,54 @@ class MainWindow(QMainWindow):
         """As above. One implementation, reached from two widgets."""
         self._documents.dropEvent(event)
 
+    # -- preferences -----------------------------------------------------
+
+    def _apply_settings(self, settings: Settings) -> None:
+        """Put the stored preferences where they are actually used.
+
+        A preferences panel that writes a file and changes nothing is a panel that lies,
+        so this is the part that makes ⑨ real: the combo boxes on the execution panel get
+        the stored format and error policy, and the batch size is what the next run asks
+        the CLI for.
+        """
+        self._execution.apply_defaults(
+            output_format=settings.format,
+            on_error=settings.on_error,
+            batch_size=settings.batch_size,
+        )
+        self._apply_theme(settings.theme)
+
+    @staticmethod
+    def _apply_theme(theme: str) -> None:
+        """Switch the palette, or ask the platform what the platform is doing.
+
+        ``system`` is the default and means "leave it alone": a window that ignores the
+        rest of the desktop is a window people turn off.
+        """
+        if theme == "system":
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        if not hasattr(app, "setStyle") or not hasattr(app, "styleHints"):
+            return
+        try:
+            app.styleHints().setColorScheme(
+                Qt.ColorScheme.Dark if theme == "dark" else Qt.ColorScheme.Light
+            )
+        except (AttributeError, RuntimeError):
+            # An older Qt without ColorScheme, or one that will not let us switch. Either
+            # way the answer is to carry on, not to stop the window opening.
+            return
+
+    def settings_store(self) -> SettingsStore:
+        """Where the preferences live. Exposed so a test can point them somewhere else."""
+        return self._settings_store
+
+    def config_library(self) -> ConfigLibrary:
+        """The saved-configuration library. Exposed for the same reason."""
+        return self._config_library
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt naming)
         """Let the panels give up what is not the user's to clean up.
 
@@ -354,6 +419,8 @@ class MainWindow(QMainWindow):
         self._preview.shutdown()
         self._structure.shutdown()
         self._fields.shutdown()
+        self._batch.shutdown()
+        self._settings.shutdown()
         super().closeEvent(event)
 
     # -- accessors used by tests and by later substeps ---------------------

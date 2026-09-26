@@ -31,6 +31,7 @@ from gigaxml.gui.settings import (
     MIN_BATCH_SIZE,
     ON_ERROR,
     THEMES,
+    Settings,
     SettingsStore,
 )
 
@@ -105,7 +106,20 @@ class SettingsPanel(QWidget):
 
     # -- reading -----------------------------------------------------------
 
-    def current(self):
+    def _theme_value(self) -> str:
+        """The stored theme name for whatever the combo is showing.
+
+        The stored value is what the rest of the application switches on, so the labels
+        are a display concern -- which means going back from a label to a value is a
+        lookup, and one that has to fall back rather than fail.
+        """
+        shown = self._theme.currentText()
+        for name, label in _THEME_LABELS.items():
+            if label == shown:
+                return name
+        return "system"
+
+    def current(self) -> Settings:
         """The settings as the controls currently describe them."""
         return self._store.read()
 
@@ -130,9 +144,7 @@ class SettingsPanel(QWidget):
                 batch_size=self._batch_size.value(),
                 format=self._format.currentText(),
                 on_error=self._on_error.currentText(),
-                theme=next(
-                    name for name, label in _THEME_LABELS.items() if label == self._theme.currentText()
-                ),
+                theme=self._theme_value(),
             )
         finally:
             self._loading = False

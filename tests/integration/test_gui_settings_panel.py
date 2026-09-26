@@ -34,6 +34,7 @@ def store(tmp_path: pathlib.Path) -> SettingsStore:
 
 
 def test_the_panel_opens_on_the_stored_values(app: QApplication, store: SettingsStore) -> None:
+    del app  # the fixture boots QApplication; the test needs no handle on it
     store.set(batch_size=250, theme="dark")
 
     panel = SettingsPanel(store)
@@ -44,6 +45,7 @@ def test_the_panel_opens_on_the_stored_values(app: QApplication, store: Settings
 
 def test_editing_a_control_writes_immediately(app: QApplication, store: SettingsStore) -> None:
     """No Save button, so an edit that only lived in the widget would be lost on quit."""
+    del app  # the fixture boots QApplication; the test needs no handle on it
     panel = SettingsPanel(store)
 
     panel._batch_size.setValue(777)
@@ -53,6 +55,7 @@ def test_editing_a_control_writes_immediately(app: QApplication, store: Settings
 
 def test_editing_reaches_disk_not_just_the_widget(app: QApplication, store: SettingsStore) -> None:
     """Read back through a *second* store: the widget agreeing with itself proves nothing."""
+    del app  # the fixture boots QApplication; the test needs no handle on it
     panel = SettingsPanel(store)
 
     panel._theme.setCurrentText("Dark")
@@ -62,6 +65,7 @@ def test_editing_reaches_disk_not_just_the_widget(app: QApplication, store: Sett
 
 def test_a_change_is_announced(app: QApplication, store: SettingsStore) -> None:
     """A window that wants to re-theme itself listens rather than polling the file."""
+    del app  # the fixture boots QApplication; the test needs no handle on it
     panel = SettingsPanel(store)
     seen: list[object] = []
     panel.settings_changed.connect(seen.append)
@@ -74,6 +78,7 @@ def test_a_change_is_announced(app: QApplication, store: SettingsStore) -> None:
 
 def test_shutdown_is_idempotent(app: QApplication, store: SettingsStore) -> None:
     """The panel contract: called twice, it does nothing the second time."""
+    del app  # the fixture boots QApplication; the test needs no handle on it
     panel = SettingsPanel(store)
 
     panel.shutdown()
@@ -84,6 +89,7 @@ def test_shutdown_is_idempotent(app: QApplication, store: SettingsStore) -> None
 
 def test_the_panel_says_where_the_file_is(app: QApplication, store: SettingsStore) -> None:
     """A preference the user cannot find is a preference they cannot back up or delete."""
+    del app  # the fixture boots QApplication; the test needs no handle on it
     panel = SettingsPanel(store)
 
     assert str(store.store) in panel._where.text()

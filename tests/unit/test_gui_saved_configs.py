@@ -51,7 +51,9 @@ def test_names_are_sorted_so_a_menu_does_not_reorder_itself(tmp_path: pathlib.Pa
     "bad",
     ["", "   ", ".", "..", "a/b", "a\\b", "with:colon", "star*", "pipe|"],
 )
-def test_a_name_that_would_escape_the_directory_is_refused(tmp_path: pathlib.Path, bad: str) -> None:
+def test_a_name_that_would_escape_the_directory_is_refused(
+    tmp_path: pathlib.Path, bad: str
+) -> None:
     """A name with a separator in it is a path, and accepting it writes outside the folder.
 
     Refused here rather than at the filesystem so the caller can say why, and so nothing is
@@ -65,7 +67,10 @@ def test_a_name_that_would_escape_the_directory_is_refused(tmp_path: pathlib.Pat
 
 @pytest.mark.parametrize("good", ["catalogue", "my project", "配置", "v1.2", "a_b-c"])
 def test_a_name_that_is_a_name_is_accepted(tmp_path: pathlib.Path, good: str) -> None:
-    """Spaces, dots, dashes and non-ASCII are names. Only separators and control characters are not."""
+    """Spaces, dots, dashes and non-ASCII are names.
+
+    Only separators and control characters are not.
+    """
     library = ConfigLibrary(tmp_path)
 
     library.save(good, CONFIG)

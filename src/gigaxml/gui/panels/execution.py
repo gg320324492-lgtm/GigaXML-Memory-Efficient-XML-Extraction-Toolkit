@@ -108,6 +108,7 @@ class ExecutionPanel(QWidget):
         self._run_result: RunResult | None = None
         self._finished = False
         self._total: int | None = None
+        self._batch_size: int | None = None
         self._probe: CliProcess | None = None
         #: The temporary config the last ``effective_config()`` wrote, if it wrote one.
         self._effective_config: Path | None = None
@@ -419,6 +420,8 @@ class ExecutionPanel(QWidget):
             self._format.currentText(),
             "--progress",
         ]
+        if self._batch_size is not None:
+            args += ["--batch-size", str(self._batch_size)]
         every = self._checkpoint.value()
         if every > 0:
             args += ["--checkpoint-every", str(every)]
@@ -427,6 +430,33 @@ class ExecutionPanel(QWidget):
         if every > 0 and self._resume.isChecked():
             args.append("--resume")
         return args
+
+    def apply_defaults(
+        self,
+        *,
+        output_format: str,
+        on_error: str,
+        batch_size: int,
+    ) -> None:
+        """Take the stored preferences into the controls that use them.
+
+        ⑨ says a preference has to reach the run, not just the file. This is how: the two
+        combo boxes are set, and the batch size is kept for :meth:`build_args`.
+
+        An unknown value is ignored rather than raised -- a preference file is a cache of
+        choices, and refusing to open because one went stale helps nobody.
+        """
+        index = self._format.findText(output_format)
+        if index >= 0:
+            self._format.setCurrentIndex(index)
+        index = self._on_error.findText(on_error)
+        if index >= 0:
+            self._on_error.setCurrentIndex(index)
+        self._batch_size = batch_size
+
+    def set_defaults_source(self, batch_size: int) -> None:
+        """Set just the batch size. Kept separate so a caller need not know the rest."""
+        self._batch_size = batch_size
 
     def start(self) -> None:
         """Launch the extraction. Returns as soon as the child is started."""

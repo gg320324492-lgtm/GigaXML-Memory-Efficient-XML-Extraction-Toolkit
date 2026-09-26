@@ -20,6 +20,7 @@ own sentence, unedited, including its own name for the table.
 from __future__ import annotations
 
 import json
+import pathlib
 from pathlib import Path
 
 import yaml
@@ -56,6 +57,7 @@ from gigaxml.gui.sampling import (
     generate_config_args,
     make_run_directory,
 )
+from gigaxml.gui.saved_configs import ConfigLibrary, SavedConfig
 
 #: How often the UI thread drains what the reader thread collected. Matches the other
 #: panels; the reasoning is in :mod:`gigaxml.gui.panels.execution`.
@@ -78,8 +80,21 @@ class FieldConfigPanel(QWidget):
     #: Emitted whenever the table changes, so the preview knows to re-sample.
     config_changed = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        library: ConfigLibrary | None = None,
+    ) -> None:
+        """Build the table.
+
+        Args:
+            library: where saved configurations are remembered. Injected and optional, so
+                a test may pass a temporary directory -- or nothing, and get a panel that
+                still saves to a path but remembers nothing about it.
+        """
         super().__init__(parent)
+        self._library = library
         self._rows: list[FieldRow] = []
         self._namespaces: dict[str, str] = {}
         self._on_error: str | None = None
@@ -581,6 +596,29 @@ class FieldConfigPanel(QWidget):
         """
         return self.as_config_dict() if self._result is not None and self._result.ok else None
 
+    # -- ⑧ saved configurations, the two halves the panel was missing ----------
+
+    @property
+    def library(self) -> ConfigLibrary | None:
+        """Where saved configurations are remembered, or ``None`` when given none."""
+        return self._library
+
+    def load_config(self, name: str) -> SavedConfig:
+        """Fetch the configuration saved under ``name``.
+
+        Raises:
+            RuntimeError: if this panel was given no library to look in.
+        """
+        if self._library is None:
+            raise RuntimeError("this panel has no configuration library")
+        return self._library.load(name)
+
+    def recent_configs(self) -> tuple[pathlib.Path, ...]:
+        """The recently saved configuration paths, most recent first."""
+        if self._library is None:
+            return ()
+        return self._library.recent()
+
     def choose_save_path(self) -> None:
         chosen, _ = QFileDialog.getSaveFileName(
             self, "Save config", "", "YAML (*.yaml);;JSON (*.json);;All files (*)"
@@ -597,8 +635,11 @@ class FieldConfigPanel(QWidget):
         target = Path(path)
         if target.suffix.lower() == ".json":
             target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            return
-        target.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        else:
+            target.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        # ⑧'s recent list: remember where this was saved. The library keeps the list.
+        if self._library is not None:
+            self._library.note_opened(target)
 
     # -- dragging rows -----------------------------------------------------
 

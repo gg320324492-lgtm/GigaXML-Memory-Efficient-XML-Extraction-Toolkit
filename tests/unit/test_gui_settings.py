@@ -80,7 +80,9 @@ def test_an_unknown_setting_is_refused_not_stored(tmp_path: pathlib.Path) -> Non
         ("theme", "solarized"),
     ],
 )
-def test_a_value_that_is_not_allowed_falls_back(tmp_path: pathlib.Path, key: str, bad: object) -> None:
+def test_a_value_that_is_not_allowed_falls_back(
+    tmp_path: pathlib.Path, key: str, bad: object
+) -> None:
     """Every field is checked, not just cast.
 
     A preferences file is editable by hand and written by older versions, so each value is
