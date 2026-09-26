@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import subprocess
 import sys
 import threading
@@ -88,6 +89,25 @@ _SAMPLE_INTERVAL_S: Final = 0.02
 _RUN_TIMEOUT_S: Final = 1800.0
 
 
+def _resolve_state_dir() -> pathlib.Path:
+    """Where the window keeps its preferences and saved configs.
+
+    **Resolved here rather than read out of the environment**, and that is the whole point:
+    an earlier version of this module read ``os.environ["GIGAXML_GUI_STATE_DIR"]`` directly,
+    so the probe only worked when a *library* caller had set that variable first. Run from
+    the command line -- which is how the evidence file tells a reader to reproduce a number
+    -- it raised ``KeyError`` on the first line of work.
+
+    A measurement whose reproduction command crashes is not evidence of anything, so the
+    state directory is derived from the working directory the caller already passed in, with
+    the environment variable honoured when some caller sets it deliberately.
+    """
+    override = os.environ.get("GIGAXML_GUI_STATE_DIR")
+    if override:
+        return pathlib.Path(override)
+    return pathlib.Path.cwd() / "state"
+
+
 def _build_window() -> tuple[QApplication, MainWindow]:
     """A real ``QApplication`` and a real ``MainWindow``, in this process.
 
@@ -100,7 +120,9 @@ def _build_window() -> tuple[QApplication, MainWindow]:
     from gigaxml.gui.main_window import MainWindow
 
     application = QApplication.instance() or QApplication([])
-    window = MainWindow(state_dir=Path(os.environ["GIGAXML_GUI_STATE_DIR"]))
+    state_dir = _resolve_state_dir()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    window = MainWindow(state_dir=state_dir)
     return application, window
 
 

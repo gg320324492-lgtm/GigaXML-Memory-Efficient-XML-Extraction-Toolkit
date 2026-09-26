@@ -196,3 +196,97 @@ def test_an_empty_path_says_nothing(window: MainWindow) -> None:
     panel.set_config("")
 
     assert not panel.is_override_noted()
+
+
+# --- 8A-9: the direction that was recorded backwards ---------------------------
+#
+# The bug was filed as "the dropdown silently overrides the config's on_error", and that has
+# been handled for some time -- the tests above cover it. The live problem is the reverse
+# and it was invisible from the code, because the two cases look identical until you drive
+# the panel: a config *silently replaces the user's own choice*, and the one widget that
+# could have said so has nothing left to compare.
+
+
+def test_a_config_opened_after_the_user_chose_says_it_replaced_their_choice(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """The measured case: choose ``quarantine``, then open a config that says ``abort``.
+
+    Before the fix this produced ``notice == ""`` and a run that quarantined nothing --
+    the panel followed the file, as it should, and the user's preference was gone without a
+    word. The two *current* values agree at that point, which is exactly why comparing them
+    could never catch it.
+    """
+    config = write(tmp_path / "plain.yaml", PLAIN)
+    panel = window.execution_panel()
+
+    panel.set_on_error("quarantine")
+    assert panel.user_on_error() == "quarantine"
+
+    panel.set_config(config)  # this config asks for abort
+
+    assert panel.current_on_error() == "abort", "the panel should follow the config"
+    assert panel.is_override_noted(), "the user's replaced choice was dropped without a word"
+    notice = panel.on_error_notice_text()
+    assert "abort" in notice, notice
+    assert "quarantine" in notice, notice
+    # The wording has to say *which* way round it happened. "the run will use abort" is
+    # true, and useless: the dropdown already says abort.
+    assert "your choice" in notice.lower(), notice
+
+
+def test_the_remembered_choice_survives_a_config_that_agrees(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """Following the file must not overwrite the memory of what the user wanted.
+
+    Otherwise a second config opened later would compare against the file's value instead of
+    the user's, and the notice would be wrong rather than absent.
+    """
+    config = write(tmp_path / "quarantine.yaml", QUARANTINING)
+    panel = window.execution_panel()
+
+    panel.set_on_error("quarantine")
+    panel.set_config(config)  # agrees with the user
+
+    assert panel.current_on_error() == "quarantine"
+    assert panel.user_on_error() == "quarantine", "the config overwrote the user's choice"
+    assert not panel.is_override_noted(), "agreement should stay quiet"
+
+
+def test_setting_the_policy_through_the_advice_counts_as_the_user_choosing(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """``set_on_error`` is also how the error panel's advice arrives, so it must count.
+
+    Otherwise pressing "set on_error to quarantine" would leave the panel believing the user
+    had never expressed a preference, and a later config would silently take it away with
+    no notice -- the same 8A-9 failure reached by a different route.
+    """
+    config = write(tmp_path / "plain.yaml", PLAIN)
+    panel = window.execution_panel()
+    panel.set_config(config)
+
+    panel.set_on_error("quarantine")  # as the error panel's button does
+
+    assert panel.user_on_error() == "quarantine"
+    assert panel.is_override_noted()
+    assert "quarantine" in panel.on_error_notice_text()
+
+
+def test_an_unreadable_config_leaves_the_choice_alone(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """A config that cannot be read must not cost the user their preference, or crash.
+
+    ``_configs_on_error`` swallows the error on purpose -- the run reports it properly -- so
+    this is the path where "the file said nothing" and "the file said abort" look alike.
+    """
+    panel = window.execution_panel()
+    panel.set_on_error("quarantine")
+
+    panel.set_config(tmp_path / "missing.yaml")
+
+    assert panel.user_on_error() == "quarantine"
+    assert panel.current_on_error() == "quarantine", "an unreadable file changed the policy"
+    assert not panel.is_override_noted()

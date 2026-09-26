@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from gigaxml.gui.batch_queue import BatchQueue
 from gigaxml.gui.cli_process import CliProcess, RunResult
+from gigaxml.gui.settings import FORMATS
 
 __all__ = ["PUMP_INTERVAL_MS", "BatchPanel"]
 
@@ -50,7 +51,15 @@ _COLUMNS = ("Source", "State", "Detail")
 #: The file extension each output format implies, so ``-o`` and ``--format`` agree. The CLI
 #: is explicit about the pair, and a mismatch fails the run for a reason a user cannot act
 #: on from the screen.
-_SUFFIXES = {"csv": ".csv", "jsonl": ".jsonl", "parquet": ".parquet"}
+#:
+#: **Derived from :data:`gigaxml.gui.settings.FORMATS`, and looked up with ``get`` rather
+#: than ``[]``.** Both are load-bearing. The list used to be a literal here *and* another
+#: literal in ``addItems`` *and* a third in ``settings.FORMATS``, which meant "add a format"
+#: was a three-place edit and forgetting one produced a ``KeyError`` on a user's machine
+#: rather than a test failure. The ``get`` is the second half: a stored preference from a
+#: newer version of the settings file must not be able to crash this panel, and the value
+#: that reaches ``build_args`` is a widget's selection, not a validated setting.
+_SUFFIXES = {fmt: f".{fmt}" for fmt in FORMATS}
 
 
 class BatchPanel(QWidget):
@@ -79,7 +88,9 @@ class BatchPanel(QWidget):
         top.addWidget(QLabel("Config", self))
         top.addWidget(self._config, 2)
         self._format = QComboBox(self)
-        self._format.addItems(["csv", "jsonl", "parquet"])
+        # From ``FORMATS`` rather than a literal, so this combo and :data:`_SUFFIXES` cannot
+        # drift apart. See the note there.
+        self._format.addItems(list(FORMATS))
         top.addWidget(QLabel("Format", self))
         top.addWidget(self._format, 1)
         layout.addLayout(top)
@@ -158,7 +169,7 @@ class BatchPanel(QWidget):
             "-c",
             self._config.text().strip(),
             "-o",
-            str(job_output / f"rows{_SUFFIXES[self._format.currentText()]}"),
+            str(job_output / f"rows{_SUFFIXES.get(self._format.currentText(), '.csv')}"),
             "--format",
             self._format.currentText(),
             "--progress",

@@ -24,6 +24,7 @@ a build (A11). It is not run in CI.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -145,7 +146,17 @@ def test_the_probe_runs_as_a_standalone_subprocess(tmp_path: pathlib.Path) -> No
 
     Not ceremony: a measurement that can only be reached through pytest is one nobody can
     point at when a number looks wrong. This is the command the evidence file quotes.
+
+    **``GIGAXML_GUI_STATE_DIR`` is deliberately removed from the child's environment.** An
+    earlier version of this test passed while the probe was broken, and the reason is worth
+    keeping in mind: it went through the library entry point, which sets that variable for
+    its own child, so it exercised a different path from the one the evidence file tells a
+    reader to type. The audit found it by pasting the documented command and getting a
+    ``KeyError``. Stripping the variable is what makes this test the same path.
     """
+    env = {key: value for key, value in os.environ.items() if key != "GIGAXML_GUI_STATE_DIR"}
+    env["QT_QPA_PLATFORM"] = "offscreen"
+
     completed = subprocess.run(
         [
             sys.executable,
@@ -158,9 +169,60 @@ def test_the_probe_runs_as_a_standalone_subprocess(tmp_path: pathlib.Path) -> No
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert completed.returncode == 0, f"probe failed:\n{completed.stderr}"
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     assert payload["mode"] == "gui"
     assert payload["exit_code"] == 0
+    assert payload["rows"] > 0
+
+
+@pytest.mark.performance
+def test_every_gui_probe_runs_standalone(tmp_path: pathlib.Path) -> None:
+    """All three probes, run the way the evidence files say to run them.
+
+    One probe being reproducible is luck; three being reproducible is a property of how they
+    are written. Each is invoked as ``python -m tests.<probe>`` with the state-directory
+    variable stripped, because that is what a reader copying a command out of a document will
+    have in their environment -- which is to say, nothing this project set for them.
+    """
+    source = REPO_ROOT / "data" / "s10.xml"
+    env = {key: value for key, value in os.environ.items() if key != "GIGAXML_GUI_STATE_DIR"}
+    env["QT_QPA_PLATFORM"] = "offscreen"
+
+    probes = {
+        "gui_mem": [sys.executable, "-m", "tests._gui_mem", str(source), str(tmp_path / "mem")],
+        "gui_progress_probe": [
+            sys.executable,
+            "-m",
+            "tests._gui_progress_probe",
+            str(source),
+            str(tmp_path / "progress"),
+        ],
+        "gui_cancel_probe": [
+            sys.executable,
+            "-m",
+            "tests._gui_cancel_probe",
+            str(source),
+            str(tmp_path / "cancel"),
+        ],
+    }
+
+    for name, command in probes.items():
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert completed.returncode == 0, (
+            f"probe {name} failed when run standalone:\n"
+            f"command: {' '.join(command[1:])}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        assert payload, f"probe {name} produced no payload"
     assert payload["rows"] > 0

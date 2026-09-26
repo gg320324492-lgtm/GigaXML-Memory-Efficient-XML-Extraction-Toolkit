@@ -110,6 +110,9 @@ class ExecutionPanel(QWidget):
         self._total: int | None = None
         self._batch_size: int | None = None
         self._probe: CliProcess | None = None
+        #: What the user last chose for ``on_error``, or ``None`` if they have not chosen.
+        #: Distinct from the dropdown's current value on purpose -- see `_note_the_override`.
+        self._user_on_error: str | None = None
         #: The temporary config the last ``effective_config()`` wrote, if it wrote one.
         self._effective_config: Path | None = None
 
@@ -613,6 +616,11 @@ class ExecutionPanel(QWidget):
         """
         index = self._on_error.findText(policy)
         if index >= 0:
+            # Recorded, not just applied. This is what lets `_note_the_override` say "your
+            # choice was replaced" rather than only noticing when the two *current* values
+            # disagree -- which, after a config has already overwritten the dropdown, they
+            # never do. See `_user_on_error`.
+            self._user_on_error = policy
             self._on_error.setCurrentIndex(index)
 
     # -- following the config's policy -------------------------------------
@@ -631,10 +639,19 @@ class ExecutionPanel(QWidget):
         self._sync_on_error_with_config()
 
     def _sync_on_error_with_config(self) -> None:
-        """Take the policy from the config, if there is one to take."""
+        """Take the policy from the config, if there is one to take.
+
+        **Deliberately not :meth:`set_on_error`.** That method records the value as the
+        user's own choice, because it is also the way the error panel's advice arrives. A
+        policy arriving from a file is the opposite: it is the file talking, and recording it
+        as the user's choice would erase the very thing the notice needs to report. The
+        dropdown is therefore set directly, leaving ``_user_on_error`` alone.
+        """
         asked = self._configs_on_error()
         if asked is not None:
-            self.set_on_error(asked)
+            index = self._on_error.findText(asked)
+            if index >= 0:
+                self._on_error.setCurrentIndex(index)
         self._note_the_override()
 
     def _configs_on_error(self) -> str | None:
@@ -653,22 +670,71 @@ class ExecutionPanel(QWidget):
             return None
 
     def _note_the_override(self) -> None:
-        """State the disagreement, naming both values, or say nothing at all.
+        """Say which policy the run will actually use, whenever that is not obvious.
 
-        Silent when they agree, which is the ordinary case and the one that has to stay
-        quiet: a notice on every run is a notice nobody reads.
+        **Two different things are reported here, and only one of them used to be.**
+
+        The first is the one this was written for: the dropdown disagrees with the config,
+        so the run will use the dropdown's value instead of the file's. Measured: dropdown
+        ``quarantine``, config ``abort``, and the line under them reads "the run will use
+        quarantine, overriding the config's abort".
+
+        The second is the one that was missing, and it is the more annoying of the two,
+        because it is **silent in exactly the case where the user acted**. The user picks
+        ``quarantine``; they then open a config that says ``abort``; ``set_config`` follows
+        the file, as it should, and the dropdown now reads ``abort``. Comparing the two
+        current values finds them equal, so the notice is empty -- and the user's choice has
+        disappeared with nothing said. Measured: ``notice == ""``, ``noticed == False``, and
+        a run that quarantines nothing.
+
+        So the user's own choice is remembered separately in ``_user_on_error`` and compared
+        against what will actually happen. When the two differ, the notice says so in those
+        words.
+
+        Silent when nothing is in dispute, which is the ordinary case and the one that has
+        to stay quiet: a notice on every run is a notice nobody reads.
         """
-        wanted = self._on_error.currentText()
         asked = self._configs_on_error()
-        if asked is None or asked == wanted:
-            self._on_error_notice.setText("")
-            self._on_error_notice.setVisible(False)
+        effective = self._on_error.currentText()
+        chosen = self._user_on_error
+
+        if asked is not None and asked != effective:
+            # The dropdown wins over the file, and the user can see both values.
+            self._on_error_notice.setText(
+                f"the run will use {effective}, overriding the config's {asked}"
+            )
+            self._on_error_notice.setVisible(True)
             return
-        self._on_error_notice.setText(f"the run will use {wanted}, overriding the config's {asked}")
-        self._on_error_notice.setVisible(True)
+
+        if chosen is not None and chosen != effective:
+            # The file won, and the user's own choice is what got dropped. Saying only
+            # "the run will use abort" would be true and useless -- the dropdown already
+            # says abort. What the user cannot see is that *they* had said something else.
+            self._on_error_notice.setText(
+                f"this config sets on_error to {effective}, replacing your choice of {chosen}"
+            )
+            self._on_error_notice.setVisible(True)
+            return
+
+        self._on_error_notice.setText("")
+        self._on_error_notice.setVisible(False)
 
     def on_error_notice_text(self) -> str:
         return self._on_error_notice.text()
+
+    def current_on_error(self) -> str:
+        """The policy the next run will use. What the dropdown currently says."""
+        return self._on_error.currentText()
+
+    def user_on_error(self) -> str | None:
+        """What the user last chose, or ``None`` if they have not chosen one.
+
+        Separate from :meth:`current_on_error` because the two genuinely differ: opening a
+        config moves the first without touching the second, and that gap is the whole of
+        8A-9. Exposed so a test can assert on the remembered choice rather than on the
+        dropdown it used to be read from.
+        """
+        return self._user_on_error
 
     def is_override_noted(self) -> bool:
         """Whether the notice is showing. ``isHidden`` rather than ``isVisible``: the panel
