@@ -41,7 +41,7 @@ def test_local_file_entity_is_not_expanded(tmp_path: Path) -> None:
     document.write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<!DOCTYPE catalog [\n"
-        f'  <!ENTITY xxe SYSTEM "file:///{secret.as_posix()}">\n'
+        f'  <!ENTITY xxe SYSTEM "{secret.as_uri()}">\n'
         "]>\n"
         '<catalog generated-by="gigaxml" seed="0">\n'
         "  <products>\n"
