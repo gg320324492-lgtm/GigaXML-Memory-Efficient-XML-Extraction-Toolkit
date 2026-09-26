@@ -47,6 +47,11 @@ PUMP_INTERVAL_MS = 50
 
 _COLUMNS = ("Source", "State", "Detail")
 
+#: The file extension each output format implies, so ``-o`` and ``--format`` agree. The CLI
+#: is explicit about the pair, and a mismatch fails the run for a reason a user cannot act
+#: on from the screen.
+_SUFFIXES = {"csv": ".csv", "jsonl": ".jsonl", "parquet": ".parquet"}
+
 
 class BatchPanel(QWidget):
     """Runs a list of documents, one child process each, in order.
@@ -137,14 +142,23 @@ class BatchPanel(QWidget):
     # -- running -----------------------------------------------------------
 
     def build_args(self, job_source: pathlib.Path, job_output: pathlib.Path) -> list[str]:
-        """The CLI arguments for one job. Public so the mapping is testable without a process."""
+        """The CLI arguments for one job. Public so the mapping is testable without a process.
+
+        ``job_output`` is a **directory** this panel chose, not a file the user picked, and
+        those are not interchangeable. ``-o`` names the file the rows go to, and neither the
+        CLI nor the writers create the parent directory -- measured: pointing ``-o`` at a
+        directory that does not exist fails with ``cannot open ... .tmp for writing`` before
+        a single record is read. The execution panel gets away with passing a user's
+        ``getSaveFileName`` choice straight through because the file dialog has already made
+        the directory by then. Nothing makes this panel's directories, so this one does.
+        """
         return [
             "extract",
             str(job_source),
             "-c",
             self._config.text().strip(),
             "-o",
-            str(job_output),
+            str(job_output / f"rows{_SUFFIXES[self._format.currentText()]}"),
             "--format",
             self._format.currentText(),
             "--progress",
@@ -171,6 +185,12 @@ class BatchPanel(QWidget):
             self._process = None
             self._refresh()
             return
+        # The one place a job's directory is made. ``add_documents`` only records the name;
+        # nothing else creates it, and neither the CLI nor the writers will -- measured: a
+        # missing parent directory fails the run at ``open(... .tmp)`` before a single record
+        # is read, so a batch that skipped this would fail every job for a reason that has
+        # nothing to do with the documents.
+        job.output.mkdir(parents=True, exist_ok=True)
         self._outcome = None
         self._finished_flag = False
         self._refresh()

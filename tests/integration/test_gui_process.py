@@ -26,6 +26,7 @@ from gigaxml.gui.cli_process import (
     CliProcess,
     RunResult,
     cli_command,
+    cli_command_for,
     progress_lines,
     run_to_completion,
 )
@@ -164,6 +165,34 @@ def test_the_command_runs_this_interpreter_as_a_module() -> None:
     assert command[0] == sys.executable
     assert command[1:3] == ["-m", "gigaxml.cli"]
     assert command[3:] == ["extract", "x.xml"]
+
+
+def test_the_frozen_command_drops_the_module_form() -> None:
+    """A frozen build has no interpreter to be a module *of*, so `-m` must not appear.
+
+    **This is the half of Gate 11 G6 that can be checked without a frozen binary.** Whether
+    the built executable starts and what its ``--version`` prints needs a real PyInstaller
+    build on three platforms, which is Phase 8B's job. What *is* checkable here is the
+    command construction, and it is worth checking: a frozen build that still passed
+    ``-m gigaxml.cli`` would hand those arguments to a program that has no module system,
+    and the failure would look like "the packaged app ignores its arguments" rather than
+    like a build error, which is a much harder thing to diagnose from a bug report.
+    """
+    command = cli_command_for("C:/fake/gigaxml-gui.exe", ["extract", "x.xml"])
+
+    assert command == ["C:/fake/gigaxml-gui.exe", "extract", "x.xml"]
+    assert "-m" not in command
+    assert "gigaxml.cli" not in command
+
+    # And the version/help forms, which are the two a smoke test actually calls.
+    assert cli_command_for("C:/fake/gigaxml-gui.exe", ["--version"]) == [
+        "C:/fake/gigaxml-gui.exe",
+        "--version",
+    ]
+    assert cli_command_for("C:/fake/gigaxml-gui.exe", ["--help"]) == [
+        "C:/fake/gigaxml-gui.exe",
+        "--help",
+    ]
 
 
 def test_a_short_run_produces_a_summary_and_no_progress(tmp_path: pathlib.Path) -> None:
