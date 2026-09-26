@@ -50,6 +50,12 @@ dev = [
   "pyarrow>=14.0",
   "rich>=13.0",
   "pyinstaller>=6.10",
+  # Drawn by tools/make_icon, which the packaging pipeline runs on every platform. A
+  # dependency that only a script's author happened to have installed is a build that only
+  # that author's machine can run -- and the icon step is the first thing the pipeline
+  # calls, so its absence fails the build before anything is compiled. Build-time only,
+  # never a runtime one: nothing in `src/` imports it.
+  "pillow>=10.0",
 ]
 
 [project.scripts]

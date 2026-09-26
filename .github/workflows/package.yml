@@ -58,32 +58,45 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libegl1 libgl1 libfontconfig1 libfreetype6 \
-            libx11-6 libx11-xcb1 libglib2.0-0 \
-            libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 \
-            libxcb1 libxcb-util1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 \
-            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
-            libxcb-xinerama0 libxcb-xkb1
+          # One line, deliberately. A trailing backslash is a newline in bash and a literal
+          # backslash in PowerShell, so the same block means two different things depending
+          # on which runner executes it -- and the difference is not a visible error, it is
+          # the next line parsed as its own command. That is how `--distpath` became a unary
+          # operator on the Windows runner. A long line costs nothing; a silent second shell
+          # costs a red build in a place nobody thought to look.
+          sudo apt-get install -y libegl1 libgl1 libfontconfig1 libfreetype6 libx11-6 libx11-xcb1 libglib2.0-0 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libxcb1 libxcb-util1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1
 
       - name: Install
         run: |
           python -m pip install --upgrade pip
+          # Everything the pipeline itself needs comes from one declaration. PyInstaller
+          # and Pillow are both build-time only, and both are in the dev extra for the same
+          # reason: a script that runs in CI and depends on something a person happened to
+          # have installed is a build that only that person's machine can do. Naming one
+          # here and the other there means the pair can never be right at the same time --
+          # which is exactly how Pillow came to be missing while PyInstaller was fine.
           pip install -e ".[dev,gui]"
-          pip install pyinstaller
 
       - name: Generate the icon and version resources
-        # Generated rather than committed, so all three platforms produce byte-identical
-        # inputs from one source and a Windows-only asset cannot go missing on a runner.
+        # Checked rather than generated. The icon files are committed, so a clean checkout
+        # already has them and the step confirms they are intact -- including that the .ico
+        # holds every size and the .icns every chunk, which a presence check alone would not.
+        # A committed icon is a deliberate change from the original "generate it here" step:
+        # generating meant every runner had to have Pillow before it could do anything, and
+        # Pillow was exactly the dependency that was missing.
         run: |
-          python -m tools.make_icon --check || python -m tools.make_icon
+          # Two steps rather than `check || generate`. The single line with `||` worked on
+          # every runner it had run on, which is exactly the problem: it had only ever run
+          # on one machine, and `||` is a bash-and-PowerShell-7 construct whose support in
+          # whichever shell the Windows runner happens to use is not something to assume.
+          # A step that is allowed to fail is also a step whose failure nobody sees, and the
+          # next line failing on a missing icon is a much worse way to find out.
+          python -m tools.make_icon --check
           python -m tools.make_version_info
 
       - name: Build
         run: |
-          python -m PyInstaller packaging/gigaxml.spec --noconfirm \
-            --distpath dist --workpath build
+          python -m PyInstaller packaging/gigaxml.spec --noconfirm --distpath dist --workpath build
 
       # ------------------------------------------------------------------
       # The smoke test. This is the step that makes the matrix mean something.
@@ -153,7 +166,13 @@ jobs:
           #    mean the binary or its bundled CLI, not a mistyped path.
           echo "--- generating and inspecting through the artifact only"
           work=$(mktemp -d)
-          "$EXE" generate --size 2MB --seed 7 -o "$work/small.xml"
+          # 20MB, not 2MB. The size is not about the inspection -- 2MB inspects fine -- it
+          # is about the progress stream in step 4. Measured here: 2MB finishes in 0.07 s
+          # and emits exactly one progress line, the closing one, so a check of "at least one
+          # line" passes on a run where the progress bar would never move. 20MB takes 1.2 s to
+          # generate and emits several lines, which is enough to tell "the stream arrived"
+          # from "the stream only ever said goodbye". Generating it costs about a second.
+          "$EXE" generate --size 20MB --seed 7 -o "$work/small.xml"
           "$EXE" inspect "$work/small.xml" --json > "$work/report.json"
           python - "$work/report.json" <<'PY'
           import json, sys
@@ -172,18 +191,25 @@ jobs:
           {"record": "/catalog/products/product",
            "fields": {"product_id": {"path": "@id"}, "name": {"path": "name"}}}
           JSON
-          "$EXE" extract "$work/small.xml" -c "$work/config.json" \
-            -o "$work/out.csv" --format csv --progress > "$work/progress.txt"
+          # stderr, not stdout: the progress stream is written there and the summary is what
+          # lands on stdout. Capturing stdout finds nothing, and "nothing" here looks exactly
+          # like a broken progress bar rather than like a wrong redirection.
+          "$EXE" extract "$work/small.xml" -c "$work/config.json" -o "$work/out.csv" --format csv --progress 2> "$work/progress.txt"
           lines=$(grep -c '"event": "progress"' "$work/progress.txt" || true)
           echo "progress lines seen: $lines"
-          if [ "$lines" -lt 1 ]; then
-            echo "::error::no progress lines: a packaged window's progress bar would never move"
+          if [ "$lines" -lt 2 ]; then
+            echo "::error::only $lines progress line(s): the stream never advanced, so a packaged window's progress bar would not move"
             exit 1
           fi
           rows=$(( $(wc -l < "$work/out.csv") - 1 ))
-          echo "rows written: $rows"
+          last=$(grep '"event": "progress"' "$work/progress.txt" | tail -1 | python -c 'import json,sys; print(json.load(sys.stdin)["records"])')
+          echo "rows written: $rows, last progress said: $last"
           if [ "$rows" -lt 1 ]; then
             echo "::error::the extraction wrote no rows"
+            exit 1
+          fi
+          if [ "$rows" != "$last" ]; then
+            echo "::error::progress and output disagree: $rows rows written, last progress said $last"
             exit 1
           fi
 
@@ -192,6 +218,12 @@ jobs:
       # macOS: a .app bundle and a .dmg, because a bare binary is not what a user runs.
       - name: Package the macOS app
         if: runner.os == 'macOS'
+        # Declared rather than left to the runner default. The default is bash here because
+        # the step only runs on macOS, so it works today -- but the shell is decided by
+        # something other than the thing that needs it, and the day the gate widens the
+        # script below is parsed by a different program. Same reasoning as removing the
+        # backslashes: a step should mean one thing, not "whatever the runner's shell is".
+        shell: bash
         run: |
           set -euo pipefail
           # The bundle is a directory with Contents/MacOS/<exe> and Info.plist. PyInstaller's
@@ -225,6 +257,7 @@ jobs:
 
       - name: Build the macOS disk image
         if: runner.os == 'macOS'
+        shell: bash
         run: |
           set -euo pipefail
           appdmg="$RUNNER_TEMP/dmg"
@@ -238,15 +271,12 @@ jobs:
       # left to a step that silently skips when the runner has no FUSE.
       - name: Build the Linux AppImage
         if: runner.os == 'Linux'
+        shell: bash
         run: |
           set -euo pipefail
           sudo apt-get install -y --no-install-recommends desktop-file-utils fuse || true
           chmod +x dist/gigaxml-gui/gigaxml-gui
-          desktop-file-install --dir=/usr/share/applications \
-            --set-name=GigaXML \
-            --set-comment="Memory-efficient XML extraction" \
-            --set-icon=gigaxml \
-            dist/gigaxml-gui/gigaxml-gui || true
+          desktop-file-install --dir=/usr/share/applications --set-name=GigaXML --set-comment="Memory-efficient XML extraction" --set-icon=gigaxml dist/gigaxml-gui/gigaxml-gui || true
           # appimagetool wants the AppDir laid out in a particular shape; the onedir output
           # is already almost exactly that, so it is wrapped rather than rebuilt.
           appdir="$RUNNER_TEMP/AppDir"
@@ -272,8 +302,7 @@ jobs:
           Categories=Utility;Development;
           DESKTOP
           cp "$appdir/gigaxml.desktop" "$appdir/usr/share/applications/"
-          wget -q -O "$RUNNER_TEMP/appimagetool" \
-            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          wget -q -O "$RUNNER_TEMP/appimagetool" https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x "$RUNNER_TEMP/appimagetool"
           "$RUNNER_TEMP/appimagetool" --no-appstream "$appdir" dist/GigaXML-x86_64.AppImage
           echo "built dist/GigaXML-x86_64.AppImage"
@@ -306,6 +335,11 @@ jobs:
           path: artifacts
 
       - name: Assemble the archives
+        # The one step with no platform gate at all, so its shell is entirely the runner
+        # default. It is on ubuntu today and the script is bash throughout -- but a step
+        # that switches runner and stays silent about the shell is the third instance of
+        # the same mistake as the backslashes, and the one with no gate protecting it.
+        shell: bash
         run: |
           set -euo pipefail
           cd artifacts
