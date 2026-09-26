@@ -157,8 +157,20 @@ jobs:
           fi
           chmod +x "$EXE" || true
 
-          size_bytes=$(du -sb "$(dirname "$EXE")" | cut -f1)
-          echo "size: $size_bytes bytes ($(echo "scale=1; $size_bytes/1048576" | bc) MiB)"
+          # The artifact's size, for a human reading the log. It asserts nothing, which is
+          # exactly why it must not be able to decide the run: under `set -e` this line
+          # once ended the whole smoke test on macOS, because BSD `du` has no `-b`, and a
+          # build went red on an artifact that was fine. So the measurement is best-effort
+          # -- a failure leaves the variable empty and the line unprinted, never a failure
+          # -- and neither tool it leans on is one a platform merely happens to ship. The
+          # count is Python, which this step already requires for the checks below, and
+          # the division is POSIX arithmetic rather than `bc`, which no runner promises.
+          # Both old tools were "whatever this platform has", the same class as the
+          # retired runner label: named for what they do, assumed to exist everywhere.
+          size_bytes=$(python -c 'import pathlib, sys; print(sum(f.stat().st_size for f in pathlib.Path(sys.argv[1]).rglob("*") if f.is_file()))' "$(dirname "$EXE")") || true
+          if [ -n "$size_bytes" ]; then
+            echo "size: $size_bytes bytes (~$((size_bytes / 1048576)) MiB)"
+          fi
 
           # 1. The window starts. Driven by the real entry point, with no document, so it
           #    opens and can then be closed -- the cheapest possible proof that Qt loaded,
