@@ -22,6 +22,19 @@ jobs:
   # One job per platform. `fail-fast: false` so a macOS failure does not cancel the Windows
   # build: the three artifacts are independent, and losing two of them because one runner
   # was busy tells a user nothing about whether the other two would have worked.
+  #
+  # `exe` carries the `dist/` prefix because the build step passes `--distpath dist`, and
+  # PyInstaller writes a COLLECT bundle to `<distpath>/<COLLECT name>/`. The spec names both
+  # the executable and the bundle "gigaxml-gui", so the product is
+  #   dist/gigaxml-gui/gigaxml-gui[.exe]
+  # and that is what the smoke test has to be pointed at. It used to read
+  # "gigaxml-gui/gigaxml-gui", which is the same path with the first segment missing -- the
+  # artifact was real and the check that looked for it was wrong, so all three platforms
+  # failed a test whose failure said nothing about the binary.
+  #
+  # Deriving this by hand is the point, not the edit: `upload-artifact` already used
+  # `dist/...`, so the two were written against different assumptions and only the artifact
+  # upload noticed. Anything that names the product names it this way, from one place.
   build:
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -31,15 +44,15 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-            exe: gigaxml-gui/gigaxml-gui.exe
+            exe: dist/gigaxml-gui/gigaxml-gui.exe
             artifact: gigaxml-gui-windows
           - os: macos-13
             platform: macos
-            exe: gigaxml-gui/gigaxml-gui
+            exe: dist/gigaxml-gui/gigaxml-gui
             artifact: gigaxml-gui-macos
           - os: ubuntu-22.04
             platform: linux
-            exe: gigaxml-gui/gigaxml-gui
+            exe: dist/gigaxml-gui/gigaxml-gui
             artifact: gigaxml-gui-linux
 
     steps:
