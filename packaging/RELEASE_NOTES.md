@@ -17,7 +17,7 @@ The window does the same things: **GigaXML**
 | | |
 |---|---|
 | **Version** | 0.1.0 — the version in this build's file properties, and the one the package reports |
-| **Platforms** | Windows, macOS, Linux |
+| **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No — read [Unsigned binaries](#unsigned-binaries) before you install** |
 
@@ -46,6 +46,11 @@ There is also an installer, `GigaXML-Setup-x.y.z.exe`, which adds a Start-menu s
 an uninstaller. **It is unsigned** — see below.
 
 ### macOS
+
+**This build is Apple Silicon (arm64) and it will not start on an Intel Mac.** There is no
+Intel build in this release: an Intel binary would reach Apple Silicon Macs only through
+Rosetta, which Apple has announced it will phase out. If you have an Intel Mac, use
+`pip install "gigaxml[gui]"` instead — the Python package runs on either architecture.
 
 1. Download `gigaxml-gui-macos.tar.gz` and extract it. You get `GigaXML.app`.
 2. Move it to `/Applications`.
@@ -170,6 +175,8 @@ the ones a sampling approach misses.
 ## Known limitations
 
 - **Unsigned**, as above. This is the only one that affects installation.
+- **The macOS build is Apple Silicon only.** An Intel Mac cannot run it at all — this is
+  stated up front in [Installing](#macos) rather than discovered at first launch.
 - **The window is English only.** There is no translation yet.
 - **Very large single fields are held in memory.** Records stream, but one field value that
   is itself gigabytes will still exhaust memory — there is no streaming mode for a single

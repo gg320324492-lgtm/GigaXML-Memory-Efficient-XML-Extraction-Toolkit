@@ -46,7 +46,23 @@ jobs:
             platform: windows
             exe: dist/gigaxml-gui/gigaxml-gui.exe
             artifact: gigaxml-gui-windows
-          - os: macos-13
+          # Runner labels are checked against the supported list in actions/runner-images,
+          # not assumed alive because a job says "queued". `macos-13` sat in this slot for
+          # nine months past its retirement, and a retired label queues forever with no
+          # error message -- the one failure that looks exactly like patience. Checked
+          # 2026-09-27 against the Available Images table: `macos-15` (macOS 15 Arm64, GA),
+          # `ubuntu-22.04` (x64) and `windows-latest` (Server 2025) are all in it, and
+          # `macos-13` and the `macos-14` pair are not (retired) / not for long (deprecated).
+          #
+          # macos-15 is arm64 on purpose. The label it replaces never built an artifact, so
+          # there is no previous behaviour to preserve and the architecture is chosen on
+          # merit: an Apple Silicon build is native on the Macs that exist now, while an
+          # x64 build would reach those same Macs only through Rosetta, which Apple has
+          # announced it will phase out -- a dependency on the outside world continuing to
+          # provide something, the exact category this gate keeps failing on. What the
+          # choice costs is said where a downloader will read it: the release notes state
+          # that the macOS artifact is Apple Silicon and will not start on Intel.
+          - os: macos-15
             platform: macos
             exe: dist/gigaxml-gui/gigaxml-gui
             artifact: gigaxml-gui-macos
