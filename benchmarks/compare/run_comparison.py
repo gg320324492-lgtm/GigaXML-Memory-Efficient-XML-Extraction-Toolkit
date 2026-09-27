@@ -144,6 +144,11 @@ def main() -> int:
     }
 
     results: dict[str, object] = {"environment": environment(), "results": {}}
+    # The outputs land under <repo>/.scratch/, which a fresh checkout does not have --
+    # found by running this in a clean worktree, where every implementation failed on
+    # its output's missing parent directory before extracting a single row.
+    scratch = args.data_dir.parent / ".scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
     by_size = {}
     for size in args.sizes:
         input_path = size_paths[size]
@@ -155,7 +160,7 @@ def main() -> int:
             script = IMPLEMENTATIONS[name]
             runs: list[dict[str, object]] = []
             for repeat in range(1, args.repeats + 1):
-                output_path = args.data_dir.parent / ".scratch" / f"cmp-{name}-{size}.csv"
+                output_path = scratch / f"cmp-{name}-{size}.csv"
                 print(f"[{size}] {name} run {repeat}/{args.repeats} ...", flush=True)
                 payload = run_once(script, input_path, output_path)
                 payload["repeat"] = repeat
