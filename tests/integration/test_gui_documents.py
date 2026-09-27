@@ -629,6 +629,70 @@ def test_about_text_names_the_version_and_the_homepage() -> None:
     assert "GigaXML" in text
 
 
+def test_the_homepage_is_read_from_the_project_url_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Project-URL`` is where the homepage actually lives, and this pins that.
+
+    ``pyproject.toml`` writes ``Homepage = "..."``; the built metadata flattens it into
+    ``Project-URL: Homepage, <url>``. The first version of the reader looked for a
+    ``Homepage`` key, which returns None every time -- a silently empty line in the dialog,
+    invisible to every test that did not assert on the value. The fake distribution here
+    reproduces the real shape so this cannot regress without turning red.
+    """
+    from gigaxml.gui import main_window
+
+    class FakeMetadata:
+        def get_all(self, key: str) -> list[str] | None:
+            if key == "Project-URL":
+                return [
+                    "Repository, https://example.invalid/repo",
+                    "Homepage, https://example.invalid/home",
+                ]
+            return None
+
+    monkeypatch.setattr("importlib.metadata.metadata", lambda _name: FakeMetadata())
+
+    assert main_window._homepage() == "https://example.invalid/home"
+
+
+def test_the_homepage_lookup_survives_missing_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No installed distribution is not a reason for the About box to fail.
+
+    An About box that raises is the exact defect this feature exists to fix, so the reader
+    has to come back with nothing rather than an exception.
+    """
+    from importlib.metadata import PackageNotFoundError
+
+    from gigaxml.gui import main_window
+
+    def explode(_name: str) -> None:
+        raise PackageNotFoundError("gigaxml")
+
+    monkeypatch.setattr("importlib.metadata.metadata", explode)
+
+    assert main_window._homepage() is None
+
+
+def test_the_homepage_lookup_ignores_other_project_url_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the ``Homepage`` label counts, even when it is not the first one.
+
+    ``Project-URL`` repeats; taking the first entry would hand back the repository URL or
+    the changelog URL depending on the order the project happens to declare them in.
+    """
+    from gigaxml.gui import main_window
+
+    class RepoOnly:
+        def get_all(self, key: str) -> list[str] | None:
+            if key == "Project-URL":
+                return ["Repository, https://example.invalid/repo"]
+            return None
+
+    monkeypatch.setattr("importlib.metadata.metadata", lambda _name: RepoOnly())
+
+    assert main_window._homepage() is None
+
+
 def test_the_about_menu_item_raises_a_dialog(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -75,23 +75,44 @@ def about_text() -> str:
     before (the installer script was the one version carrier that quietly fell behind).
 
     Nothing here is allowed to raise: an About box that fails to open is the exact defect
-    it is meant to fix. A source checkout with no installed metadata falls back to the
-    homepage's absence rather than an exception.
+    it is meant to fix. A checkout with no installed metadata loses the homepage line and
+    nothing else.
+
+    **The homepage is not under a ``Homepage`` key.** ``pyproject.toml`` writes
+    ``Homepage = "..."`` but the built metadata merges every such entry into ``Project-URL``
+    as ``"Homepage, <url>"``. Reading ``.get("Homepage")`` looks right and always returns
+    None; the first version of this function did exactly that.
     """
     from gigaxml import __version__
 
     lines = [tr("GigaXML {} — the CLI does the work").format(__version__)]
 
-    try:
-        from importlib.metadata import metadata
-
-        home = metadata("gigaxml").get("Homepage")
-    except Exception:
-        home = None
+    home = _homepage()
     if home:
         lines.append("")
         lines.append(home)
     return "\n".join(lines)
+
+
+def _homepage() -> str | None:
+    """The project's homepage as the installed distribution declares it, if any.
+
+    ``Project-URL`` may appear more than once (Homepage, Repository, ...), so this looks
+    for the entry labelled ``Homepage`` rather than taking the first one. Anything the
+    metadata layer does is caught: a missing or unreadable distribution is not a failure
+    worth breaking the About box over.
+    """
+    try:
+        from importlib.metadata import metadata
+
+        entries = metadata("gigaxml").get_all("Project-URL") or []
+    except Exception:
+        return None
+    for entry in entries:
+        label, _, url = entry.partition(",")
+        if label.strip().lower() == "homepage" and url.strip():
+            return url.strip()
+    return None
 
 
 class MainWindow(QMainWindow):
