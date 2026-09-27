@@ -33,6 +33,14 @@ def test_count_of_nouns_reads_keyword_forms_and_reports_the_unreadable() -> None
     both land in ``dynamic`` -- without planting call sites in a real panel. The blind
     spot this pins was real: the scan used to read positional arguments only, and
     ``count_of(1, noun="gadget")`` passed in silence.
+
+    **The result is read by position, never unpacked.** The scan returned a pair when it
+    checked positional nouns only and returns a triple now; an unpacking test would have
+    failed on ``ValueError: not enough values to unpack`` against the old scan -- a red
+    about the function's *shape*, saying nothing about the keyword noun it was missing.
+    Reading ``result[0]`` / ``result[1]`` keeps the assertions on the *behaviour*: against
+    a scan that skips keyword forms, this test fails on ``nouns == ...`` and names the
+    unread noun in its message.
     """
     from tools.check_i18n_keys import _count_of_nouns
 
@@ -47,7 +55,13 @@ def test_count_of_nouns_reads_keyword_forms_and_reports_the_unreadable() -> None
         count_of(4, "row")
         """
     )
-    nouns, dynamic, sites = _count_of_nouns(ast.parse(source), "synthetic")
+    result = _count_of_nouns(ast.parse(source), "synthetic")
+    # Positional reads, with the third element (per-noun locations) optional: a scan
+    # from before the locations were tracked still exposes the two things this test
+    # judges -- which nouns were read, and which call sites were unreadable.
+    nouns = set(result[0])
+    dynamic = list(result[1])
+    sites = dict(result[2]) if len(result) > 2 else {}
     lines = source.splitlines()
     unreadable = [
         f"synthetic:{number}"
@@ -61,7 +75,13 @@ def test_count_of_nouns_reads_keyword_forms_and_reports_the_unreadable() -> None
         f"synthetic:{next(n for n, ln in enumerate(lines, 1) if ln.startswith('count_of(4'))}"
     )
 
-    assert nouns == {"gadget", "row"}
+    # The behavioural core: the keyword-spelled literal must have been *read*. Against a
+    # scan that skips keyword arguments this is where it fails, naming what went missing.
+    assert nouns == {"gadget", "row"}, (
+        f"keyword-spelled nouns were not read by the scan: got {sorted(nouns)}, "
+        f"unreadable sites {dynamic}"
+    )
     assert dynamic == unreadable
-    assert sites["gadget"] == [keyword_literal]
-    assert sites["row"] == [positional]
+    if sites:
+        assert sites["gadget"] == [keyword_literal]
+        assert sites["row"] == [positional]

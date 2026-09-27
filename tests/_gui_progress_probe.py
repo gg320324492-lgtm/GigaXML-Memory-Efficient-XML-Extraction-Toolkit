@@ -50,6 +50,11 @@ fields:
     path: name
 """
 
+#: The run's ceiling, not its expectation. The 100 MB document finishes in ~4.3 s on this
+#: machine (measured: five consecutive runs at 4.16-4.28 s), and the ceiling exists for a
+#: machine an order of magnitude slower -- 900 s is ~200x the observed time. A run that
+#: exceeds it has hung rather than slowed, which is what makes the probe's numbers
+#: untrustworthy instead of merely late.
 _RUN_TIMEOUT_S: Final = 900.0
 
 

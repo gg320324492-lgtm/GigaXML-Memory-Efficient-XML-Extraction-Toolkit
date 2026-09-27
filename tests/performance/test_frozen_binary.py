@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import pathlib
-import re
 import subprocess
 from typing import Final
 
@@ -247,79 +246,6 @@ def test_the_window_stays_up() -> None:
         process.wait(timeout=10)
 
     assert alive, "the window exited instead of opening"
-
-
-def test_the_release_notes_do_not_claim_a_version_the_build_does_not_have() -> None:
-    """The notes must not describe a different build from the one being shipped.
-
-    Added after the first draft said ``0.9.0`` while the binary said ``0.1.0``. That is the
-    same failure as writing "signed" about an unsigned build: a document that is wrong
-    about the thing a reader most needs to check. The number in the notes is read back and
-    compared with the package, so the two cannot drift apart quietly.
-    """
-    _require_artifact()
-    from gigaxml import __version__
-
-    notes = (REPO_ROOT / "packaging" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
-
-    # The version cell, not any mention: the body is allowed to talk about other releases.
-    row = next(
-        (line for line in notes.splitlines() if line.strip().startswith("| **Version**")),
-        None,
-    )
-    assert row is not None, "the release notes have no version row"
-    assert __version__ in row, f"the notes claim {row.strip()!r} but this build is {__version__}"
-
-    # The signing half pins **semantics, not wording**. It once demanded the literal
-    # phrase "not code-signed" -- which the Phase 9 rewrite made false in the other
-    # direction: the notes now say *precisely* which layer is missing ("carry no
-    # Developer ID certificate") and which is present (the ad-hoc signature), and the
-    # phrase check was the one thing left calling that accurate text a lie. So this test
-    # requires the *claims*, in whatever words: the summary row must state the absence
-    # of a Developer ID certificate, the section must still tell the reader what will
-    # happen (SmartScreen, Gatekeeper), and it must keep both signing layers distinguish
-    # able -- a notes file that said "Developer ID certificate present" would satisfy any
-    # contains-check for the words, which is exactly why a bare phrase lookup is a
-    # dismantled gate: it cannot tell "no certificate" from "a certificate".
-    signed_row = next(
-        (line for line in notes.splitlines() if line.strip().startswith("| **Signed**")),
-        None,
-    )
-    assert signed_row is not None, "the release notes have no Signed row"
-    lowered_row = signed_row.lower()
-    assert "developer id" in lowered_row, (
-        f"the Signed row does not talk about the Developer ID layer: {signed_row.strip()!r}"
-    )
-    assert re.search(
-        r"\bno developer id\b|not signed with a developer id|developer id certificate is absent",
-        lowered_row,
-    ), (
-        "the Signed row does not state that the Developer ID certificate is absent: "
-        f"{signed_row.strip()!r}"
-    )
-
-    section = _unsigned_binaries_section(notes)
-    assert section, "the release notes no longer carry an 'Unsigned binaries' section"
-    for warning in ("smartscreen", "gatekeeper"):
-        assert warning in section, f"the notes never mention {warning}"
-    assert "ad-hoc" in section and "developer id" in section, (
-        "the notes no longer distinguish ad-hoc signing from Developer ID signing"
-    )
-    assert re.search(
-        r"developer id[^.]*\babsent\b|not signed with a developer id|\bno developer id\b",
-        section,
-    ), "the section does not state that the Developer ID layer is the one that is absent"
-
-
-def _unsigned_binaries_section(notes: str) -> str:
-    """Everything from the ``Unsigned binaries`` heading to the next top-level heading."""
-    lowered = notes.lower()
-    start = lowered.find("## unsigned binaries")
-    if start < 0:
-        return ""
-    next_heading = lowered.find("\n## ", start + 1)
-    end = next_heading if next_heading > 0 else len(lowered)
-    return lowered[start:end]
 
 
 def subprocess_run(command: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:

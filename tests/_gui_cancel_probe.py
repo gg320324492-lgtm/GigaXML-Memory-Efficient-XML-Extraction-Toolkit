@@ -68,6 +68,25 @@ fields:
 #: "committed parts survive" claim would go untested rather than tested.
 _CHECKPOINT_EVERY: Final = 20_000
 
+#: Ceiling for the first progress line, never its expectation. The line lands in 0.84-0.91 s
+#: on this machine (auditor-measured, five runs out of five), so 30 s is ~33x the observed
+#: worst case. A timeout here means the child parsed for half a minute without reporting its
+#: first thousand records -- the child or the progress stream is broken, and a cancel test
+#: built on that state would measure nothing.
+_FIRST_PROGRESS_TIMEOUT_S: Final = 30.0
+
+#: Ceiling for checkpoint mode's "a part has been committed". A part is 20,000 records,
+#: committed well inside a second at the six-field throughput, so 30 s is again an
+#: order-of-magnitude margin over the observed case. A timeout means the checkpoint write
+#: path is broken and "committed parts survive" has nothing on disk to test.
+_PART_COMMITTED_TIMEOUT_S: Final = 30.0
+
+#: Ceiling for "the panel has finished handling the cancel". The cancel itself lands in
+#: ~0.002 s (auditor-measured); the ceiling covers ``CliProcess.kill``'s reader join -- whose
+#: own internal bound is 10 s -- with room to spare. A timeout means the cancel path is hung
+#: and the panel never stops, which the test must report as a failure rather than wait out.
+_CANCEL_HANDLED_TIMEOUT_S: Final = 60.0
+
 
 def _inspect(output: pathlib.Path) -> dict[str, object]:
     """What is actually on disk at ``output`` right now.
@@ -148,9 +167,14 @@ def _measure(xml_path: str, work_dir: str, *, checkpoint: bool) -> dict[str, obj
     # (``was_running_when_cancelled: false, exit_code: 0``). Every wait now watches for the
     # fact the test actually needs -- a progress line; a part committed -- and the cancel
     # fires the moment that fact holds, which is a premise, not a race.
-    _pump_until(application, panel, lambda: bool(shown), timeout_s=30)
+    _pump_until(application, panel, lambda: bool(shown), timeout_s=_FIRST_PROGRESS_TIMEOUT_S)
     if checkpoint:
-        _pump_until(application, panel, lambda: _parts_on_disk(work) > 0, timeout_s=30)
+        _pump_until(
+            application,
+            panel,
+            lambda: _parts_on_disk(work) > 0,
+            timeout_s=_PART_COMMITTED_TIMEOUT_S,
+        )
 
     was_running = panel.is_running()
     started_at = time.perf_counter()
@@ -158,7 +182,7 @@ def _measure(xml_path: str, work_dir: str, *, checkpoint: bool) -> dict[str, obj
     application.processEvents()
 
     # Wait for the panel to finish handling the cancellation.
-    deadline = time.perf_counter() + 60
+    deadline = time.perf_counter() + _CANCEL_HANDLED_TIMEOUT_S
     while time.perf_counter() < deadline:
         application.processEvents()
         if not panel.is_running():
