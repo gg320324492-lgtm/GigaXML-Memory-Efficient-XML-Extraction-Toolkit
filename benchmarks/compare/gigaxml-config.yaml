@@ -1,0 +1,12 @@
+# The task every implementation in benchmarks/compare/ performs, written the way
+# GigaXML consumes it: switching fields, types or output formats is an edit to this
+# file, never to code. This is half of what the comparison suite's second dimension
+# measures.
+record: /catalog/products/product
+fields:
+  id:           {path: '@id'}
+  type:         {path: '@type'}
+  name:         {path: name}
+  category:     {path: category}
+  price:        {path: price, type: float}
+  manufacturer: {path: manufacturer/name}

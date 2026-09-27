@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -143,6 +144,13 @@ def main() -> int:
         default=None,
         help="where to write scratch configs and outputs (default: a temp directory)",
     )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=5,
+        help="how many times to run each (dataset, config) pair; summary rows report "
+        "median across the repeats, and every raw run is kept in results.json (default: 5)",
+    )
     args = parser.parse_args()
 
     work_root = pathlib.Path(args.work) if args.work else pathlib.Path(tempfile.mkdtemp())
@@ -156,9 +164,13 @@ def main() -> int:
         for config_label, config in (("6 fields", SIX_FIELDS), ("1 field", ONE_FIELD)):
             tag = f"{size_label} / {config_label}"
             print(f"running {tag} ...", flush=True)
-            result = run_one(source, config, tag, work_root / f"{size_label}-{config_label[:1]}")
-            results.append(result)
-            print(json.dumps(result), flush=True)
+            for repeat in range(1, args.repeat + 1):
+                result = run_one(
+                    source, config, tag, work_root / f"{size_label}-{config_label[:1]}"
+                )
+                result["repeat"] = repeat
+                results.append(result)
+                print(json.dumps(result), flush=True)
 
     print()
     header = (
@@ -167,15 +179,25 @@ def main() -> int:
     )
     print(header)
     print("-" * len(header))
+
+    def key(row: dict) -> tuple[str, str]:
+        dataset, fields = row["label"].split(" / ")
+        return dataset, fields
+
+    grouped: dict[tuple[str, str], list[dict]] = {}
     for row in results:
         if "error" in row:
             print(f"{row['label']:<30} ERROR {row['error'][:60]}")
             continue
-        dataset, fields = row["label"].split(" / ")
+        grouped.setdefault(key(row), []).append(row)
+    for (dataset, fields), rows in grouped.items():
+        seconds = [row["seconds"] for row in rows]
+        row = rows[0]
+        summary_suffix = f"  (n={len(rows)}, median {statistics.median(seconds):.2f}s)"
         print(
             f"{dataset:<10} {fields:<9} {row['input_mib']:>10.2f} {row['records']:>12,} "
             f"{row['seconds']:>8.2f} {row['throughput_mib_s']:>7.1f} "
-            f"{row['peak_mb']:>8.3f} {row['delta_mb']:>8.3f}"
+            f"{row['peak_mb']:>8.3f} {row['delta_mb']:>8.3f}{summary_suffix}"
         )
 
     out = work_root / "results.json"

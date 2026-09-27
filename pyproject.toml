@@ -31,6 +31,15 @@ dependencies = [
 [project.optional-dependencies]
 parquet = ["pyarrow>=14.0"]
 pretty = ["rich>=13.0"]
+# Competitor comparison, used only by benchmarks/compare/. Not a product dependency --
+# nobody who installs gigaxml ever needs these; keeping them out of `dev` keeps
+# `pip install -e ".[dev,gui]"` free of libraries the product never touches, and the
+# comparison suite must stay a pure addition to the tree (installing the package without
+# this extra leaves every test green).
+bench = [
+  "xmltodict>=0.13",
+  "pandas>=2.0",
+]
 # The desktop application. Optional on purpose: the CLI is the product, and Qt is a
 # 150-200 MB dependency that only a user of the window needs. Nothing in gigaxml outside
 # gigaxml.gui may import it.

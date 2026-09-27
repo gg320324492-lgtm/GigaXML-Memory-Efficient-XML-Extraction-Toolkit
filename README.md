@@ -3,6 +3,37 @@
 A production-oriented CLI toolkit for profiling, validating and extracting structured data
 from multi-gigabyte XML files with bounded memory usage.
 
+**If your extraction task is fixed and small, write the twenty lines of `lxml` yourself —
+that is the right call, and the [comparison](#gigaxml-vs-alternatives) says so with
+numbers.** This toolkit is for the rest of it: documents you cannot hold in memory,
+fields that will change, output formats you cannot predict, runs that get interrupted,
+and records that are not all well-formed.
+
+## Why GigaXML?
+
+Each of these is a behaviour, not an adjective — the last section of
+[the comparison](benchmarks/compare/REPORT.md) shows each one happening:
+
+- **Bounded memory, with a harness that can fail.** 4 GB at 33.7 MiB peak (5.1 MiB over
+  baseline), measured by [`benchmarks/bench_extraction.py`](benchmarks/bench_extraction.py)
+  in a subprocess — with a reversed test that commits the mistake (loading the document)
+  and requires it to blow past the budget, so the claim cannot pass vacuously.
+- **Bad records don't end the run unless you want them to.** `on_error: quarantine`
+  extracts every good record and writes the bad ones to `rejected.jsonl` with their
+  index, field, error and raw value. In the comparison's corrupted-record experiment the
+  hand-written scripts kept only a header; GigaXML kept 290,899 rows plus the evidence.
+- **Interrupted runs resume — after checking what changed.** `--checkpoint-every` commits
+  the output in parts; `--resume` continues from the last committed part and refuses the
+  resume if the source's sha256 or the config hash differs, printing both values.
+- **Fields live in config, not code.** Switching fields, types or output format is an
+  edit to a YAML file — and `gigaxml inspect <file>` proposes a starting config for any
+  document you point it at, without knowing its structure in advance.
+- **Three output formats are the same flag.** CSV, JSONL and Parquet share the writer,
+  the batching and the atomic move; switching is `--format`, not new code.
+- **A desktop application for people who do not use terminals** — the same engine behind
+  a window (`pip install "gigaxml[gui]"`), with structure analysis, field building,
+  preview, batch runs and a progress bar that provably moves.
+
 ## What this is
 
 The point of this project is not "it can parse XML" — plenty of tools can. The point is
@@ -131,7 +162,14 @@ To reproduce, generate the datasets and run the harness in [`benchmarks/`](bench
 gigaxml generate --size 100MB -o data/b100m.xml
 gigaxml generate --size 1GB   -o data/b1g.xml
 gigaxml generate --size 4GB   -o data/b4g.xml
-python benchmarks/bench_extraction.py
+python benchmarks/bench_extraction.py          # runs each pair 5x by default (--repeat N)
+```
+
+Every raw run is kept in `results.json`; the printed rows carry the median across the
+repeats. The comparison against hand-written `lxml`, `xmltodict` and
+`pandas.read_xml` — including the sizes where the hand-written script is faster — is in
+[GigaXML vs Alternatives](#gigaxml-vs-alternatives), produced by
+[`benchmarks/compare/`](benchmarks/compare/).
 ```
 
 `--size` is approximate: `--size 1GB` produces 1033.65 MiB, not 1024, and the sizes above
@@ -139,6 +177,61 @@ are the measured ones. Peak and delta are both reported because either alone can
 misread — peak includes about 32 MiB of interpreter and library overhead, delta is what
 the workload is responsible for, and both baselines in this repository are taken after
 every import so that two deltas are comparable.
+
+## GigaXML vs Alternatives
+
+Measured, not argued: four implementations perform the **same extraction task** (six
+fields, including a nested path and a float conversion, into identically-ordered CSV) on
+100 MB / 1 GB / 4 GB generated documents — five runs each, medians reported, raw values
+in [`benchmarks/compare/results.json`](benchmarks/compare/results.json), every script
+one readable file in [`benchmarks/compare/`](benchmarks/compare/). A fourth dataset is
+real: [Simple Wikipedia's full article dump](benchmarks/compare/REPORT.md), namespace
+and all.
+
+### vs raw `lxml` (hand-written)
+
+**The hand-written script wins on raw throughput at every size, by roughly 1.9×, and
+that is stated first because it is true:**
+
+| Implementation | 100 MB | 1 GB | 4 GB | Peak RSS (4 GB) |
+|---|---|---|---|---|
+| hand-written `lxml` | **3.53 s** | **35.6 s** | **143.9 s** | 4.1 MB |
+| GigaXML | 6.95 s | 69.2 s | 281.2 s | 4.1 MB |
+
+A fixed task, known fields and one script you maintain: that is the case where the
+hand-written script is the better tool, and no amount of toolkit changes that.
+
+What the 1.9× buys — each measured in the comparison's corrupted-record and interruption
+experiments: a corrupted record mid-file ends the hand-written script (exit 1, header
+only in the CSV) while `on_error: quarantine` extracts the 290,899 good records and
+writes the bad one to `rejected.jsonl` with its index, field and raw value; an
+interrupted GigaXML run resumes from its last committed part after verifying the source
+and config are unchanged; switching fields is a YAML edit instead of a code edit;
+switching output to JSONL or Parquet is a flag; and every output lands atomically — a
+failed or cancelled run never leaves a half-written file where a reader would find it.
+
+### vs `xmltodict`
+
+xmltodict's streaming mode (`item_depth`) is genuinely streaming — its peak RSS matches
+GigaXML's at every size, which the comparison records rather than hides — and it is the
+right pick when you want the whole document as Python dicts, not a field extraction.
+For the extraction task it costs ~1.4× the time (5.60 s vs 6.95 s per 100 MB is
+GigaXML's loss; 57.4 s vs 69.2 s per 1 GB and 229.2 s vs 281.2 s per 4 GB are
+xmltodict's), and it shares the hand-written script's weakness on bad records: one
+malformed value ends the run.
+
+### vs `pandas.read_xml`
+
+`read_xml` is the fastest route *into a DataFrame* and the natural pick when the goal
+is analysis, not extraction. Two measured limits: it cannot reach the nested
+`manufacturer/name` field (its output in the comparison carries the column empty, and
+its five extracted columns match the other implementations line-for-line), and on the
+1 GB document it fails outright — `lxml.etree.XMLSyntaxError: switching encoding` from
+pandas 3.0.6, reproducible with both path and file-object inputs, while the 100 MB file
+of the same generator parses fine. For the extraction-to-file task it is therefore not
+a contender at large sizes; for analysis of documents that fit, it is.
+
+---
 
 ## Non-goals
 
