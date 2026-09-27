@@ -1,6 +1,6 @@
 """Every interface string is translated, and every untranslated string admits to it.
 
-Two scans, because two things can go wrong:
+Three scans, because three things can go wrong:
 
 **Scan 1 -- every ``tr("literal")`` is in the table.** A key that misses the table still
 works (the fallback returns the English text), but it does so silently, and a template
@@ -17,11 +17,23 @@ worst thing a report can be. So the second scan walks every constant and demands
 one of three things: in the table, in the explicit allowlist below with a reason, or a
 failure you have to resolve.
 
+**Scan 3 -- every noun ``count_of`` is called with has both of its keys.** Scan 2's
+docstring names ``count_of`` and scan 2 does not check it, because its keys are built at
+run time from the noun argument and exist nowhere as literals: ``count_of(n, "row")``
+will ask the table for ``{} row`` and ``{} rows``, and if either is missing the interface
+displays the raw braces. This scan walks the call sites, collects the nouns, and demands
+both keys per noun. A call site whose noun is not a literal is itself a failure -- a
+noun this scan cannot read is a pair of keys it cannot check -- and so is a scan that
+finds no call sites at all, because zero means the walk broke, not that the interface
+stopped counting things.
+
 Run it directly::
 
     python -m tools.check_i18n_keys
 
-Exit 0 means both scans are clean.
+Exit 0 means all three scans are clean. It is also run as an ordinary test in the suite
+(``tests/unit/test_i18n_keys_guard.py``), so a missing key turns CI red instead of
+waiting for someone to remember this script exists.
 """
 
 from __future__ import annotations
@@ -131,6 +143,33 @@ def _tr_literals(tree: ast.AST) -> set[str]:
     return keys
 
 
+def _count_of_nouns(tree: ast.AST, where: str) -> tuple[set[str], list[str]]:
+    """The nouns handed to ``count_of``, and the call sites whose noun is not a literal.
+
+    ``count_of`` builds its table key at run time -- ``"{{}} " + noun``, plural or not --
+    so scan 1 cannot see what it will ask the table for: the key exists nowhere as a
+    literal. This walks the call sites instead and collects what the keys will be made
+    from. A call site whose noun is anything other than a string literal is returned in
+    ``dynamic`` rather than skipped: a noun this scan cannot read is a set of keys it
+    cannot check, and that must be a decision a person makes, not a gap nobody notices.
+    """
+    nouns: set[str] = set()
+    dynamic: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "count_of" or len(node.args) < 2:
+            continue
+        noun_arg = node.args[1]
+        if isinstance(noun_arg, ast.Constant) and isinstance(noun_arg.value, str):
+            nouns.add(noun_arg.value)
+        else:
+            dynamic.append(f"{where}:{node.lineno}")
+    return nouns, dynamic
+
+
 def main() -> int:
     failures = 0
 
@@ -166,6 +205,40 @@ def main() -> int:
     print(f"scan 2: {in_table} in table, {allowlisted} allowlisted, {len(unaccounted)} unaccounted")
     for entry in unaccounted:
         print(f"  UNACCOUNTED: {entry}")
+        failures += 1
+
+    print("scan 3: count_of nouns, whose keys are built at run time")
+    all_nouns: set[str] = set()
+    noun_sites: dict[str, list[str]] = {}
+    dynamic_sites: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        where = str(path.relative_to(SRC))
+        nouns, dynamic = _count_of_nouns(tree, where)
+        all_nouns |= nouns
+        for noun in nouns:
+            noun_sites.setdefault(noun, []).append(where)
+        dynamic_sites.extend(dynamic)
+    if not all_nouns:
+        # Zero is not a clean answer, it is a broken scanner: this interface counts rows,
+        # records and parts, so a scan that finds no nouns has stopped looking.
+        print("  scan 3 found zero count_of call sites -- the scan is broken, not clean")
+        failures += 1
+    print(f"scan 3: {len(all_nouns)} nouns: {sorted(all_nouns)}")
+    for noun in sorted(all_nouns):
+        for key in (f"{{}} {noun}", f"{{}} {noun}s"):
+            if key not in ZH:
+                print(
+                    f"  MISSING FROM TABLE: noun {noun!r} (used at "
+                    f"{', '.join(noun_sites[noun])}) needs key {key!r} "
+                    f"-- a missing key displays as raw braces"
+                )
+                failures += 1
+    for site in dynamic_sites:
+        print(
+            f"  NON-LITERAL NOUN at {site} -- a noun this scan cannot read; "
+            f"make it a literal or account for its keys by hand"
+        )
         failures += 1
 
     if failures:
