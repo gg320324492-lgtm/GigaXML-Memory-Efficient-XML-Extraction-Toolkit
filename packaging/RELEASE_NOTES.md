@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 0.9.0 — the version in this build's file properties, and the one the package reports |
+| **Version** | 1.0.0 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -68,7 +68,7 @@ for how to reproduce them.
    `%APPDATA%\GigaXML`.
 3. Run `gigaxml-gui\gigaxml-gui.exe`.
 
-There is also an installer, `GigaXML-Setup-0.9.0.exe`, built by the same pipeline as the
+There is also an installer, `GigaXML-Setup-1.0.0.exe`, built by the same pipeline as the
 zip — its version comes from the package, not from a hand-typed file. It installs per
 user, so there is no administrator prompt: no services, no drivers, just the application
 into a folder you own, with a Start-menu shortcut and an optional desktop one. Its
