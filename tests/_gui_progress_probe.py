@@ -92,9 +92,17 @@ def _measure(xml_path: str, work_dir: str) -> dict[str, object]:
 
     panel.start()
     deadline = time.perf_counter() + _RUN_TIMEOUT_S
+    # Pump until the **panel** is done, not until the child is gone. The child can exit
+    # before its last stderr line has been read out: the reader thread drains on its own
+    # schedule, and a loop that breaks on process exit stops the event pump before the
+    # window sees the closing line. Measured: the window's last progress was then 280000
+    # against a 291200-record document, on two runs out of three. ``run_result()`` is set
+    # only after both pipes have been read to the end, and the panel's pump stops itself
+    # once it has delivered whatever was still queued -- so that pair is the honest
+    # "nothing more is coming" signal.
     while time.perf_counter() < deadline:
         application.processEvents()
-        if not panel.is_running():
+        if panel.run_result() is not None and not panel._pump.isActive():
             break
         time.sleep(0.02)
     application.processEvents()

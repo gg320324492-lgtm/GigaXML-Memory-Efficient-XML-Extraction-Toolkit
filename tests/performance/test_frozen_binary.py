@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import subprocess
 from typing import Final
 
@@ -269,12 +270,56 @@ def test_the_release_notes_do_not_claim_a_version_the_build_does_not_have() -> N
     assert row is not None, "the release notes have no version row"
     assert __version__ in row, f"the notes claim {row.strip()!r} but this build is {__version__}"
 
-    # And the signing claim has to be there, in the negative. A notes file that simply omits
-    # the subject is how a reader ends up surprised by SmartScreen.
-    lowered = notes.lower()
-    assert "not code-signed" in lowered, "the release notes do not say the binaries are unsigned"
+    # The signing half pins **semantics, not wording**. It once demanded the literal
+    # phrase "not code-signed" -- which the Phase 9 rewrite made false in the other
+    # direction: the notes now say *precisely* which layer is missing ("carry no
+    # Developer ID certificate") and which is present (the ad-hoc signature), and the
+    # phrase check was the one thing left calling that accurate text a lie. So this test
+    # requires the *claims*, in whatever words: the summary row must state the absence
+    # of a Developer ID certificate, the section must still tell the reader what will
+    # happen (SmartScreen, Gatekeeper), and it must keep both signing layers distinguish
+    # able -- a notes file that said "Developer ID certificate present" would satisfy any
+    # contains-check for the words, which is exactly why a bare phrase lookup is a
+    # dismantled gate: it cannot tell "no certificate" from "a certificate".
+    signed_row = next(
+        (line for line in notes.splitlines() if line.strip().startswith("| **Signed**")),
+        None,
+    )
+    assert signed_row is not None, "the release notes have no Signed row"
+    lowered_row = signed_row.lower()
+    assert "developer id" in lowered_row, (
+        f"the Signed row does not talk about the Developer ID layer: {signed_row.strip()!r}"
+    )
+    assert re.search(
+        r"\bno developer id\b|not signed with a developer id|developer id certificate is absent",
+        lowered_row,
+    ), (
+        "the Signed row does not state that the Developer ID certificate is absent: "
+        f"{signed_row.strip()!r}"
+    )
+
+    section = _unsigned_binaries_section(notes)
+    assert section, "the release notes no longer carry an 'Unsigned binaries' section"
     for warning in ("smartscreen", "gatekeeper"):
-        assert warning in lowered, f"the notes never mention {warning}"
+        assert warning in section, f"the notes never mention {warning}"
+    assert "ad-hoc" in section and "developer id" in section, (
+        "the notes no longer distinguish ad-hoc signing from Developer ID signing"
+    )
+    assert re.search(
+        r"developer id[^.]*\babsent\b|not signed with a developer id|\bno developer id\b",
+        section,
+    ), "the section does not state that the Developer ID layer is the one that is absent"
+
+
+def _unsigned_binaries_section(notes: str) -> str:
+    """Everything from the ``Unsigned binaries`` heading to the next top-level heading."""
+    lowered = notes.lower()
+    start = lowered.find("## unsigned binaries")
+    if start < 0:
+        return ""
+    next_heading = lowered.find("\n## ", start + 1)
+    end = next_heading if next_heading > 0 else len(lowered)
+    return lowered[start:end]
 
 
 def subprocess_run(command: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:

@@ -42,15 +42,26 @@ record: /catalog/products/product
 fields:
   product_id:
     path: "@id"
+  type:
+    path: "@type"
   name:
     path: name
+  category:
+    path: category
+  price:
+    path: price
+    type: float
+  manufacturer:
+    path: manufacturer/name
 """
 
-#: Cancel this long after the child is observed working. Chosen against a ~15 s run: early
-#: enough that the job is certainly still going, and -- with ``--checkpoint`` -- late enough
-#: that at least one part has been committed, which is the only way to check that cancelling
-#: does not throw away work that was already safely on disk.
-_CANCEL_AFTER_S: Final = 2.5
+#: **The six-field configuration is load-bearing.** The probe used to extract two fields,
+#: which read 403 MB in about three seconds on the machine this file was written on --
+#: faster than the cancel delay it used to sleep for, so the run was over before the cancel
+#: landed, the probe reported ``was_running_when_cancelled: false`` and both cancel tests
+#: failed a premise instead of a product. The six-field shape is the README's benchmark
+#: configuration; the type conversions cut the throughput enough that the cancel lands
+#: inside a run of many seconds. The waits below still watch for facts, not clocks.
 
 #: How many records per part when checkpointing. Small on purpose: s400 has 1,164,800 records,
 #: so a 50,000-record part would not be committed until well after the cancel and the
@@ -109,20 +120,37 @@ def _measure(xml_path: str, work_dir: str, *, checkpoint: bool) -> dict[str, obj
     process = panel._process
     pid = None if process is None else process.pid
 
+    # The panel always asks the CLI for ``--progress``, and the panel appends every
+    # progress object it receives to ``_received`` and hands it to ``_show`` as it
+    # renders. Intercepting ``_show`` gives the same "the child has actually begun
+    # working" signal the cpu-time check below used to aim at -- and it is a signal this
+    # machine can produce, which cpu time is not: psutil 7.2.2 on this Windows returns a
+    # **frozen** snapshot for a live process's ``cpu_times()`` (measured: a pure-CPU loop
+    # held ``user=0.0156`` -- one scheduling quantum -- for a full second of heavy
+    # arithmetic), so a threshold on accumulated cpu time never fires and every wait
+    # built on it spins until the run finishes, then cancels a finished process.
+    shown: list[object] = []
+    panel._show = shown.append  # type: ignore[method-assign]
+
     # Two waits, because they answer different questions. The first asks "has the child begun
-    # working" -- cpu time, not mere existence, since cancelling a process that has not read
-    # anything would only prove that cancelling a starting process works. The second asks
-    # "has it been working long enough to have committed something", which under
-    # --checkpoint is the only way the "committed parts survive" claim gets tested at all
-    # rather than quietly skipped.
-    _pump_until(application, panel, lambda: _child_is_busy(pid), timeout_s=30)
-    _pump_until(
-        application,
-        panel,
-        lambda: not panel.is_running(),
-        timeout_s=_CANCEL_AFTER_S,
-        stop_when=lambda: _child_is_busy(pid) and _parts_on_disk(work) > 0,
-    )
+    # working" -- a progress line is that proof: the child has parsed at least a thousand
+    # records and reported a count. The second asks "has it been working long enough to have
+    # committed something", and exists only under --checkpoint: that is the only mode that
+    # commits anything, and the cancel has to land *after* a part is on disk for "committed
+    # parts survive" to be tested at all rather than quietly skipped. In plain mode there
+    # is nothing to wait for -- the cancel lands the moment the child is working.
+    #
+    # **Nothing here waits a fixed time.** The probe used to sleep 2.5 s between "busy" and
+    # "cancel", calibrated against a run it assumed would last ~15 s; on the machine this
+    # runs on, a 403 MB extract -- even with the six-field configuration -- finishes in
+    # under three, and both cancel tests failed their own premise: the run was over, the
+    # cancel landed on a completed process, and the payload said so honestly
+    # (``was_running_when_cancelled: false, exit_code: 0``). Every wait now watches for the
+    # fact the test actually needs -- a progress line; a part committed -- and the cancel
+    # fires the moment that fact holds, which is a premise, not a race.
+    _pump_until(application, panel, lambda: bool(shown), timeout_s=30)
+    if checkpoint:
+        _pump_until(application, panel, lambda: _parts_on_disk(work) > 0, timeout_s=30)
 
     was_running = panel.is_running()
     started_at = time.perf_counter()
@@ -195,23 +223,6 @@ def _parts_on_disk(work: pathlib.Path) -> int:
     that is *not* committed.
     """
     return sum(1 for item in work.rglob("part-*") if item.is_file() and item.suffix != ".tmp")
-
-
-def _child_is_busy(pid: int | None) -> bool:
-    """Whether the child exists and has actually done some work.
-
-    ``cpu_times()`` is the honest signal here: a child that exists but has read nothing has
-    not started, and cancelling it would only prove that cancelling a starting process
-    works.
-    """
-    if pid is None:
-        return False
-    try:
-        handle = psutil.Process(pid)
-        times = handle.cpu_times()
-        return (times.user + times.system) > 0.05
-    except psutil.Error:
-        return False
 
 
 def cancel_in_subprocess(

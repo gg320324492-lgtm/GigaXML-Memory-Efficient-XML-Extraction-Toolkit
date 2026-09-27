@@ -186,6 +186,15 @@ def test_every_gui_probe_runs_standalone(tmp_path: pathlib.Path) -> None:
     are written. Each is invoked as ``python -m tests.<probe>`` with the state-directory
     variable stripped, because that is what a reader copying a command out of a document will
     have in their environment -- which is to say, nothing this project set for them.
+
+    **Each probe is asserted against its own payload schema, by name.** The per-schema
+    facts below are the deterministic ones -- what must hold whichever way the race
+    between the document's end and the cancel lands. What is deliberately *not* asserted
+    is ``was_running_when_cancelled`` being a specific boolean: on this machine the 10 MB
+    document finishes before the cancel lands (measured: the probe reports
+    ``was_running_when_cancelled: false, killed: false, exit_code: 0``), and on a slower
+    one it would not -- so either outcome is legitimate and only the self-consistency is
+    a fact. The assertions must therefore hold on both branches.
     """
     source = REPO_ROOT / "data" / "s10.xml"
     env = {key: value for key, value in os.environ.items() if key != "GIGAXML_GUI_STATE_DIR"}
@@ -209,6 +218,11 @@ def test_every_gui_probe_runs_standalone(tmp_path: pathlib.Path) -> None:
         ],
     }
 
+    def require(payload: dict[str, object], name: str, key: str) -> object:
+        """Read a key the probe's schema promises, naming the probe if it is missing."""
+        assert key in payload, f"probe {name}: payload has no {key!r} key: {payload}"
+        return payload[key]
+
     for name, command in probes.items():
         completed = subprocess.run(
             command,
@@ -225,4 +239,51 @@ def test_every_gui_probe_runs_standalone(tmp_path: pathlib.Path) -> None:
         )
         payload = json.loads(completed.stdout.strip().splitlines()[-1])
         assert payload, f"probe {name} produced no payload"
-    assert payload["rows"] > 0
+
+        if name == "gui_mem":
+            assert require(payload, name, "finished") is True, f"probe {name} did not finish"
+            assert require(payload, name, "exit_code") == 0, f"probe {name} exited nonzero"
+            assert require(payload, name, "rows"), f"probe {name} extracted no rows"
+            assert require(payload, name, "peak_mb"), f"probe {name} never sampled memory"
+        elif name == "gui_progress_probe":
+            manifest = require(payload, name, "manifest_record_count")
+            assert manifest and manifest > 0, f"probe {name}: manifest says no records"
+            assert require(payload, name, "exit_code") == 0, f"probe {name} exited nonzero"
+            # At least told once, not more-than-once: on a 10 MB document this machine
+            # finishes in well under a second, and whether more than one progress line
+            # arrives before the window's pump drains it is a race, not a property. The
+            # bar-must-move claim is the 100 MB criterion's (tests/performance/
+            # test_gui_progress.py), which runs a document long enough to owe several.
+            assert int(require(payload, name, "gui_updates")) >= 1, (
+                f"probe {name}: the window was never told a progress value"
+            )
+            assert require(payload, name, "report_rows") == manifest, (
+                f"probe {name}: report rows disagree with the manifest"
+            )
+            assert require(payload, name, "rows_on_disk") == manifest, (
+                f"probe {name}: rows on disk disagree with the manifest"
+            )
+        elif name == "gui_cancel_probe":
+            # The cancel either lands (killed, pid dead) or the document finishes first
+            # (not killed, exit 0) -- timing decides which, but not both can be claimed,
+            # and the target file answers the same either/or: the writer is atomic, so a
+            # finished run moves a complete ``out.csv`` into place and a cancelled one
+            # leaves it absent with its ``.tmp`` beside it. Asserting ``exists`` True on
+            # both branches was a bug of mine -- measured in a loaded full-tree run, where
+            # the cancel landed mid-extract and the file legitimately was not there.
+            assert require(payload, name, "pid_alive_after_cancel") is False, (
+                f"probe {name}: the child survived the cancel"
+            )
+            killed = require(payload, name, "killed")
+            assert killed == require(payload, name, "was_running_when_cancelled"), (
+                f"probe {name} claims a cancellation it did not perform, or the reverse"
+            )
+            assert bool(require(payload, name, "exists")) is (not killed), (
+                f"probe {name}: target presence disagrees with the outcome: {payload}"
+            )
+            if not killed:
+                assert require(payload, name, "exit_code") == 0, (
+                    f"probe {name}: the run neither was cancelled nor finished cleanly"
+                )
+        else:  # pragma: no cover - a new probe must declare its own schema here
+            raise AssertionError(f"probe {name} has no schema assertions; add them")
