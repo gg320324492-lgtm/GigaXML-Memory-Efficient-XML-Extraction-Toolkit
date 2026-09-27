@@ -64,6 +64,7 @@ ZH: dict[str, str] = {
     "the document's namespaces are listed here": "文档使用的命名空间列在此处",
     "the config is in the Fields tab": "配置在「字段」页",
     "GigaXML {} — the CLI does the work": "GigaXML {} — 实际工作由 CLI 完成",
+    "About GigaXML": "关于 GigaXML",
     "{}: not built yet": "{}：尚未实现",
     # -- execution panel ----------------------------------------------------
     "Source": "源",

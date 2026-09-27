@@ -34,7 +34,7 @@ from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QFileDialog
 from pytestqt.qtbot import QtBot
 
-from gigaxml.gui.main_window import MainWindow, placeholder
+from gigaxml.gui.main_window import MainWindow, about_text, placeholder
 from gigaxml.gui.panels.document import DocumentPanel, first_local_file
 from gigaxml.gui.panels.execution import ExecutionPanel
 from gigaxml.gui.panels.structure import StructurePanel
@@ -612,12 +612,77 @@ def test_the_placeholder_says_a_tab_is_not_built_yet() -> None:
     assert "Fields" in label.text()
 
 
-def test_about_names_the_version(window: MainWindow) -> None:
+def test_about_text_names_the_version_and_the_homepage() -> None:
+    """The About box says what an About box says.
+
+    This replaces a test that asserted the version appeared in the *status bar*. That
+    assertion was true and stayed green while the feature was broken: the menu item wrote
+    a five-second status message, so a user who clicked "About" and looked for a window saw
+    nothing happen. The test pinned the implementation instead of the behaviour, which is
+    the failure mode this project keeps meeting.
+    """
     from gigaxml import __version__
+
+    text = about_text()
+
+    assert __version__ in text
+    assert "GigaXML" in text
+
+
+def test_the_about_menu_item_raises_a_dialog(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clicking the menu item puts a dialog on screen with the text in it.
+
+    Asserted through the widget Qt is asked to show, not through a side effect near it.
+    The modal loop would block, so ``QMessageBox.exec`` is replaced by a recorder -- what
+    matters is that a message box is constructed, carries the version, and is exec'd.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    from gigaxml import __version__
+
+    shown: list[QMessageBox] = []
+
+    def record(box: QMessageBox) -> int:
+        shown.append(box)
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", record)
 
     window._show_about()
 
-    assert __version__ in window.statusBar().currentMessage()
+    assert len(shown) == 1, "About must raise exactly one dialog"
+    box = shown[0]
+    assert isinstance(box, QMessageBox)
+    assert __version__ in box.text()
+    assert box.text() == about_text()
+
+
+def test_about_no_longer_disappears_on_its_own(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression guard: no *timed* status message is posted for "About".
+
+    The old code called ``showMessage(text, 5000)``. A timed message auto-clears, and five
+    seconds in the corner is what the user reported as "nothing happened". Reverting to
+    that shape must turn this red, so the assertion is on the timeout, not on the text:
+    a permanent status message would be a different design, not this defect.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    posts: list[tuple[str, int]] = []
+
+    def record_post(message: str, timeout: int = 0) -> None:
+        posts.append((message, timeout))
+
+    monkeypatch.setattr(window.statusBar(), "showMessage", record_post)
+    monkeypatch.setattr(QMessageBox, "exec", lambda _box: 0)
+
+    window._show_about()
+
+    timed = [entry for entry in posts if entry[1] > 0]
+    assert timed == [], f"About must not post a timed status message, got {timed!r}"
 
 
 def test_a_mime_object_without_urls_is_not_a_file() -> None:

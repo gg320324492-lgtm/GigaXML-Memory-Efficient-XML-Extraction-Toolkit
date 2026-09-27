@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -63,6 +64,34 @@ from gigaxml.gui.settings import Settings, SettingsStore
 #: The file the recent-documents list lives in, under the state directory.
 RECENT_FILES_NAME = "recent_files.json"
 SETTINGS_FILE_NAME = "settings.json"
+
+
+def about_text() -> str:
+    """What the About box says.
+
+    Built from the package's own metadata rather than typed out here. The version is the
+    one the running code reports, and the homepage is the one declared in ``pyproject.toml``
+    -- a second hand-written copy is a copy that drifts, which this project has paid for
+    before (the installer script was the one version carrier that quietly fell behind).
+
+    Nothing here is allowed to raise: an About box that fails to open is the exact defect
+    it is meant to fix. A source checkout with no installed metadata falls back to the
+    homepage's absence rather than an exception.
+    """
+    from gigaxml import __version__
+
+    lines = [tr("GigaXML {} — the CLI does the work").format(__version__)]
+
+    try:
+        from importlib.metadata import metadata
+
+        home = metadata("gigaxml").get("Homepage")
+    except Exception:
+        home = None
+    if home:
+        lines.append("")
+        lines.append(home)
+    return "\n".join(lines)
 
 
 class MainWindow(QMainWindow):
@@ -351,11 +380,24 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about)
 
     def _show_about(self) -> None:
-        from gigaxml import __version__
+        """Answer a question the user asked, somewhere they will actually look.
 
-        self.statusBar().showMessage(
-            tr("GigaXML {} — the CLI does the work").format(__version__), 5000
-        )
+        This used to write a line to the status bar with a five second timeout. Every
+        other status message in the window is a *transient* note about something that just
+        happened and that the user can see for themselves -- a file opened, a path copied.
+        A menu item called "About" is not that: the user asked for information and expects
+        a panel to stay until they dismiss it. Five seconds in the corner reads as the menu
+        item being broken, which is how it was reported.
+
+        The text is built by ``about_text`` so that a test can assert what it says without
+        opening a modal dialog and blocking there.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("About GigaXML"))
+        box.setText(about_text())
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
 
     # -- dropping on the window --------------------------------------------
 
