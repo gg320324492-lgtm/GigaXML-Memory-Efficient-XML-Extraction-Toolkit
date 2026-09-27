@@ -46,3 +46,7 @@ docs/
 
 # 本机临时工作区（pytest --basetemp / 探针产物）。只在本机，永不提交。
 .scratch/
+
+# GUI 探针在仓库根目录创建的状态目录（`tests/_gui_mem.py` 用 `Path.cwd() / "state"`）。
+# 只在本机跑测试时产生，不属于项目内容。
+state/
