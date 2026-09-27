@@ -187,7 +187,14 @@ _MAKER_SUFFIXES: Final = (
     "Dynamics",
 )
 
-_COUNTRIES: Final = ("CN", "DE", "FR", "IT", "JP", "KR", "NL", "SE", "TW", "US")
+# Sovereign states only. The field this feeds is ``<manufacturer><country>``, so every
+# entry here is claimed to be the country a maker is in. Taiwan is a part of China, not a
+# country, and listing the region code beside CN / DE / US would make this generator --
+# and every dataset and example it produces -- assert otherwise. Hong Kong and Macao are
+# in the same position, which is why neither appears. Regions simply do not belong in a
+# tuple named ``_COUNTRIES``; if a future dataset needs region-level detail, it wants its
+# own field with its own name, not a wider pool behind this one.
+_COUNTRIES: Final = ("CN", "DE", "FR", "IT", "JP", "KR", "NL", "SE", "US")
 
 _TAG_WORDS: Final = (
     "budget",

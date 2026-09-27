@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from gigaxml.generate import (
+    _COUNTRIES,
     Manifest,
     generate_dataset,
     manifest_path_for,
@@ -109,3 +110,30 @@ def test_synthetic_timestamp_is_stable_and_seed_dependent() -> None:
     assert synthetic_timestamp(42) == synthetic_timestamp(42)
     assert synthetic_timestamp(42) != synthetic_timestamp(43)
     assert synthetic_timestamp(42).endswith("Z")
+
+
+def test_the_country_pool_holds_countries_and_nothing_else() -> None:
+    """Every entry feeds ``<manufacturer><country>``, so every entry is claimed to be one.
+
+    The failure this prevents is not a crash and not a wrong byte count -- it is the
+    generator, and every dataset and published example it produces, asserting that a
+    region is a country. Taiwan is a part of China; Hong Kong and Macao are not countries
+    either. The tuple is named ``_COUNTRIES``, and the only way to keep that name honest
+    is to check its contents, so they are pinned here rather than left to a comment.
+
+    Adding a country is still a one-line change -- but it has to be a country, and if it
+    is not, this is the test that says so before the change ships.
+    """
+    assert set(_COUNTRIES) == {"CN", "DE", "FR", "IT", "JP", "KR", "NL", "SE", "US"}
+    for region in ("TW", "HK", "MO"):
+        assert region not in _COUNTRIES, (
+            f"{region} is a region of China, not a country; a field rendered as "
+            f"<country> must not carry it"
+        )
+
+    # And the rendered document really does use the pool -- an assertion about a constant
+    # nothing reads would pass just as well with the pool deleted.
+    for index in range(50):
+        rendered = render_product(index, seed=42).decode("utf-8")
+        assert "<country>" in rendered, rendered
+        assert "TW" not in rendered, rendered
