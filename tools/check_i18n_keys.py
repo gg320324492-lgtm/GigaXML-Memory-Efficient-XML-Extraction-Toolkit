@@ -143,31 +143,47 @@ def _tr_literals(tree: ast.AST) -> set[str]:
     return keys
 
 
-def _count_of_nouns(tree: ast.AST, where: str) -> tuple[set[str], list[str]]:
-    """The nouns handed to ``count_of``, and the call sites whose noun is not a literal.
+def _count_of_nouns(tree: ast.AST, where: str) -> tuple[set[str], list[str], dict[str, list[str]]]:
+    """The nouns handed to ``count_of``, the call sites whose noun is not a literal,
+    and where each readable noun is used.
 
     ``count_of`` builds its table key at run time -- ``"{{}} " + noun``, plural or not --
     so scan 1 cannot see what it will ask the table for: the key exists nowhere as a
     literal. This walks the call sites instead and collects what the keys will be made
-    from. A call site whose noun is anything other than a string literal is returned in
-    ``dynamic`` rather than skipped: a noun this scan cannot read is a set of keys it
-    cannot check, and that must be a decision a person makes, not a gap nobody notices.
+    from. The noun arrives either as the second positional argument or as ``noun=``, and
+    both spellings name the same parameter, so both are read. A call site whose noun is
+    anything other than a string literal is returned in ``dynamic`` rather than skipped:
+    a noun this scan cannot read is a set of keys it cannot check, and that must be a
+    decision a person makes, not a gap nobody notices.
     """
     nouns: set[str] = set()
     dynamic: list[str] = []
+    sites: dict[str, list[str]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
         name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-        if name != "count_of" or len(node.args) < 2:
+        if name != "count_of":
             continue
-        noun_arg = node.args[1]
-        if isinstance(noun_arg, ast.Constant) and isinstance(noun_arg.value, str):
+        noun_arg: ast.expr | None = None
+        if len(node.args) >= 2:
+            noun_arg = node.args[1]
+        else:
+            for keyword in node.keywords:
+                if keyword.arg == "noun":  # `**kwargs` arrives with arg None and is skipped
+                    noun_arg = keyword.value
+                    break
+        if noun_arg is None:
+            # No second positional and no noun=: a TypeError at run time, and no key to
+            # check here. Reported like any other unreadable noun, never waved through.
+            dynamic.append(f"{where}:{node.lineno}")
+        elif isinstance(noun_arg, ast.Constant) and isinstance(noun_arg.value, str):
             nouns.add(noun_arg.value)
+            sites.setdefault(noun_arg.value, []).append(f"{where}:{node.lineno}")
         else:
             dynamic.append(f"{where}:{node.lineno}")
-    return nouns, dynamic
+    return nouns, dynamic, sites
 
 
 def main() -> int:
@@ -214,10 +230,10 @@ def main() -> int:
     for path in sorted(SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         where = str(path.relative_to(SRC))
-        nouns, dynamic = _count_of_nouns(tree, where)
+        nouns, dynamic, sites = _count_of_nouns(tree, where)
         all_nouns |= nouns
-        for noun in nouns:
-            noun_sites.setdefault(noun, []).append(where)
+        for noun, locations in sites.items():
+            noun_sites.setdefault(noun, []).extend(locations)
         dynamic_sites.extend(dynamic)
     if not all_nouns:
         # Zero is not a clean answer, it is a broken scanner: this interface counts rows,
