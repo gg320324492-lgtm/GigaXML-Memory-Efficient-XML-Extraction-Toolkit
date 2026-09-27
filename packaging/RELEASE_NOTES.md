@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 1.0.0 — the version in this build's file properties, and the one the package reports |
+| **Version** | 1.1.0 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -33,6 +33,20 @@ The window does the same things: **GigaXML**
   the packaged application is the same program.
 - The interface runs in English or Chinese, chosen in the settings panel — see
   [Languages](#languages).
+
+### What changed in 1.1.0
+
+**The generated data changed.** The synthetic generator's country pool held a region code
+beside nine sovereign states, and the field it feeds is `<manufacturer><country>` — so
+every dataset this tool produced was presenting a part of China as a country. The code is
+gone, and a test now pins what may be in that pool. Hong Kong and Macao are in the same
+position and were never in it; they are covered by the same test, so they cannot be added
+by accident either.
+
+**If you generated datasets with an earlier version, their contents and their `sha256`
+will differ from this build's.** The pool losing a member changes the random sequence
+behind a given seed. Nothing about the command line, the config format or the output
+format changed — only which bytes a seed produces.
 
 ---
 
@@ -68,7 +82,7 @@ for how to reproduce them.
    `%APPDATA%\GigaXML`.
 3. Run `gigaxml-gui\gigaxml-gui.exe`.
 
-There is also an installer, `GigaXML-Setup-1.0.0.exe`, built by the same pipeline as the
+There is also an installer, `GigaXML-Setup-1.1.0.exe`, built by the same pipeline as the
 zip — its version comes from the package, not from a hand-typed file. It installs per
 user, so there is no administrator prompt: no services, no drivers, just the application
 into a folder you own, with a Start-menu shortcut and an optional desktop one. Its

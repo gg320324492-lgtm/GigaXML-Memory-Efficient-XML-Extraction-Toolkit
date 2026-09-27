@@ -20,7 +20,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: This release's version, spelled the way the tag spells it. The tag itself is pushed by
 #: a human step outside the test suite, but everything the tag names has to match this
 #: string, and this constant is where "what are we releasing" is written down once.
-RELEASE_VERSION = "1.0.0"
+RELEASE_VERSION = "1.1.0"
 
 
 def test_the_package_version_and_the_import_version_agree() -> None:
@@ -41,11 +41,13 @@ def test_the_release_notes_announce_the_same_version() -> None:
 def test_the_version_is_not_a_development_placeholder() -> None:
     """A version that parses but carries no release semantics has slipped through.
 
-    ``1.0.0`` is a deliberate statement: the interface in the README's Non-goals and Known
-    limitations is the interface, and it is no longer allowed to move under a user.
-    ``0.x`` meant the opposite -- usable, but still free to change. What this refuses is
-    the placeholder class -- a version left at a pre-release snapshot or one carrying a
-    local suffix that no tag and no PyPI upload would match.
+    ``1.x`` is a deliberate statement: the interface in the README's Non-goals and Known
+    limitations is the interface, and it is no longer allowed to move under a user --
+    ``1.1.0`` added to the generator's output rather than changing the interface, which is
+    exactly the difference the major number is there to record. ``0.x`` meant the
+    opposite: usable, but still free to change. What this refuses is the placeholder class
+    -- a version left at a pre-release snapshot or one carrying a local suffix that no tag
+    and no PyPI upload would match.
     """
     parts = __version__.split(".")
     assert len(parts) == 3
