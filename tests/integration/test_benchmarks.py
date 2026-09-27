@@ -105,7 +105,17 @@ def test_the_harness_still_produces_results_of_the_expected_shape(
     assert completed.returncode == 0, completed.stderr[-600:]
 
     results = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
-    assert len(results) == 2, "one row per config"
+    # One *group* per config, `--repeat` rows per group (the harness defaults to 5):
+    # the repeats are the point of the harness now, so the assertion follows the group
+    # structure instead of assuming a single row per config.
+    by_label: dict[str, list[dict]] = {}
+    for row in results:
+        by_label.setdefault(row["label"], []).append(row)
+    assert len(by_label) == 2, "one group per config"
+    assert {len(rows) for rows in by_label.values()} == {5}, (
+        f"every config must produce --repeat runs (default 5): "
+        f"{ {label: len(rows) for label, rows in by_label.items()} }"
+    )
 
     for row in results:
         assert set(row) >= RESULT_KEYS, f"missing keys in {row}"
