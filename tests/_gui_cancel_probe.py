@@ -160,13 +160,13 @@ def _measure(xml_path: str, work_dir: str, *, checkpoint: bool) -> dict[str, obj
     # is nothing to wait for -- the cancel lands the moment the child is working.
     #
     # **Nothing here waits a fixed time.** The probe used to sleep 2.5 s between "busy" and
-    # "cancel", calibrated against a run it assumed would last ~15 s; on the machine this
-    # runs on, a 403 MB extract -- even with the six-field configuration -- finishes in
-    # under three, and both cancel tests failed their own premise: the run was over, the
-    # cancel landed on a completed process, and the payload said so honestly
-    # (``was_running_when_cancelled: false, exit_code: 0``). Every wait now watches for the
-    # fact the test actually needs -- a progress line; a part committed -- and the cancel
-    # fires the moment that fact holds, which is a premise, not a race.
+    # "cancel", calibrated against a run it assumed would last ~15 s. That sleep was the
+    # whole defect: whether it outlasted the run was luck, and when it did, both cancel
+    # tests failed their own premise -- the run was over, the cancel landed on a completed
+    # process, and the payload said so honestly (``was_running_when_cancelled: false``).
+    # Every wait now watches for the fact the test actually needs -- a progress line; a
+    # part committed -- and the cancel fires the moment that fact holds, which is a
+    # premise, not a race.
     _pump_until(application, panel, lambda: bool(shown), timeout_s=_FIRST_PROGRESS_TIMEOUT_S)
     if checkpoint:
         _pump_until(

@@ -78,11 +78,17 @@ def test_every_gui_probe_runs_standalone(tmp_path: pathlib.Path, s10_path: pathl
     **Each probe is asserted against its own payload schema, by name.** The per-schema
     facts below are the deterministic ones -- what must hold whichever way the race
     between the document's end and the cancel lands. What is deliberately *not* asserted
-    is ``was_running_when_cancelled`` being a specific boolean: on this machine the 10 MB
-    document finishes before the cancel lands (measured: the probe reports
-    ``was_running_when_cancelled: false, killed: false, exit_code: 0``), and on a slower
-    one it would not -- so either outcome is legitimate and only the self-consistency is
-    a fact. The assertions must therefore hold on both branches.
+    is ``was_running_when_cancelled`` being a specific boolean: whether the cancel lands
+    before a short document finishes is a race, and *both* outcomes are legitimate. Only
+    the self-consistency is a fact, so the assertions must hold on both branches.
+
+    An earlier version of this paragraph claimed it was measured that the 10 MB document
+    finishes first, reporting ``was_running_when_cancelled: false``. That was not true of
+    this machine, then or now: measured 3 runs out of 3 on ``s10.xml``, the cancel lands
+    mid-run (``was_running=True killed=True exit=1``, ``cancel_took_s=0.002``), and the
+    same holds on ``s400.xml`` (7/7). The race is real; that particular outcome of it was
+    not, and stating an unverified observation as a measurement is how a stale claim
+    outlives the code it described.
     """
     env = {key: value for key, value in os.environ.items() if key != "GIGAXML_GUI_STATE_DIR"}
     env["QT_QPA_PLATFORM"] = "offscreen"

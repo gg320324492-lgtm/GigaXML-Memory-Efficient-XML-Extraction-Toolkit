@@ -56,12 +56,15 @@ def test_count_of_nouns_reads_keyword_forms_and_reports_the_unreadable() -> None
         """
     )
     result = _count_of_nouns(ast.parse(source), "synthetic")
-    # Positional reads, with the third element (per-noun locations) optional: a scan
-    # from before the locations were tracked still exposes the two things this test
-    # judges -- which nouns were read, and which call sites were unreadable.
+    # Positional reads. Whether the *third* element can be judged is decided by the result's
+    # **shape**, never by whether its contents happen to be empty: a scan from before the
+    # locations were tracked returns a pair, and there is then nothing to check -- but a
+    # triple whose mapping is empty is a scan that dropped the locations, which is exactly
+    # what the assertions below must catch. Guarding on `if sites:` conflated the two and
+    # let an empty mapping pass in silence.
     nouns = set(result[0])
     dynamic = list(result[1])
-    sites = dict(result[2]) if len(result) > 2 else {}
+    tracks_locations = len(result) > 2
     lines = source.splitlines()
     unreadable = [
         f"synthetic:{number}"
@@ -82,6 +85,15 @@ def test_count_of_nouns_reads_keyword_forms_and_reports_the_unreadable() -> None
         f"unreadable sites {dynamic}"
     )
     assert dynamic == unreadable
-    if sites:
-        assert sites["gadget"] == [keyword_literal]
-        assert sites["row"] == [positional]
+    if tracks_locations:
+        sites = dict(result[2])
+        # Keyed lookups would fail with KeyError, which reads as "the test and the scan
+        # disagree about a shape" -- the same wrong-red this file was rewritten to avoid.
+        # Naming the missing noun in an assertion keeps the failure about the scan's
+        # behaviour: a noun it read but did not locate.
+        assert "gadget" in sites, f"the keyword-spelled noun was not located: {sites}"
+        assert "row" in sites, f"the positional noun was not located: {sites}"
+        assert sites["gadget"] == [keyword_literal], (
+            f"the keyword-spelled noun's location is wrong: {sites}"
+        )
+        assert sites["row"] == [positional], f"the positional noun's location is wrong: {sites}"
