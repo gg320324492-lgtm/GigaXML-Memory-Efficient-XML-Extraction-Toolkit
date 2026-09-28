@@ -183,12 +183,27 @@ and ``end``-only events never deliver a closing event for any element *outside* 
 the record being written cut that to 48.1 / 296.6 / 1222.0 MB — a 68% reduction at 4 GB,
 at a cost of about 24% throughput.
 
-**The residual growth is still there and is not resolved by this suite.** The claim being
-made is narrower and checkable: the trap is real, it is large, and fixing it is a
-deliberate trade. Whether the remaining growth can be driven flat is a question this
-report does not answer. GigaXML encodes the discipline in the tool, so a user gets it
-without knowing the trap exists — **but the knowledge itself is learnable, and a
-determined hand-written script can get far below the numbers above.**
+**Where the residual growth comes from — measured, not guessed.** Sampling `peak_wset`
+every 500,000 records while the loop runs shows a flat 24.3–24.8 MB at every size, and
+the full number appears only after the loop exits:
+
+| Document | during the loop | after the iterparse object is released | reported above |
+|---|---|---|---|
+| 100 MB | 24.7 MB | 47.3 MB | 48.1 MB |
+| 1 GB | 24.8 MB | 298.4 MB | 296.6 MB |
+| 4 GB | 24.3 MB | — | 1222.0 MB |
+
+**The record processing itself is flat at every size.** The growth is the lxml SAX parse
+context being released when the `iterparse` object is destroyed: libxml2 allocates that
+context in proportion to the document, and it comes back in one piece at the end. So the
+honest description of the hand-written script is "bounded *while extracting*, with a
+parser-context cost that scales with the file" — which is a real and common shape, and
+not the same claim as GigaXML's, whose 19 MB at 4 GB includes no such term.
+
+**What this report does not claim:** that a hand-written script cannot do better.
+The knowledge is learnable, the record loop here is already the bounded version, and the
+remaining cost is libxml2's rather than the script's. What the tool adds is that a user
+never has to learn any of it.
 
 ## Known unfairnesses in this comparison
 

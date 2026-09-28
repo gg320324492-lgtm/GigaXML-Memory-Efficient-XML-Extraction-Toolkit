@@ -209,10 +209,11 @@ the file: 118.7 MB at 100 MB of input, 3850 MB at 4 GB. That is the documented c
 idiom, and nothing warns you — elements outside the `tag=` filter never deliver a closing
 event, so the containers are never released. Switching to `events=("start", "end")` and
 releasing everything outside the record cut it to the 1222 MB above, at a cost of about
-24% throughput. **The knowledge is learnable and a determined script can get much
-further; what GigaXML adds is that you never have to learn it.** What the comparison
-cannot claim is that the remaining growth is GigaXML's exclusive — the report says the
-residual is unresolved.
+24% throughput. Sampling every 500,000 records shows the
+record loop itself flat at ~24 MB at every size; the rest appears when libxml2 releases
+its parse context at the end, and that allocation scales with the document. **The
+knowledge is learnable and a determined script can get much further** — what GigaXML
+adds is that you never have to learn it.
 
 What the throughput buys, each measured rather than asserted: a corrupted record
 mid-file ends the hand-written script (exit 1, header only in the CSV) while
