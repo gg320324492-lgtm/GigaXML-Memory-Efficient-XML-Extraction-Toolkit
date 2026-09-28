@@ -272,6 +272,14 @@ large sizes; for analysis of documents that fit, it is.**
   records already accounted for. On a 403 MB file that costs 8.7 s against 17.1 s to
   extract, so resuming saves roughly half of what you had already done. `--help` says so
   too.
+- **Parquet output carries a fixed cost that CSV and JSONL do not.** The reader stays
+  flat for every format, but the Arrow library behind Parquet allocates a working set of
+  its own: measured on a 403 MB document, the whole pipeline peaks at 99 MB writing Parquet
+  against about 25 MB writing CSV on the same data, of which roughly 20 MB is simply
+  `import pyarrow`. That cost does not scale with `--batch-size` (1,000 / 5,000 / 20,000
+  all land within 8 MB of each other), so it is Arrow's workspace rather than a buffer
+  this project controls. It is stated here rather than left to be discovered: CSV and
+  JSONL remain the formats to reach for when a hard memory ceiling matters.
 - **`inspect` is slower than `extract`** — 17.3 MiB/s against 38.2 MiB/s on the same
   1 GB file. It maintains several parallel bookkeeping stacks per element. It is also the
   command you run once on a document, not in a loop.
