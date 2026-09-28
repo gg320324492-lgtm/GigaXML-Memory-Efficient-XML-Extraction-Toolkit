@@ -45,7 +45,10 @@ def main() -> int:
             # fails outright on the 1 GB file) is not a reason to refuse the comparison:
             # the others still have to agree, and the failure is recorded in results.json
             # and REPORT.md. Said here so an absent file is never read as agreement.
-            print(f"{size}: no output for {', '.join(missing)} (recorded as a failure in results.json)")
+            print(
+                f"{size}: no output for {', '.join(missing)} "
+                "(recorded as a failure in results.json)"
+            )
         comparable = [name for name in BYTE_IDENTICAL if name in present]
         if len(comparable) < 3:
             print(f"{size}: only {len(comparable)} of the byte-identical group produced output")

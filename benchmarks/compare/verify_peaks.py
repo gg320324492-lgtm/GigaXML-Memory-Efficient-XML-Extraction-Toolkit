@@ -106,8 +106,10 @@ def main() -> int:
 
     print(f"{checked} peak readings checked against the {floor:.1f} MiB floor")
     if failures:
-        print(f"{failures} reading(s) below the floor -- the sampler that produced "
-              "them is broken; fix the sampler, do not report the numbers")
+        print(
+            f"{failures} reading(s) below the floor -- the sampler that produced "
+            "them is broken; fix the sampler, do not report the numbers"
+        )
         return 1
     print("every peak reading is at or above the idle floor")
     return 0

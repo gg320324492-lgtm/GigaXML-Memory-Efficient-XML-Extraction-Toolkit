@@ -170,8 +170,8 @@ def count_data_rows(path: Path) -> int:
             count += chunk.count(b"\n")
         # A CSV whose last line has no trailing newline still holds a record: seek to
         # the end rather than reading the file twice.
-        handle.seek(-1, 2) if path.stat().st_size else None
-        if handle.tell() >= 0:
+        if path.stat().st_size:
+            handle.seek(-1, 2)
             if handle.read(1) != b"\n":
                 count += 1
     return max(0, count - 1)  # minus the header
