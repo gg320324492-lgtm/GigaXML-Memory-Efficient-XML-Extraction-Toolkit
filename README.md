@@ -190,46 +190,69 @@ and all.
 
 ### vs raw `lxml` (hand-written)
 
-**The hand-written script wins on raw throughput at every size, by roughly 1.9×, and
+**The hand-written script wins on raw throughput at every size, by roughly 1.5×, and
 that is stated first because it is true:**
 
-| Implementation | 100 MB | 1 GB | 4 GB | Peak RSS (4 GB) |
+| Implementation | 100 MB | 1 GB | 4 GB | Peak RSS (100 MB → 4 GB) |
 |---|---|---|---|---|
-| hand-written `lxml` | **3.53 s** | **35.6 s** | **143.9 s** | 4.1 MB |
-| GigaXML | 6.95 s | 69.2 s | 281.2 s | 4.1 MB |
+| hand-written `lxml` | **4.59 s** | **44.2 s** | **176.6 s** | 48 MB → 1222 MB |
+| GigaXML | 7.05 s | 70.5 s | 266.2 s | **19.4 MB → 19.1 MB** |
 
 A fixed task, known fields and one script you maintain: that is the case where the
-hand-written script is the better tool, and no amount of toolkit changes that.
+hand-written script is the better tool on time, and no amount of toolkit changes that.
+The margin was larger before the comparison was corrected, and the correction is the
+point — see the memory note below.
 
-What the 1.9× buys — each measured in the comparison's corrupted-record and interruption
-experiments: a corrupted record mid-file ends the hand-written script (exit 1, header
-only in the CSV) while `on_error: quarantine` extracts the 290,899 good records and
-writes the bad one to `rejected.jsonl` with its index, field and raw value; an
-interrupted GigaXML run resumes from its last committed part after verifying the source
-and config are unchanged; switching fields is a YAML edit instead of a code edit;
-switching output to JSONL or Parquet is a flag; and every output lands atomically — a
-failed or cancelled run never leaves a half-written file where a reader would find it.
+**The hand-written script loses on memory, and that is also measured.** Written the way
+lxml's own documentation shows (`events=("end",)` with a `tag=` filter), it grows with
+the file: 118.7 MB at 100 MB of input, 3850 MB at 4 GB. That is the documented cleanup
+idiom, and nothing warns you — elements outside the `tag=` filter never deliver a closing
+event, so the containers are never released. Switching to `events=("start", "end")` and
+releasing everything outside the record cut it to the 1222 MB above, at a cost of about
+24% throughput. **The knowledge is learnable and a determined script can get much
+further; what GigaXML adds is that you never have to learn it.** What the comparison
+cannot claim is that the remaining growth is GigaXML's exclusive — the report says the
+residual is unresolved.
+
+What the throughput buys, each measured rather than asserted: a corrupted record
+mid-file ends the hand-written script (exit 1, header only in the CSV) while
+`on_error: quarantine` extracts the 290,899 good records and writes the bad one to
+`rejected.jsonl` with its index, field and raw value; an interrupted GigaXML run
+resumes from its last committed part after verifying the source and config are
+unchanged; switching fields is a YAML edit instead of a code edit; switching output to
+JSONL or Parquet is a flag; and every output lands atomically — a failed or cancelled
+run never leaves a half-written file where a reader would find it.
 
 ### vs `xmltodict`
 
-xmltodict's streaming mode (`item_depth`) is genuinely streaming — its peak RSS matches
-GigaXML's at every size, which the comparison records rather than hides — and it is the
-right pick when you want the whole document as Python dicts, not a field extraction.
-For the extraction task it costs ~1.4× the time (5.60 s vs 6.95 s per 100 MB is
-GigaXML's loss; 57.4 s vs 69.2 s per 1 GB and 229.2 s vs 281.2 s per 4 GB are
-xmltodict's), and it shares the hand-written script's weakness on bad records: one
+xmltodict's streaming mode (`item_depth`) does keep the document from accumulating —
+but its peak still climbs with the file (43.4 MB at 100 MB, 707.4 MB at 4 GB), which
+the comparison records rather than hides — and it is the right pick when you want the
+whole document as Python dicts, not a field extraction. For the extraction task it costs
+about 1.3× the time against GigaXML (5.61 s vs 7.05 s per 100 MB is GigaXML's loss;
+57.1 s vs 70.5 s per 1 GB and 226.2 s vs 266.2 s per 4 GB are xmltodict's), and it
+shares the hand-written script's weakness on bad records: one
 malformed value ends the run.
 
 ### vs `pandas.read_xml`
 
 `read_xml` is the fastest route *into a DataFrame* and the natural pick when the goal
-is analysis, not extraction. Two measured limits: it cannot reach the nested
-`manufacturer/name` field (its output in the comparison carries the column empty, and
-its five extracted columns match the other implementations line-for-line), and on the
-1 GB document it fails outright — `lxml.etree.XMLSyntaxError: switching encoding` from
-pandas 3.0.6, reproducible with both path and file-object inputs, while the 100 MB file
-of the same generator parses fine. For the extraction-to-file task it is therefore not
-a contender at large sizes; for analysis of documents that fit, it is.
+is analysis, not extraction. Three measured limits. It cannot reach the nested
+`manufacturer/name` field (its output in the comparison carries the column empty, and at
+100 MB and 1 GB its five extracted columns match the other implementations line for
+line). On the 1 GB document it fails outright — `lxml.etree.XMLSyntaxError: switching
+encoding` from pandas 3.0.6, reproducible with both path and file-object inputs, while
+the 100 MB file of the same generator parses fine. And on the 4 GB document **it returns
+exit 0 and writes 1,429,504 rows fewer than the document contains** — it stopped at
+exactly 10 × 2²⁰ and wrote nothing further, with no error, no warning, and a
+structurally perfect CSV that any tool will open.
+
+That last one is the reason this suite counts output rows rather than trusting the
+document's record count. A rate measured over a truncated output is not a rate: an
+earlier version of this comparison divided pandas's 4 GB runtime by the document's
+record count and credited it with about 20% more throughput for a run that dropped 12%
+of the data. **For the extraction-to-file task `read_xml` is therefore not a contender at
+large sizes; for analysis of documents that fit, it is.**
 
 ---
 

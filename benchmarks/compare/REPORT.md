@@ -28,42 +28,60 @@ Wall-clock medians over 5 runs (raw per-run values, min/max/stdev/p95 in
 
 ### 100 MB
 
-| Implementation | Median | rec/s | Peak RSS | Output |
-|---|---|---|---|---|
-| **raw lxml (hand-written)** | **3.53 s** | **82,478** | 4.1 MB | 18.9 MB |
-| xmltodict (streaming) | 5.60 s | 51,974 | 4.1 MB | 18.9 MB |
-| pandas.read_xml | 5.70 s | 51,044 | 4.1 MB | 13.5 MB * |
-| GigaXML | 6.95 s | 41,832 | 4.1 MB | 18.9 MB |
+| Implementation | Median | rec/s | Peak RSS | Rows written | Output |
+|---|---|---|---|---|---|
+| **raw lxml (hand-written)** | **4.59 s** | **63,321** | 48.1 MB | 290,900 | 18.9 MB |
+| xmltodict (streaming) | 5.61 s | 51,881 | 43.4 MB | 290,900 | 18.9 MB |
+| pandas.read_xml | 5.89 s | 49,413 | 2050.0 MB * | 290,900 | 13.5 MB * |
+| GigaXML | 7.05 s | 41,262 | 19.4 MB | 290,900 | 18.9 MB |
 
 ### 1 GB
 
-| Implementation | Median | rec/s | Peak RSS | Output |
-|---|---|---|---|---|
-| **raw lxml** | **35.6 s** | **83,592** | 4.1 MB | 189 MB |
-| xmltodict | 57.4 s | 51,868 | 4.1 MB | 189 MB |
-| pandas.read_xml | **failed** | — | — | — |
-| GigaXML | 69.2 s | 43,038 | 4.1 MB | 189 MB |
+| Implementation | Median | rec/s | Peak RSS | Rows written | Output |
+|---|---|---|---|---|---|
+| **raw lxml** | **44.2 s** | **67,343** | 296.6 MB | 2,978,816 | 189 MB |
+| xmltodict | 57.1 s | 52,202 | 191.7 MB | 2,978,816 | 189 MB |
+| pandas.read_xml | **failed** | — | — | — | — |
+| GigaXML | 70.5 s | 42,279 | 19.4 MB | 2,978,816 | 189 MB |
 
 ### 4 GB
 
-| Implementation | Median | rec/s | Peak RSS | Output |
-|---|---|---|---|---|
-| **raw lxml** | **143.9 s** | **82,815** | 4.1 MB | 758 MB |
-| xmltodict | 229.2 s | 51,993 | 4.1 MB | 758 MB |
-| pandas.read_xml | not run | — | — | — |
-| GigaXML | 281.2 s | 42,378 | 4.1 MB | 758 MB |
+| Implementation | Median | rec/s | Peak RSS | Rows written | Output |
+|---|---|---|---|---|---|
+| **raw lxml** | **176.6 s** | **67,475** | 1222.0 MB | 11,915,264 | 758 MB |
+| xmltodict | 226.2 s | 52,686 | 707.4 MB | 11,915,264 | 758 MB |
+| pandas.read_xml | 859.9 s | 12,193 † | 26838.2 MB | **10,485,760 †** | 691 MB † |
+| GigaXML | 266.2 s | 44,764 | 19.1 MB | 11,915,264 | 758 MB |
 
 \* pandas writes an empty `manufacturer` column: `read_xml` cannot reach text of an
 element nested inside a child element (`manufacturer/name`), which the task's sixth
-field requires. On the five columns it can extract, its output is **line-for-line
-identical** to the other implementations.
+field requires. Its peak of 2050 MB on a 100 MB document is the price: it builds the
+whole document into a DataFrame first, which is the design, not a defect of the task.
+
+† **pandas returned exit 0 and silently wrote 1,429,504 rows fewer than the document
+contains** — 10,485,760 of 11,915,264, i.e. it stopped at exactly 10 × 2²⁰ and wrote
+nothing further, with no error, no warning, and a structurally perfect CSV that any tool
+will open. Its 12,193 rec/s above is therefore computed over the rows it *delivered*;
+an earlier version of this report divided by the document's record count and reported
+about 20% more throughput for a run that dropped 12% of the data. The runner now counts
+the output file and records `rows_written` and `complete_output` per run, and
+`verify_outputs.py` fails when a produced CSV does not match — which is how this was
+caught. **A rate measured over a truncated output is not a rate, and neither is a CSV
+you can trust because it opens cleanly.**
 
 ### What dimension A says, plainly
 
-**Hand-written lxml wins on raw throughput, at every size, by roughly 1.9×.** That is
+**Hand-written lxml wins on raw throughput, at every size, by roughly 1.5×.** That is
 the honest headline and there is no configuration or dataset in these runs where it
 does not. If your task is fixed, your fields are known, and you will maintain the
-script yourself, the 3.5 s per 100 MB is real and GigaXML does not beat it.
+script yourself, the 4.6 s per 100 MB is real and GigaXML does not beat it.
+
+The margin was larger before this suite was corrected, and the correction is itself the
+point: the first version of the hand-written script used the idiomatic ``iterparse``
+recipe from lxml's own documentation, which **leaks** -- see the memory row below. Making
+it fair cost it about 24% of its throughput (3.53 s → 4.59 s at 100 MB), and the 1.5×
+above is the honest number. A comparison that reports the leaky version's speed would be
+measuring a defect.
 
 ## Dimension B — what the hand-written script does not have
 
@@ -82,6 +100,18 @@ every implementation:
 | pandas | `ValueError` during conversion — exit 1; **no output file at all** (the full parse finishes before any row is written). |
 | GigaXML, `on_error: abort` (default) | exit 1 with a message naming the field, the type and the raw value — and **the target file does not exist** (the atomic writer never moves a partial output into place). |
 | GigaXML, `on_error: quarantine` | **exit 0. 290,899 rows written — every good record — and the one bad record in `rejected.jsonl`** with its index, field name, type error and raw value. |
+
+**Two more behaviours, measured on the real runs rather than reasoned about:**
+
+- **The hand-written lxml script's memory grows with the file unless you know the trap**
+  (the table above has the numbers). This is a knowledge difference, not a capability
+  one: `events=("start", "end")` plus releasing everything outside the record is a
+  documented lxml idiom once you have been bitten, and a hand-written script that applies
+  it lands near GigaXML's memory. GigaXML's contribution is that the user does not have
+  to know it exists.
+- **pandas can produce a complete-looking output that is missing data** (the 4 GB row
+  above): exit 0, 12% of the records absent, nothing said. For a pipeline that reads its
+  own output as fact, that is a worse failure than being slow.
 
 ### Resume after interruption
 
@@ -124,12 +154,41 @@ task.
 
 ### Memory (all sizes, all implementations)
 
-Peak RSS of every *streaming* implementation stayed at **4.1 MB** at every size — the
-hand-written lxml with proper `clear()`, xmltodict's `item_depth` streaming, and
-GigaXML all keep memory flat, and the report says so rather than implying GigaXML is
-unique in this. What GigaXML asserts about its own memory is the **ceiling with proof**
-(a runnable harness in `benchmarks/bench_extraction.py`): 4 GB at 33.7 MiB peak, with a
-reversed test that fails if a future change loads the document.
+Peak RSS is the child's own reading of the OS peak counter, and the floor for an idle
+interpreter measured through the same wrapper is **18.2 MiB** — every number below is
+that floor plus the work. `verify_peaks.py` checks exactly this and fails the suite if a
+reading falls below the floor.
+
+| Implementation | 100 MB | 1 GB | 4 GB | Grows with input? |
+|---|---|---|---|---|
+| raw lxml (hand-written) | 48.1 MB | 296.6 MB | 1222.0 MB | **yes, still** (see below) |
+| xmltodict | 43.4 MB | 191.7 MB | 707.4 MB | **yes** |
+| pandas.read_xml | 2050.0 MB | fails | 26838.2 MB | yes, and 27 GB at 4 GB |
+| **GigaXML** | **19.4 MB** | **19.4 MB** | **19.1 MB** | **no** |
+
+**Only GigaXML's memory is flat across a 40× range**, and the report says so rather
+than implying the others are "efficient". The hand-written script is still the honest
+competitor and still wins on time; it does not match this on memory, and the honest
+reading is that the streaming discipline is not free to write by hand.
+
+#### The trap, and what it cost to fix
+
+Written the way lxml's documentation shows — ``events=("end",)`` with a ``tag=`` filter,
+plus the documented ``clear()``-and-unlink idiom — the hand-written script grew with
+the file: **118.7 MB at 100 MB of input, 982.2 MB at 1 GB, 3850.1 MB at 4 GB**. Nothing
+warns about this: the cleanup idiom in the docs is correct for the elements it visits,
+and ``end``-only events never deliver a closing event for any element *outside* the
+``tag=`` filter, so the containers are never visited and never released. Switching to
+``events=("start", "end")`` without a tag filter and releasing every element that is not
+the record being written cut that to 48.1 / 296.6 / 1222.0 MB — a 68% reduction at 4 GB,
+at a cost of about 24% throughput.
+
+**The residual growth is still there and is not resolved by this suite.** The claim being
+made is narrower and checkable: the trap is real, it is large, and fixing it is a
+deliberate trade. Whether the remaining growth can be driven flat is a question this
+report does not answer. GigaXML encodes the discipline in the tool, so a user gets it
+without knowing the trap exists — **but the knowledge itself is learnable, and a
+determined hand-written script can get far below the numbers above.**
 
 ## Known unfairnesses in this comparison
 

@@ -38,43 +38,42 @@ def main() -> int:
         paths = {
             name: SCRATCH / f"cmp-{name}-{size}.csv" for name in (*BYTE_IDENTICAL, FIVE_COLUMN_ONLY)
         }
-        missing = [name for name, path in paths.items() if not path.is_file()]
+        present = {name: path for name, path in paths.items() if path.is_file()}
+        missing = [name for name in paths if name not in present]
         if missing:
-            print(
-                f"{size}: missing outputs for {', '.join(missing)} -- run run_comparison.py first"
-            )
+            # An implementation that could not produce an output at this size (pandas
+            # fails outright on the 1 GB file) is not a reason to refuse the comparison:
+            # the others still have to agree, and the failure is recorded in results.json
+            # and REPORT.md. Said here so an absent file is never read as agreement.
+            print(f"{size}: no output for {', '.join(missing)} (recorded as a failure in results.json)")
+        comparable = [name for name in BYTE_IDENTICAL if name in present]
+        if len(comparable) < 3:
+            print(f"{size}: only {len(comparable)} of the byte-identical group produced output")
             failures += 1
             continue
-        hashes = {name: sha256_of(path) for name, path in paths.items()}
+        hashes = {name: sha256_of(present[name]) for name in comparable}
         groups: dict[str, list[str]] = {}
         for name, digest in hashes.items():
             groups.setdefault(digest, []).append(name)
         identical = next((names for names in groups.values() if len(names) >= 3), None)
-        if identical is None:
-            print(f"{size}: no three implementations agree byte-for-byte: {hashes}")
+        if identical is None or sorted(identical) != sorted(BYTE_IDENTICAL):
+            print(f"{size}: the three did not agree byte-for-byte: {hashes}")
             failures += 1
             continue
-        if sorted(identical) != sorted(BYTE_IDENTICAL):
-            print(
-                f"{size}: byte-identical group is {sorted(identical)}, "
-                f"expected {sorted(BYTE_IDENTICAL)}"
-            )
-            failures += 1
-            continue
-        pandas_path = paths[FIVE_COLUMN_ONLY]
-        five = [
-            [cell for index, cell in enumerate(row) if index != 5] for row in csv_rows(pandas_path)
-        ]
-        reference = csv_rows(paths["raw_lxml"])
-        five_match = [
-            [cell for index, cell in enumerate(row) if index != 5] for row in reference
-        ] == five
-        print(
-            f"{size}: raw_lxml == xmltodict == gigaxml (sha256 {hashes['raw_lxml'][:16]}...); "
-            f"pandas five-column match: {five_match}"
-        )
-        if not five_match:
-            failures += 1
+        line = f"{size}: raw_lxml == xmltodict == gigaxml (sha256 {hashes['raw_lxml'][:16]}...)"
+        if FIVE_COLUMN_ONLY in present:
+            five = [
+                [cell for index, cell in enumerate(row) if index != 5]
+                for row in csv_rows(present[FIVE_COLUMN_ONLY])
+            ]
+            reference = [
+                [cell for index, cell in enumerate(row) if index != 5]
+                for row in csv_rows(present["raw_lxml"])
+            ]
+            line += f"; pandas five-column match: {five == reference}"
+            if five != reference:
+                failures += 1
+        print(line)
 
     return 1 if failures else 0
 
