@@ -46,6 +46,7 @@ __all__ = [
     "ProgressReporter",
     "RejectionLog",
     "RunStats",
+    "_vmhwm_mib",
     "consume_records",
     "peak_rss_mb",
 ]
@@ -81,20 +82,57 @@ def peak_rss_mb() -> float | None:
     treat "we could not measure" as "it used nothing". A missing measurement has to look
     missing.
 
-    On Windows this is ``PeakWorkingSetSize`` through ``psapi``, the same counter the
-    performance suite uses. Elsewhere it is ``getrusage``, whose unit differs between
-    Linux (kibibytes) and macOS (bytes), and whose ``ru_maxrss`` is a maximum over the
-    process's life rather than an instantaneous reading -- which is what a report wants.
+    Three platforms, and none of them guess:
+
+    * **Windows** reads ``PeakWorkingSetSize`` through ``psapi``.
+    * **Linux** reads ``VmHWM`` from ``/proc/self/status``, which the kernel labels in
+      kibibytes. Not ``getrusage``: its ``ru_maxrss`` unit is kilobytes on Linux and
+      bytes on the BSDs, and a runner that reports bytes where kilobytes were expected
+      produces a number 1024 times too large, which looks like a 4 GiB peak in a process
+      that never allocated 4 GiB. The kernel's own file says which unit it is in.
+    * **macOS** is the one place ``getrusage`` is used, because there is no
+      ``/proc``, and its ``ru_maxrss`` is documented in bytes.
     """
     if sys.platform == "win32":
         return _windows_peak_working_set_mb()
+    if sys.platform.startswith("linux"):
+        return _linux_vmhwm_mb()
     try:
         import resource
     except ImportError:  # pragma: no cover - no getrusage on this platform
         return None
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # Linux reports kibibytes, the BSDs and macOS report bytes.
-    return peak / 1024 if sys.platform != "darwin" else peak / _MB
+    # macOS reports bytes; the BSDs report kilobytes.
+    scale = _MB if sys.platform == "darwin" else 1024
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale
+
+
+def _vmhwm_mib(status_text: str) -> float | None:
+    """``VmHWM`` out of ``/proc/self/status`` text, in MiB, or ``None``.
+
+    Split out from the file read so the parsing and the unit conversion are testable on
+    any platform. They are exactly the two things that can be wrong about a Linux
+    reading, and a Linux-only branch cannot be exercised from a Windows checkout --
+    which is how a wrong unit reached a runner and turned a fresh interpreter into a
+    4.2 GiB peak with every other assertion still green.
+
+    ``VmHWM`` is the kernel's peak resident set. The kernel prints it in kibibytes and
+    says so on the same line, which is the whole reason this reads the file instead of
+    calling ``getrusage``: that function's ``ru_maxrss`` unit is kilobytes on Linux and
+    bytes on the BSDs, so code that assumes one is right on the other by a factor of
+    1024, and 1024 looks like a plausible-looking number rather than an obvious bug.
+    """
+    for line in status_text.splitlines():
+        if line.startswith("VmHWM:"):
+            return int(line.split()[1]) / 1024
+    return None
+
+
+def _linux_vmhwm_mb() -> float | None:
+    """Read ``/proc/self/status`` and hand it to :func:`_vmhwm_mib`."""
+    try:
+        return _vmhwm_mib(Path("/proc/self/status").read_text(encoding="ascii"))
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def _windows_peak_working_set_mb() -> float | None:

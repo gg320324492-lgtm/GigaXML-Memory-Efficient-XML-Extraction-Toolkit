@@ -320,6 +320,39 @@ def test_the_peak_reader_returns_a_plausible_number_on_this_platform() -> None:
     assert measured > 1.0, "an interpreter importing lxml occupies more than 1 MiB"
 
 
+def test_the_linux_vmhwm_reading_converts_kibibytes() -> None:
+    """``/proc/self/status`` parsing and its unit, tested on any platform.
+
+    A platform branch that only runs on Linux cannot be exercised from a Windows
+    checkout, and that is not an abstract risk: this branch shipped assuming
+    ``ru_maxrss`` was kibibytes, reached a runner where it was not, and reported a
+    4.2 GiB peak for a process holding 4 MiB -- with every other assertion in this file
+    still green, because 4202 is a perfectly plausible number for a peak.
+
+    So the parse and the conversion are pulled into a plain function and checked here
+    against the kernel's own format, including a line that must be ignored and a file
+    that has no such line at all.
+    """
+    from gigaxml.run import _vmhwm_mib
+
+    status = (
+        "Name:\tgigaxml\n"
+        "VmPeak:\t   4096100 kB\n"
+        "VmSize:\t   4095900 kB\n"
+        "VmHWM:\t      92160 kB\n"
+        "VmRSS:\t      45056 kB\n"
+    )
+    # 92160 kB is 90 MiB. If the conversion is skipped the answer comes back 92160, and
+    # a reader that returned that would look like a process holding 90 GiB.
+    assert _vmhwm_mib(status) == 90.0, (
+        f"parsed {_vmhwm_mib(status)} MiB from a 92160 kB VmHWM, which is 90 MiB"
+    )
+    assert _vmhwm_mib("Name:\tpython\nVmRSS:\t  1 kB\n") is None, (
+        "a status file with no VmHWM must read as unavailable, not as zero"
+    )
+    assert _vmhwm_mib("") is None
+
+
 def test_the_peak_reader_tracks_memory_growth() -> None:
     """Allocate, touch, and the high-water mark must move. This is what makes it a peak.
 
@@ -339,6 +372,7 @@ def test_the_peak_reader_tracks_memory_growth() -> None:
     probe = (
         "import sys\n"
         f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+        "import psutil\n"
         "from gigaxml.run import peak_rss_mb\n"
         "before = peak_rss_mb()\n"
         "if before is None:\n"
@@ -346,7 +380,15 @@ def test_the_peak_reader_tracks_memory_growth() -> None:
         "hog = bytearray(64 * 1024 * 1024)\n"
         "for offset in range(0, len(hog), 4096):\n"
         "    hog[offset] = 1\n"
-        "print(before, peak_rss_mb())\n"
+        # A peak is a maximum over the process's life, so it can never be below what
+        # the process is holding right now. Printing the current working set alongside
+        # it is what catches a unit error: a reader that read bytes where kibibytes
+        # were expected reports a number 1024x too large and looks like a process that
+        # allocated four gigabytes. That is not a hypothetical -- a Linux runner whose
+        # getrusage reported a different unit than the one assumed turned a fresh
+        # interpreter into a 4.2 GiB peak here, and every other assertion in this file
+        # passed happily.
+        "print(before, peak_rss_mb(), psutil.Process().memory_info().rss / (1024 * 1024))\n"
     )
     completed = subprocess.run(
         [sys.executable, "-c", probe],
@@ -360,8 +402,21 @@ def test_the_peak_reader_tracks_memory_growth() -> None:
     if line == "unavailable":
         pytest.skip(f"this platform ({sys.platform}) cannot report a peak working set")
 
-    before, after = (float(value) for value in line.split())
+    before, after, resident = (float(value) for value in line.split())
     assert after > before, (
         f"the peak did not move after touching 64 MiB ({before:.1f} -> {after:.1f} MiB); "
         "this reader is not reporting a peak working set"
+    )
+
+    # The unit check, with a megabyte of slack. The slack is not softness: the peak and
+    # the working set are read a few microseconds apart and the interpreter allocates
+    # in between, so a sub-megabyte inversion is a race rather than a wrong answer. A
+    # unit error is off by 1024, and nothing that small can hide inside a megabyte.
+    assert resident <= after + 1.0, (
+        f"the peak {after:.1f} MiB is below the current working set {resident:.1f} MiB, "
+        "which is impossible: a maximum over the process's life is at least the present"
+    )
+    assert after < resident * 4 + 64, (
+        f"the peak {after:.1f} MiB against a {resident:.1f} MiB working set -- the reader "
+        "is off by a factor, and the usual one is a unit this platform did not expect"
     )
