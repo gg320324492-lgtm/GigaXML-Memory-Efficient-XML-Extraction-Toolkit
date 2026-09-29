@@ -68,7 +68,7 @@ from __future__ import annotations
 
 import gzip
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import closing
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Final
@@ -262,13 +262,19 @@ class StreamingRecordReader:
 
     def __init__(
         self,
-        source: str | Path,
+        source: str | Path | IO[bytes],
         record_path: str,
         namespaces: Mapping[str, str] | None = None,
         *,
         _clean: bool = True,
     ) -> None:
-        self._source = Path(source)
+        # A binary stream is accepted so a document that cannot be named can still be
+        # read: `cat big.xml | gigaxml extract -`. The parse itself is identical either
+        # way, because lxml takes a file-like and reads it in blocks regardless of
+        # whether that file is seekable -- which is why nothing below this line has to
+        # know the difference, and why the memory bound is unchanged.
+        self._stream: IO[bytes] | None = source if hasattr(source, "read") else None
+        self._source = Path(source) if self._stream is None else Path("<stream>")
         self._record_path = record_path
         self._namespaces: dict[str, str] | None = dict(namespaces) if namespaces else None
         self._clean = _clean
@@ -300,6 +306,15 @@ class StreamingRecordReader:
         return self._spec.anchored
 
     def _open(self) -> IO[bytes]:
+        """The byte stream to parse: the caller's, or one this reader opened.
+
+        A caller-supplied stream is handed back untouched and is **not** closed by
+        :meth:`__iter__` -- it belongs to whoever passed it in, and closing standard
+        input out from under a caller that still wants to read it would be a nasty
+        surprise for a one-line convenience.
+        """
+        if self._stream is not None:
+            return self._stream
         if self._source.suffix.lower() in _GZIP_SUFFIXES:
             return gzip.open(self._source, "rb")
         return self._source.open("rb")
@@ -384,7 +399,16 @@ class StreamingRecordReader:
         # stays aligned with the document structure. Memory: O(document depth).
         stack: list[str] = []
 
-        with closing(self._open()) as stream:
+        # Only a stream this reader opened is closed here. A caller's stream -- standard
+        # input, a socket, a file kept open across two documents -- belongs to the
+        # caller, and the reader does not own its lifetime. Everything below the `with`
+        # is the streaming loop and is identical for both kinds of source: lxml pulls
+        # blocks from a file-like whether or not it can seek, so a piped document costs
+        # the same bounded memory as a file on disk.
+        with ExitStack() as owned:
+            stream = self._open()
+            if self._stream is None:
+                owned.enter_context(closing(stream))
             context = etree.iterparse(
                 stream,
                 events=("start", "end"),

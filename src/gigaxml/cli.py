@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from itertools import chain, islice
 from pathlib import Path
+from typing import IO, Final
 
 from lxml import etree
 
@@ -97,7 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
             "the next one arrives, and the writer flushes each batch as it fills."
         ),
     )
-    extract.add_argument("source", help="Input XML file (optionally gzipped).")
+    extract.add_argument(
+        "source",
+        help=(
+            "Input XML file (optionally gzipped), or - to read the document from "
+            "standard input. A stream is parsed exactly as a file is, at the same "
+            "bounded memory; it cannot be used with --resume or --checkpoint-every, "
+            "which verify the source by hashing it."
+        ),
+    )
     extract.add_argument(
         "-c",
         "--config",
@@ -360,6 +369,54 @@ def _handle_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+#: What the ``source`` positional means when it is this: read the document from
+#: standard input. A shell convention rather than a gigaxml one, so a command line
+#: copied out of a pipe works unchanged.
+STDIN_SENTINEL: Final = "-"
+
+
+def _is_stdin(source: str) -> bool:
+    return source == STDIN_SENTINEL
+
+
+def _open_source(source: str) -> str | Path | IO[bytes]:
+    """The reader's source: standard input's buffer, or the path as given.
+
+    ``sys.stdin.buffer`` rather than ``sys.stdin``, because lxml parses bytes and a
+    text-mode handle would have to be re-encoded by lxml one chunk at a time.
+    """
+    if _is_stdin(source):
+        return sys.stdin.buffer
+    return source
+
+
+def _reject_stdin_if_unsupported(args: argparse.Namespace, source: str) -> None:
+    """Refuse the combinations that cannot work on a pipe, by name and by reason.
+
+    Each of these is impossible rather than merely unimplemented, and the failure mode
+    without this check would be the worst kind: not an error at all. ``--resume`` and
+    ``--checkpoint-every`` both exist to *verify* that the document is the one a
+    previous run saw, by hashing it. A stream cannot be re-read, so there is nothing to
+    verify against, and a tool that quietly skipped the check would hand back a
+    guarantee it had not made -- the exact failure this project's resume feature was
+    built to prevent.
+    """
+    if not _is_stdin(source):
+        return
+    if args.resume:
+        raise CheckpointError(
+            "--resume cannot read standard input: resuming works by verifying the "
+            "source's sha256 against the checkpoint, and a stream cannot be read twice. "
+            "Save the document to a file and pass its path instead."
+        )
+    if getattr(args, "checkpoint_every", None) is not None:
+        raise CheckpointError(
+            "--checkpoint-every cannot be used with standard input: a checkpoint records "
+            "the source's sha256 so a resume can check it, and a stream cannot be read "
+            "twice to compute one. Save the document to a file, or drop the flag."
+        )
+
+
 def _handle_extract(args: argparse.Namespace) -> int:
     """Handle ``gigaxml extract``."""
     config = load_config(args.config)
@@ -372,6 +429,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
     started_at = datetime.now(UTC)
     progress = _progress_reporter(args)
 
+    _reject_stdin_if_unsupported(args, args.source)
     if args.resume and args.checkpoint_every is None:
         raise CheckpointError(
             "--resume needs --checkpoint-every too: the part size is a parameter of "
@@ -394,7 +452,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
         )
         with rejections, writer:
             reader = StreamingRecordReader(
-                args.source, config.record_path, config.namespaces or None
+                _open_source(args.source), config.record_path, config.namespaces or None
             )
             stats = consume_records(
                 reader, config, writer, rejections=rejections, progress=progress

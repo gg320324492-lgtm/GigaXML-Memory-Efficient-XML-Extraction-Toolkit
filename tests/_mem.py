@@ -16,6 +16,7 @@ module is also runnable directly:
     python -m tests._mem data/s100.xml noclean
     python -m tests._mem --baseline
     python -m tests._mem --pipeline data/s400.xml out.parquet
+    python -m tests._mem --pipeline-stdin out.parquet   # document on standard input
     python -m tests._mem --inspect data/s400.xml
     python -m tests._mem --reject data/s400.xml <work-dir>
     python -m tests._mem --fastforward data/s400.xml <skip>
@@ -23,7 +24,6 @@ module is also runnable directly:
 
 from __future__ import annotations
 
-import ctypes
 import json
 import os
 import subprocess
@@ -31,11 +31,12 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from ctypes import wintypes
 from pathlib import Path
-from typing import Final
+from typing import IO, Final
 
 import psutil
+
+from gigaxml.run import peak_rss_mb as _product_peak_rss_mb
 
 __all__ = [
     "REPO_ROOT",
@@ -45,6 +46,7 @@ __all__ = [
     "measure_peak_rss_mb",
     "peak_rss_mb",
     "pipeline_in_subprocess",
+    "pipeline_stdin_in_subprocess",
     "plain_extract_in_subprocess",
     "rejections_in_subprocess",
     "rss_mb",
@@ -70,39 +72,6 @@ _PIPELINE_FIELDS: Final = {
 }
 
 
-class _ProcessMemoryCounters(ctypes.Structure):
-    """``PROCESS_MEMORY_COUNTERS`` -- only ``PeakWorkingSetSize`` is used."""
-
-    _fields_ = [
-        ("cb", wintypes.DWORD),
-        ("PageFaultCount", wintypes.DWORD),
-        ("PeakWorkingSetSize", ctypes.c_size_t),
-        ("WorkingSetSize", ctypes.c_size_t),
-        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-        ("PagefileUsage", ctypes.c_size_t),
-        ("PeakPagefileUsage", ctypes.c_size_t),
-    ]
-
-
-def _windows_peak_working_set_mb() -> float | None:
-    """OS high-water mark for this process, or ``None`` off Windows."""
-    if sys.platform != "win32":
-        return None
-    counters = _ProcessMemoryCounters()
-    counters.cb = ctypes.sizeof(counters)
-    ok = ctypes.windll.psapi.GetProcessMemoryInfo(  # type: ignore[attr-defined]
-        ctypes.windll.kernel32.GetCurrentProcess(),  # type: ignore[attr-defined]
-        ctypes.byref(counters),
-        counters.cb,
-    )
-    if not ok:
-        return None
-    return counters.PeakWorkingSetSize / _MB
-
-
 def rss_mb() -> float:
     """Current resident set size of this process, in MiB."""
     return psutil.Process().memory_info().rss / _MB
@@ -111,12 +80,17 @@ def rss_mb() -> float:
 def peak_rss_mb() -> float:
     """Peak resident set size of this process so far, in MiB.
 
-    Uses the OS high-water mark on Windows (``PeakWorkingSetSize``). Elsewhere it
-    degrades to the current RSS, which is the best ``psutil`` exposes portably.
+    Delegates to :func:`gigaxml.run.peak_rss_mb`, which is the same counter and is now
+    the only implementation. This module used to carry its own ``ctypes`` copy, and it
+    was silently broken: without declared argument types ctypes truncated the 64-bit
+    pseudo-handle ``GetCurrentProcess`` returns, the ``psapi`` call returned false, and
+    the fallback below answered every run with *current* RSS. Nothing failed -- a
+    measurement that cannot tell peak from current is still a plausible number, which is
+    what made it survive. One implementation, and the signatures declared.
     """
-    peak = _windows_peak_working_set_mb()
-    if peak is not None:
-        return peak
+    measured = _product_peak_rss_mb()
+    if measured is not None:
+        return measured
     return rss_mb()
 
 
@@ -176,7 +150,7 @@ def _run_measurement(path: str, *, clean: bool) -> dict[str, float | int]:
     }
 
 
-def _run_pipeline(xml_path: str, out_path: str) -> dict[str, float | int]:
+def _run_pipeline(xml_path: str | IO[bytes], out_path: str) -> dict[str, float | int]:
     """Read, extract and write one file, and report this process's memory profile.
 
     This is the output-side counterpart of :func:`_run_measurement`: the reader
@@ -190,7 +164,11 @@ def _run_pipeline(xml_path: str, out_path: str) -> dict[str, float | int]:
     from gigaxml.writers import create_writer
 
     config = parse_config({"record": _PIPELINE_RECORD_PATH, "fields": _PIPELINE_FIELDS})
-    size_mb = Path(xml_path).stat().st_size / _MB
+    # A stream has no length to stat, so the throughput fields read 0.0 rather
+    # than carrying a size that was never measured. Memory is unaffected: it does
+    # not depend on how the bytes arrived.
+    streamed = not isinstance(xml_path, (str, Path))
+    size_mb = 0.0 if streamed else Path(xml_path).stat().st_size / _MB
     baseline = rss_mb()
     started = time.perf_counter()
     count = 0
@@ -411,8 +389,10 @@ def scan_in_subprocess(xml_path: str | Path, *, clean: bool = True) -> dict[str,
     )
     if completed.returncode != 0:
         raise RuntimeError(
-            f"measurement subprocess exited {completed.returncode}\n"
-            f"--- stdout ---\n{completed.stdout}\n--- stderr ---\n{completed.stderr}"
+            f"measurement subprocess exited {completed.returncode} for "
+            f"--pipeline-stdin{chr(10)}"
+            f"--- stdout ---{chr(10)}{completed.stdout}"
+            f"--- stderr ---{chr(10)}{completed.stderr}"
         )
     line = completed.stdout.strip().splitlines()[-1]
     payload: dict[str, float | int] = json.loads(line)
@@ -461,6 +441,36 @@ def pipeline_in_subprocess(
         RuntimeError: the measurement subprocess failed.
     """
     return _subprocess_profile(["--pipeline", str(xml_path), str(out_path)])
+
+
+def pipeline_stdin_in_subprocess(
+    out_path: str | Path,
+    stdin_data: bytes,
+) -> dict[str, float | int]:
+    """Measure a piped document: the work happens in a fresh interpreter fed on stdin.
+
+    Args:
+        out_path: output file; the extension picks the writer.
+        stdin_data: the document bytes to feed the child.
+
+    Raises:
+        RuntimeError: the measurement subprocess failed.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-m", "tests._mem", "--pipeline-stdin", str(out_path)],
+        cwd=REPO_ROOT,
+        input=stdin_data,
+        capture_output=True,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"measurement subprocess exited {completed.returncode} for --pipeline-stdin"
+            f"\n--- stdout ---\n{completed.stdout}"
+            f"\n--- stderr ---\n{completed.stderr}"
+        )
+    return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
 def _subprocess_profile(arguments: list[str]) -> dict[str, float | int]:
@@ -512,6 +522,13 @@ def _main(argv: list[str]) -> int:
         return 0
     if len(argv) == 4 and argv[1] == "--pipeline":
         print(json.dumps(_run_pipeline(argv[2], argv[3])))
+        return 0
+    if len(argv) == 3 and argv[1] == "--pipeline-stdin":
+        # The document arrives on standard input. The counters are in *this*
+        # process and self-read, for the reason the module docstring gives: a
+        # parent reading a live child on this machine gets a frozen or absent
+        # figure, which is how a sweep once reported 4.1 MB for everything.
+        print(json.dumps(_run_pipeline(sys.stdin.buffer, argv[2])))
         return 0
     if len(argv) == 3 and argv[1] == "--inspect":
         print(json.dumps(_run_inspect(argv[2])))
