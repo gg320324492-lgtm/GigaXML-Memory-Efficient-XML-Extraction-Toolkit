@@ -195,13 +195,13 @@ that is stated first because it is true:**
 
 | Implementation | 100 MB | 1 GB | 4 GB | Peak RSS (100 MB → 4 GB) |
 |---|---|---|---|---|
-| hand-written `lxml` | **4.76 s** | **44.5 s** | **173.7 s** | 24.8 MB → 25.1 MB |
+| hand-written `lxml` | **4.76 s** | **46.5 s** | **173.7 s** | 24.8 MB → 25.1 MB |
 | GigaXML | 6.71 s | 67.9 s | 268.6 s | 33.2 MB → 33.5 MB |
 
 A fixed task, known fields and one script you maintain: that is the case where the
 hand-written script is the better tool on time, and no amount of toolkit changes that.
 
-**On memory, the two are now within 8 MB of each other and both are flat across a 40×
+**On memory, the two are now within about 8 MB of each other and both are flat across a 40×
 range** — and that is a correction, not a win. Two numbers in an earlier version of this
 table were not measurements of the thing they claimed to measure. GigaXML's 19.4 / 19.4 /
 19.1 MB was the benchmark harness's own overhead: the CLI ran in a grandchild process,
@@ -212,7 +212,7 @@ without unlinking — `clear()` empties an element, it does not detach it, so ev
 element outside the record stayed reachable. These documents carry a 96,966-element
 `<orders>` section after `</products>` that makes that unavoidable to miss. Fixing both
 is what produced the two flat curves above. **The knowledge is learnable — a determined
-script can land within 8 MB of the tool** — and what GigaXML adds is that you never have
+script can land within about 8 MB of the tool** — and what GigaXML adds is that you never have
 to find either trap, or find out which of your measurements are really the harness
 describing itself.
 

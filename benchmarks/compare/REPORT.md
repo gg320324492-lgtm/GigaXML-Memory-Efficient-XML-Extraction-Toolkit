@@ -45,7 +45,7 @@ Wall-clock medians over 5 runs (raw per-run values, min/max/stdev/p95 in
 
 | Implementation | Median | rec/s | Peak RSS | Rows written | Output |
 |---|---|---|---|---|---|
-| **raw lxml** | **44.5 s** | **66,873** | 25.0 MB | 2,978,816 | 189 MB |
+| **raw lxml** | **46.5 s** | **64,002** | 26.1 MB | 2,978,816 | 189 MB |
 | xmltodict | 56.8 s | 52,410 | 191.7 MB | 2,978,816 | 189 MB |
 | pandas.read_xml | **failed** | — | 6284 MB † | — | — |
 | GigaXML | 67.9 s | 43,873 | 33.4 MB | 2,978,816 | 189 MB |
@@ -118,8 +118,8 @@ every implementation:
   has both** (the memory table has the numbers). This is a knowledge difference, not a
   capability one: `events=("start", "end")` with no `tag=` filter, releasing everything
   outside the record, *and unlinking rather than only clearing* are all lxml idioms once
-  you have been bitten, and a hand-written script that applies them lands at 25 MB —
-  within a few MB of GigaXML. GigaXML's contribution is that the user does not have to
+  you have been bitten, and a hand-written script that applies them lands at 25–26 MB —
+  within about 8 MB of GigaXML. GigaXML's contribution is that the user does not have to
   know any of it exists, let alone which of the three was missed.
 - **pandas can produce a complete-looking output that is missing data** (the 4 GB row
   above): exit 0, 12% of the records absent, nothing said. For a pipeline that reads its
@@ -175,14 +175,17 @@ Every number below is that floor plus the work.
 
 | Implementation | 100 MB | 1 GB | 4 GB | Grows with input? |
 |---|---|---|---|---|
-| raw lxml (hand-written) | 24.8 MB | 25.0 MB | 25.1 MB | **no** (see below) |
+| raw lxml (hand-written) | 24.8 MB | 26.1 MB | 25.1 MB | **no** (see below) |
 | xmltodict | 43.4 MB | 191.7 MB | 707.3 MB | **yes** |
 | pandas.read_xml | 2050.0 MB | fails at 6284 MB | 26004.8 MB | yes, and 25 GB at 4 GB |
 | **GigaXML** | **33.2 MB** | **33.4 MB** | **33.5 MB** | **no** |
 
 **The hand-written script and GigaXML are both flat across a 40× range**, within about
 8 MB of each other, and the report says that rather than implying the others are
-"efficient" or that the gap is larger than it is. xmltodict and pandas do grow, and by a
+"efficient" or that the gap is larger than it is. The hand-written script's three
+readings scatter across 1.3 MB and are not monotonic — the 1 GB point is the highest of
+the three — which is what flatness looks like: the spread is run-to-run noise, not a
+trend. xmltodict and pandas do grow, and by a
 lot.
 
 #### What the previous version of this table got wrong
@@ -213,8 +216,8 @@ sitting under `<orders>`**. These documents put an `<orders>` section — 96,966
 record, so every one took the release path. That path called `elem.clear()`, and
 `clear()` empties an element without detaching it: the element stays a child of its
 parent and lxml still holds it. Clearing is not unlinking. Adding the unlink took the
-line to **24.8 / 25.0 / 25.1 MB** — flat, and within 8 MB of GigaXML, for about 4% of
-the throughput.
+line to **24.8 / 26.1 / 25.1 MB** — flat, and within about 8 MB of GigaXML, for about
+4% of the throughput.
 
 **The generalisable form:** a reading that sits *on* the measurement apparatus's own
 overhead is not a reading of the thing, and neither is a curve flatter than real work
@@ -233,10 +236,10 @@ containers are never visited and never released.
 |---|---|---|---|---|
 | as lxml documents it (`end` + `tag=`) | 118.7 MB | 982.2 MB | 3850.1 MB | 3.53 s |
 | \+ `("start", "end")`, release outside the record | 48.1 MB | 296.6 MB | 1222.0 MB | 4.59 s |
-| \+ unlink rather than only clear | **24.8 MB** | **25.0 MB** | **25.1 MB** | 4.76 s |
+| \+ unlink rather than only clear | **24.8 MB** | **26.1 MB** | **25.1 MB** | 4.76 s |
 
 **What this report does not claim:** that GigaXML's 33 MB is better than the
-hand-written script's 25 MB. It is worse, and the tool loses that comparison. What the
+hand-written script's 26 MB. It is worse, and the tool loses that comparison. What the
 table buys is the knowledge — two non-obvious traps, one of which the lxml documentation
 does not mention in any form, and the second of which the previous version of this very
 report got wrong. What GigaXML adds is that a user never has to find either of them.
@@ -262,13 +265,30 @@ report got wrong. What GigaXML adds is that a user never has to find either of t
 5. **The synthetic datasets match the documented config** (they are produced by this
    repository's generator). The real-data benchmark below exists to answer exactly
    that objection.
-6. **Wall-clock medians assume an otherwise idle machine.** Contention moves time and
-   not memory: a background application using 1.5 cores was caught mid-sweep widening
-   xmltodict's 1 GB runs from 56.4–58.6 s to 62.6 / 71.0 / 82.0 s while its memory
-   reading did not move at all. The run behind this report was repeated on an idle
-   machine; `stdev`, `min` and `max` for every group are in `results.json`, and the
-   per-run spread is visible there (raw lxml's 100 MB first repeat, 6.29 s against a
-   4.58 s minimum, is the same effect at its smallest).
+6. **This report is not the product of one run, and the still-perturbed readings are
+   named rather than smoothed away.** Two separate things happened on this machine, and
+   they hit different runs.
+
+   The first sweep was discarded outright: a background application using 1.5 cores
+   widened xmltodict's 1 GB runs to 62.6 / 71.0 / 82.0 s. Contention moves wall-clock
+   and not memory — xmltodict's peak did not change by a byte across that spread.
+
+   The sweep behind this report is the one after it, taken on an idle machine. It came
+   back clean for eleven of the twelve groups, and dirty for one: **raw lxml's 1 GB
+   repeats 4 and 5 ran at 61.3 s and 57.3 s against 43.7–44.5 s for the other three**,
+   a `stdev` of 8.4 s where GigaXML's simultaneous group sat at 1.1 s. That asymmetry is
+   the tell — a slower machine slows everything at once, so GigaXML and xmltodict holding
+   steady while one group alone jumps means something else took the CPU for a few
+   seconds, mid-group. The 1 GB raw lxml group was therefore **re-measured on a separate
+   pass**: 45.9 / 46.1 / 46.5 / 47.6 / 47.4 s, `stdev` **0.74 s**, which is what the 1 GB
+   row above reports. Its median moved with it — 44.5 s to 46.5 s — and the 1.5×
+   conclusion did not, because a median is the middle of the sorted values and two
+   outliers do not move it.
+
+   **One perturbed sample survives in the data and is left in:** raw lxml's 100 MB first
+   repeat, 6.29 s against a 4.58 s minimum. Per-run values, `stdev`, `min` and `max` for
+   every group are in `results.json`, so a reader can see the spread rather than take the
+   median on trust.
 
 ## Real data — Simple English Wikipedia
 

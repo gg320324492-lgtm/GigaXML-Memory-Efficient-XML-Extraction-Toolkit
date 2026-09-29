@@ -39,7 +39,7 @@ counting the elements still in the tree 3.6 M events into the 100 MB document sh
 final 5 % of the file. That residual growth was for a long time blamed on libxml2's
 parse context being released at the end of the run, which is not what happens -- the
 per-record working set was flat throughout, and a census of the live tree names the
-elements being held. Adding the unlink makes it 24.8 MB at 100 MB, 25.0 at 1 GB and
+elements being held. Adding the unlink makes it 24.8 MB at 100 MB, 26.1 at 1 GB and
 25.1 at 4 GB: flat across a 40x range, which is what "bounded" has to mean.
 
 Both fixes are paid for in throughput, and the comparison reports the slower, honest
