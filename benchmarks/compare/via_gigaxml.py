@@ -5,18 +5,34 @@ file and one command. The config below is the whole of the field specification -
 same six fields, the same order -- and the CLI handles streaming, CSV writing, the
 run report, and the atomic output move.
 
+**The CLI runs in this process, not as a child, and that is the whole point of this
+file's shape.** The comparison runner samples the peak working set of the process it
+launches; a child process's memory is not in its parent's counter, and a grandchild's
+certainly is not. An earlier version of this script shelled out with
+``subprocess.run``, so the extraction happened one process further down than the
+sampler could see. The number it reported was the wrapper's own overhead -- 19.4 MB at
+100 MB of input, at 1 GB, and at 4 GB, all of it equal to what an empty script through
+the same wrapper costs. A figure that flat, and that exactly equal to the harness's own
+overhead, is not a measurement of the extraction; it is the measurement apparatus
+describing itself. So the CLI is executed here, in the sampled process, via
+``runpy.run_module`` with ``run_name="__main__"`` -- the same module the console script
+and ``python -m gigaxml.cli`` run, entered through its own ``__main__`` guard, with
+``sys.argv`` set to what a user would type.
+
+What this costs: the ~0.3 s of interpreter start-up a real ``gigaxml extract``
+invocation pays, which the report had to list as an unfairness. What it buys: the
+memory column means something. The two costs are not comparable -- one is a wall-clock
+convenience, the other is the entire point of the tool.
+
 Usage::
 
     python benchmarks/compare/via_gigaxml.py <input.xml> <output.csv>
-
-The script locates the installed ``gigaxml`` CLI the same way a user would: on PATH if
-it is installed, otherwise the source checkout's own package (``python -m gigaxml.cli``).
 """
 
 from __future__ import annotations
 
 import pathlib
-import subprocess
+import runpy
 import sys
 import tempfile
 
@@ -34,24 +50,31 @@ fields:
 """
 
 
-def gigaxml_command(input_path: str, output_path: str, config_path: str) -> list[str]:
-    """The CLI invocation, preferring an installed ``gigaxml`` over the source tree."""
-    from shutil import which
+def cli_argv(input_path: str, output_path: str, config_path: str) -> list[str]:
+    """The arguments ``gigaxml extract`` parses -- everything after the program name."""
+    return ["extract", input_path, "-c", config_path, "-o", output_path]
 
-    installed = which("gigaxml")
-    if installed:
-        return [installed, "extract", input_path, "-c", config_path, "-o", output_path]
-    return [
-        sys.executable,
-        "-m",
-        "gigaxml.cli",
-        "extract",
-        input_path,
-        "-c",
-        config_path,
-        "-o",
-        output_path,
-    ]
+
+def run_cli(arguments: list[str]) -> int:
+    """Run the CLI in this process and return its exit code.
+
+    ``gigaxml.cli`` ends with ``raise SystemExit(main())`` under its ``__main__`` guard,
+    so entering it as ``__main__`` gives the same behaviour as running it as a program,
+    including the exit code -- caught here and returned rather than propagated, because
+    this is a function the caller expects to come back from.
+    """
+    saved_argv = sys.argv
+    sys.argv = ["gigaxml", *arguments]
+    # runpy re-executes the module rather than returning a cached one; without this it
+    # finds any earlier import and warns instead of running the code again.
+    sys.modules.pop("gigaxml.cli", None)
+    try:
+        runpy.run_module("gigaxml.cli", run_name="__main__")
+    except SystemExit as exit_exc:
+        return exit_exc.code or 0
+    finally:
+        sys.argv = saved_argv
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -69,17 +92,7 @@ def main(argv: list[str]) -> int:
         config_path.write_text(CONFIG, encoding="utf-8")
         if repo_config.is_file():  # the committed config is the one the report describes
             config_path.write_text(repo_config.read_text(encoding="utf-8"), encoding="utf-8")
-        completed = subprocess.run(
-            gigaxml_command(argv[1], argv[2], str(config_path)),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    if completed.returncode != 0:
-        print(completed.stderr, file=sys.stderr)
-        return completed.returncode or 1
-    print(completed.stdout.strip())
-    return 0
+        return run_cli(cli_argv(argv[1], argv[2], str(config_path)))
 
 
 if __name__ == "__main__":

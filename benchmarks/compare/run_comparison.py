@@ -140,6 +140,21 @@ def environment() -> dict[str, object]:
         except Exception:
             return "not installed"
 
+    def gigaxml_version() -> str:
+        """The version of the code actually measured.
+
+        Read from the package rather than from ``importlib.metadata``: on an editable
+        install the recorded distribution is whatever was there when ``pip install -e``
+        last ran, and a tree whose ``__version__`` has moved on still reports the old
+        number -- which is how a sweep of 1.1.0 recorded itself as 0.1.0.
+        """
+        try:
+            import gigaxml
+
+            return gigaxml.__version__
+        except Exception:
+            return package_version("gigaxml")
+
     return {
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "cpu": platform.processor(),
@@ -150,7 +165,7 @@ def environment() -> dict[str, object]:
         "lxml": package_version("lxml"),
         "xmltodict": package_version("xmltodict"),
         "pandas": package_version("pandas"),
-        "gigaxml": package_version("gigaxml"),
+        "gigaxml": gigaxml_version(),
     }
 
 
@@ -206,6 +221,7 @@ def main() -> int:
             print(f"skip {size}: {input_path} does not exist", file=sys.stderr)
             continue
         per_impl: dict[str, object] = {}
+        by_size[size] = per_impl
         for name in args.implementations:
             script = IMPLEMENTATIONS[name]
             runs: list[dict[str, object]] = []
@@ -256,7 +272,13 @@ def main() -> int:
                     "note": "every repeat failed; see runs[].stderr_tail",
                 }
             per_impl[name] = {"summary": summary, "runs": runs}
-        by_size[size] = per_impl
+            # Checkpoint after every implementation, not once at the end. A full sweep
+            # is hours of wall clock, and the 4 GB pandas runs alone sit near this
+            # machine's whole memory budget -- a sweep that dies on its last group loses
+            # every group that already finished unless the results are on disk. A
+            # partial results.json, holding the groups that completed, beats none.
+            results["results"] = by_size
+            args.out.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
 
     results["results"] = by_size
     args.out.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")

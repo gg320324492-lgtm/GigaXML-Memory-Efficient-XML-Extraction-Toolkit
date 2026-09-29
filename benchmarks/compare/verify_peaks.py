@@ -8,14 +8,27 @@ cannot be smaller than an idle interpreter) and it stood in the README's public
 comparison table until the audit caught it.
 
 So this guard measures the floor instead of assuming it: it runs an **empty script
-through the same self-read wrapper** the runner uses, takes the peak that wrapper
-reports as the interpreter's idle ceiling, and then requires every ``peak_rss_mb`` in
-``results.json`` to be at least that. A frozen or mis-scoped reading (4.1) fails
-against the floor immediately, with the implementation named.
+through the runner's own wrapper** -- the same ``WRAPPER`` source the runner launches,
+imported from ``run_comparison`` rather than restated here, so the two cannot drift
+apart -- takes the peak that wrapper reports as the interpreter's idle ceiling, and
+then requires every ``peak_rss_mb`` in ``results.json`` to be at least that. A frozen
+or mis-scoped reading (4.1) fails against the floor immediately, with the
+implementation named.
 
-The floor is **measured at guard time, never hardcoded** -- it moves with the Python
-version, psutil version and machine, and a constant would silently stop matching any
-of them.
+**A second blind spot, which the floor test above cannot catch.** A reading that is
+merely *at* the floor, rather than below it, passes while being just as meaningless:
+if the harness sampled a process that never did the work -- a wrapper that shelled out
+and left the extraction in a grandchild, say -- the reading would be the wrapper's own
+overhead, and a value of floor+0.2 would sail through. Worse, such a reading looks
+*ideal* in a report: flat across every input size, because it never saw the input. So
+this guard also reports the **gap** between each reading and the floor, and warns when
+that gap is inside the measurement's own noise. The gap is the only part of the number
+that belongs to the implementation; the rest is the apparatus.
+
+The floor and the noise band are **measured at guard time, never hardcoded** -- they
+move with the Python version, psutil version and machine, and a constant would
+silently stop matching any of them. The noise is the spread of repeated floor runs,
+which is the same spread a real reading carries.
 
 Usage::
 
@@ -34,47 +47,51 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 DEFAULT_RESULTS = HERE / "results.json"
 
+sys.path.insert(0, str(HERE))
+from run_comparison import PEAK_MARKER, WRAPPER  # noqa: E402
 
-def measure_idle_floor() -> float:
+#: How many times the empty script is run to establish the floor. Three is enough to
+#: see whether repeated runs of the *same* thing agree; more would only make the guard
+#: slow, and this runs in CI.
+FLOOR_RUNS = 3
+
+#: The smallest gap above the floor that still counts as "the implementation did
+#: something", in MiB, when the observed spread is tighter than that. A real extraction
+#: costs tens of megabytes over an idle interpreter; anything under this is a harness
+#: artefact however quiet the machine is.
+MIN_MEANINGFUL_GAP_MIB = 3.0
+
+
+def measure_idle_peaks(runs: int = FLOOR_RUNS) -> list[float]:
     """Peak RSS of an empty script through the runner's own wrapper, in MiB.
 
-    The wrapper imports psutil and executes an empty file with ``run_name="__main__"``
-    -- exactly the machinery around every measured implementation, minus the work. Its
-    peak is the floor no real implementation may fall below.
+    The wrapper imports psutil and executes an empty file with ``__name__ ==
+    "__main__"`` -- exactly the machinery around every measured implementation, minus
+    the work. Its peak is the floor no real implementation may fall below.
+
+    Repeated, because a single run gives a number but not its error bar, and the
+    near-floor test below needs to know how much of a difference is real.
     """
     empty = HERE / "_idle_floor_target.py"
     empty.write_text("", encoding="utf-8")
+    peaks: list[float] = []
     try:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import psutil, runpy, sys\n"
-                    "process = psutil.Process()\n"
-                    "sys.argv = [sys.argv[0]]\n"
-                    "try:\n"
-                    "    runpy.run_path(sys.argv[0], run_name='__main__')\n"
-                    "finally:\n"
-                    "    info = process.memory_info()\n"
-                    "    peak = getattr(info, 'peak_wset', None) or info.rss\n"
-                    "    print(f'__GIGAXML_PEAK__{peak}', file=sys.stderr)\n"
-                ),
-                str(empty),
-            ],
-            cwd=HERE,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        for _ in range(runs):
+            completed = subprocess.run(
+                [sys.executable, "-c", WRAPPER, str(empty)],
+                cwd=HERE,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            lines = [ln for ln in completed.stderr.splitlines() if ln.startswith(PEAK_MARKER)]
+            assert lines, f"the idle-floor run produced no peak reading: {completed.stderr[-300:]}"
+            peaks.append(int(lines[-1][len(PEAK_MARKER) :]) / (1024 * 1024))
     finally:
         empty.unlink(missing_ok=True)
-    marker = "__GIGAXML_PEAK__"
-    lines = [ln for ln in completed.stderr.splitlines() if ln.startswith(marker)]
-    assert lines, f"the idle-floor run produced no peak reading: {completed.stderr[-300:]}"
-    return int(lines[-1][len(marker) :]) / (1024 * 1024)
+    return peaks
 
 
 def main() -> int:
@@ -83,10 +100,23 @@ def main() -> int:
     args = parser.parse_args()
 
     results = json.loads(args.results.read_text(encoding="utf-8"))
-    floor = measure_idle_floor()
-    print(f"idle interpreter floor (measured now, wrapper self-read): {floor:.1f} MiB")
+    peaks = measure_idle_peaks()
+    floor = max(peaks)
+    spread = floor - min(peaks)
+    # A reading has to clear the floor by more than the noise to be worth anything.
+    threshold = max(3 * spread, MIN_MEANINGFUL_GAP_MIB)
+    print(
+        f"idle interpreter floor (measured now over {len(peaks)} runs, "
+        f"wrapper self-read): {floor:.1f} MiB "
+        f"(readings {', '.join(f'{p:.1f}' for p in peaks)}; spread {spread:.1f} MiB)"
+    )
+    print(
+        f"a reading must exceed the floor by more than {threshold:.1f} MiB to be "
+        "credited with having done the work"
+    )
 
     failures = 0
+    suspicious = 0
     checked = 0
     for size, implementations in results["results"].items():
         for name, data in implementations.items():
@@ -103,6 +133,18 @@ def main() -> int:
                         "re-measured, not reported"
                     )
                     failures += 1
+                elif peak - floor <= threshold:
+                    print(
+                        f"MAY NOT HAVE MEASURED THE WORK: {size} {name} "
+                        f"(run {run.get('repeat')}): {peak} MiB is only "
+                        f"{peak - floor:.1f} MiB above the {floor:.1f} MiB floor, "
+                        "within the harness's own noise. A reading this close to an "
+                        "idle interpreter usually means the sampled process did not do "
+                        "the extraction -- check whether the implementation shells out "
+                        "-- and a flat one across sizes is the tell, because a real "
+                        "extraction's curve is not perfectly level."
+                    )
+                    suspicious += 1
 
     print(f"{checked} peak readings checked against the {floor:.1f} MiB floor")
     if failures:
@@ -110,8 +152,17 @@ def main() -> int:
             f"{failures} reading(s) below the floor -- the sampler that produced "
             "them is broken; fix the sampler, do not report the numbers"
         )
+    if suspicious:
+        print(
+            f"{suspicious} reading(s) within the noise of the floor -- these may not "
+            "have measured the work at all; confirm the extraction runs in the sampled "
+            "process before reporting them"
+        )
+    if failures:
         return 1
-    print("every peak reading is at or above the idle floor")
+    if suspicious:
+        return 1
+    print("every peak reading is at or above the idle floor, and clear of its noise")
     return 0
 
 

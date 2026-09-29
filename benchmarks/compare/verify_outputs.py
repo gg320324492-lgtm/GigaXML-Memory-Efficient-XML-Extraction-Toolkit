@@ -16,6 +16,8 @@ import argparse
 import csv
 import hashlib
 import pathlib
+from collections.abc import Iterator
+from itertools import zip_longest
 
 HERE = pathlib.Path(__file__).resolve().parent
 SCRATCH = HERE.parent.parent / ".scratch"
@@ -65,25 +67,47 @@ def main() -> int:
             continue
         line = f"{size}: raw_lxml == xmltodict == gigaxml (sha256 {hashes['raw_lxml'][:16]}...)"
         if FIVE_COLUMN_ONLY in present:
-            five = [
-                [cell for index, cell in enumerate(row) if index != 5]
-                for row in csv_rows(present[FIVE_COLUMN_ONLY])
-            ]
-            reference = [
-                [cell for index, cell in enumerate(row) if index != 5]
-                for row in csv_rows(present["raw_lxml"])
-            ]
-            line += f"; pandas five-column match: {five == reference}"
-            if five != reference:
+            matched, compared = compare_five_columns(present[FIVE_COLUMN_ONLY], present["raw_lxml"])
+            line += f"; pandas matches those {compared:,} rows on its five columns: {matched}"
+            if not matched:
                 failures += 1
         print(line)
 
     return 1 if failures else 0
 
 
-def csv_rows(path: pathlib.Path) -> list[list[str]]:
-    with path.open(encoding="utf-8", newline="") as handle:
-        return list(csv.reader(handle))
+def five_columns(path: pathlib.Path) -> Iterator[list[str]]:
+    """A CSV's rows, with the sixth column dropped -- the five pandas can extract."""
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        next(reader, None)  # header
+        yield from ([cell for index, cell in enumerate(row) if index != 5] for row in reader)
+
+
+def compare_five_columns(candidate: pathlib.Path, reference: pathlib.Path) -> tuple[bool, int]:
+    """Do the candidate's first five columns agree with the reference's, row for row?
+
+    Compared over the rows the candidate actually produced, because the two files are
+    not the same length: pandas stops early on the 4 GB document (documented in
+    REPORT.md, and visible as ``complete_output: false`` in results.json). Comparing
+    whole lists would report a mismatch for what is really "identical for every row it
+    delivered, and it delivered fewer" -- a different, and much less alarming, fact.
+
+    Returns ``(matched, rows_compared)``. The shortfall is not this function's job:
+    ``rows_written`` and ``complete_output`` in results.json already carry it exactly.
+    """
+    matched = True
+    compared = 0
+    pairs = zip_longest(five_columns(candidate), five_columns(reference))
+    for index, (left, right) in enumerate(pairs):
+        if left is None or right is None:
+            break  # one file is longer; the extra rows are the candidate's shortfall
+        if left != right:
+            print(f"    first five-column mismatch at data row {index}: {left} vs {right}")
+            matched = False
+            break
+        compared += 1
+    return matched, compared
 
 
 if __name__ == "__main__":

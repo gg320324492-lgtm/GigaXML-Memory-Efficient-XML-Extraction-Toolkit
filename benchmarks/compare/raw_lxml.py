@@ -14,22 +14,38 @@ this implementation is that script, and on raw throughput it is expected to win,
 it does less: no config parsing, no rejection log, no run report, no checkpoint
 machinery. Where it wins, the report says so in the first sentence.
 
-**Its memory is bounded, and that took a specific fix.** The idiomatic ``iterparse``
-recipe -- the one in lxml's own documentation -- is ``events=("end",)`` with ``tag=``,
-plus ``elem.clear()`` and unlinking consumed siblings. That recipe *leaks*: measured on
-this machine, it grows 118.7 MB at 100 MB of input to 982.2 MB at 1 GB, i.e. roughly
-linearly, because ``end``-only events never deliver the closing event for any element
-outside the ``tag=`` filter -- the containers -- and a container's accumulated children
-are never released. ``clear()`` does not help, because the container is never visited at
-all. So this file subscribes to ``("start", "end")`` without a ``tag=`` filter, tracks
-element depth, and clears every element whose subtree is *not* the record currently being
-written. That is the same shape ``gigaxml.parser.streaming`` uses, for the same reason,
-and it holds at 27.2 MB (100 MB) and 27.6 MB (1 GB) -- flat, which is what "bounded" has
-to mean.
+**Its memory is bounded, and that took two fixes.** The first is the one everybody has
+to learn. The idiomatic ``iterparse`` recipe -- the one in lxml's own documentation --
+is ``events=("end",)`` with ``tag=``, plus ``elem.clear()`` and unlinking consumed
+siblings. That recipe *leaks*: measured on this machine, it grows 118.7 MB at 100 MB
+of input to 982.2 MB at 1 GB and 3850.1 MB at 4 GB, i.e. roughly linearly, because
+``end``-only events never deliver the closing event for any element outside the
+``tag=`` filter -- the containers -- and a container's accumulated children are never
+released. ``clear()`` does not help, because the container is never visited at all. So
+this file subscribes to ``("start", "end")`` without a ``tag=`` filter, tracks element
+depth, and releases every element whose subtree is *not* the record currently being
+written. That alone is the same shape ``gigaxml.parser.streaming`` uses, for the same
+reason, and it is not enough: it holds at 48.1 / 296.6 / 1222.0 MB, still linear.
 
-The fix costs about 25% of the throughput (measured at 100 MB: 4.29 s before, 5.33 s
-after), and the comparison reports the slower, honest number. A baseline that wins
-because it accumulates the document is not a baseline.
+**The second fix is the one that is easy to miss: ``clear()`` is not unlinking.**
+``clear()`` empties an element's content; the element itself stays a child of its
+parent, still reachable, so lxml still holds it. Releasing what lies outside the record
+takes unlinking as well, and these documents make the consequence unmissable -- after
+``</products>`` there is an ``<orders>`` section (96,966 ``<order>`` elements at 100 MB
+of input, 992,938 at 1 GB), and every one of those takes the outside-the-record branch.
+With ``clear()`` alone the run carries every order in memory to the very last record:
+counting the elements still in the tree 3.6 M events into the 100 MB document shows
+85,264 of them under ``<orders>``, and the peak climbs from 24.8 to 45.7 MB over the
+final 5 % of the file. That residual growth was for a long time blamed on libxml2's
+parse context being released at the end of the run, which is not what happens -- the
+per-record working set was flat throughout, and a census of the live tree names the
+elements being held. Adding the unlink makes it 24.8 MB at 100 MB, 25.0 at 1 GB and
+25.1 at 4 GB: flat across a 40x range, which is what "bounded" has to mean.
+
+Both fixes are paid for in throughput, and the comparison reports the slower, honest
+number: 3.53 s per 100 MB for the documented recipe, 4.59 s after the first fix, 4.76 s
+after the second. A baseline that wins because it accumulates the document is not a
+baseline, and neither is one that wins because it was measured differently.
 
 Usage::
 
@@ -73,8 +89,18 @@ def extract(input_path: str, output_path: str) -> int:
 
             depth = len(stack)
             if record_depth == 0:
-                # Outside any record: this element is done for, release it now.
+                # Outside any record: this element is done for, so clear it *and unlink
+                # it*. Clearing alone is the trap: clear() empties an element but leaves
+                # it a child of its parent, still reachable, so lxml keeps it for the
+                # rest of the run. The documents here put a 96,966-element <orders>
+                # section after </products>, and every one of those <order> elements
+                # takes this branch -- so with clear() alone the run holds every order
+                # in memory to the end, which is the whole 48 -> 297 -> 1222 MB growth.
                 elem.clear(keep_tail=True)
+                parent = elem.getparent()
+                if parent is not None:
+                    while elem.getprevious() is not None:
+                        del parent[0]
             elif depth == record_depth:
                 # The record itself: write it, then release it and everything before it.
                 manufacturer = elem.find("manufacturer/name")
