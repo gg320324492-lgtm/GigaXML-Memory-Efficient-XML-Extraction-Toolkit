@@ -273,19 +273,37 @@ report got wrong. What GigaXML adds is that a user never has to find either of t
    widened xmltodict's 1 GB runs to 62.6 / 71.0 / 82.0 s. Contention moves wall-clock
    and not memory — xmltodict's peak did not change by a byte across that spread.
 
-   The sweep behind this report is the one after it, taken on an idle machine. It came
-   back clean for eleven of the twelve groups, and dirty for one: **raw lxml's 1 GB
-   repeats 4 and 5 ran at 61.3 s and 57.3 s against 43.7–44.5 s for the other three**,
-   a `stdev` of 8.4 s where GigaXML's simultaneous group sat at 1.1 s. That asymmetry is
-   the tell — a slower machine slows everything at once, so GigaXML and xmltodict holding
-   steady while one group alone jumps means something else took the CPU for a few
-   seconds, mid-group. The 1 GB raw lxml group was therefore **re-measured on a separate
-   pass**: 45.9 / 46.1 / 46.5 / 47.6 / 47.4 s, `stdev` **0.74 s**, which is what the 1 GB
-   row above reports. Its median moved with it — 44.5 s to 46.5 s — and the 1.5×
-   conclusion did not, because a median is the middle of the sorted values and two
-   outliers do not move it.
+   The sweep behind this report is the one after it, on an idle machine. It came back
+   clean for eleven of its twelve groups. The exception was **raw lxml's 1 GB group,
+   whose repeats 4 and 5 ran at 61.3 s and 57.3 s against 43.7–44.5 s for the other
+   three** — a `stdev` of 8.4 s where GigaXML's simultaneous group sat at 1.1 s. That
+   asymmetry is the tell: a slower machine slows everything at once, so two groups
+   holding steady while one alone jumps means something took the CPU for a few seconds,
+   mid-group. That group was **re-measured on a separate pass** — 45.9 / 46.1 / 46.5 /
+   47.6 / 47.4 s, `stdev` **0.74 s** — and it is what the 1 GB row above reports. Its
+   median moved with it, 44.5 s to 46.5 s; the 1.5× conclusion did not, because a median
+   is the middle of the sorted values and two outliers do not move it.
 
-   **One perturbed sample survives in the data and is left in:** raw lxml's 100 MB first
+   **One group still in the data is genuinely not reproducible, and it is not the
+   machine's doing: pandas at 4 GB.** Its five repeats run 818.2 / 780.5 / 952.4 /
+   1074.0 / 935.8 s — a `stdev` of **116.8 s**, and a 38% spread between its fastest
+   and slowest run, where the three implementations measured alongside it spread 0.6%,
+   1.0% and 3.4%. By the reasoning above that is not contention: a busy machine would
+   have widened all four groups, and three of them barely moved. It is pandas itself. Its
+   peak on that file is 26,004.8 MB against this machine's 31.8 GB, so it runs with about
+   6 GB of headroom and the jitter is memory pressure — allocation, page movement,
+   collection — rather than a contended CPU.
+
+   That belongs in the findings rather than in a footnote, because for anything that has
+   to be scheduled it is the worst of the three things wrong with pandas here. It is not
+   only the slowest, and not only quietly 12% short of the document; it is
+   **unpredictable** — the same job on the same file ran nearly five minutes faster on
+   one run than on another. Slowness can be waited out and provisioned for. A runtime
+   that moves by 38% between identical runs cannot be put on a schedule at all. Its
+   median is reported above with every other row's, and for this row the median is the
+   least useful of the five numbers in the file.
+
+   One smaller sample is also left in rather than tidied away: raw lxml's 100 MB first
    repeat, 6.29 s against a 4.58 s minimum. Per-run values, `stdev`, `min` and `max` for
    every group are in `results.json`, so a reader can see the spread rather than take the
    median on trust.
