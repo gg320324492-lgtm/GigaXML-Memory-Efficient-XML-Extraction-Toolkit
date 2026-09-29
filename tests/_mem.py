@@ -47,6 +47,7 @@ __all__ = [
     "peak_rss_mb",
     "pipeline_in_subprocess",
     "pipeline_stdin_in_subprocess",
+    "pipeline_via_cli",
     "plain_extract_in_subprocess",
     "rejections_in_subprocess",
     "rss_mb",
@@ -441,6 +442,107 @@ def pipeline_in_subprocess(
         RuntimeError: the measurement subprocess failed.
     """
     return _subprocess_profile(["--pipeline", str(xml_path), str(out_path)])
+
+
+def _write_pipeline_config(work: Path) -> Path:
+    """The pipeline config, on disk, for runs that go through the CLI."""
+    import yaml
+
+    config = work / "pipeline-config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {"record": _PIPELINE_RECORD_PATH, "fields": _PIPELINE_FIELDS}, sort_keys=False
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def pipeline_via_cli(
+    source: str | Path,
+    out_path: str | Path,
+    work: Path,
+    *,
+    from_stdin: bool = False,
+) -> dict[str, float | int]:
+    """Run the real ``gigaxml extract`` and read the peak out of its own run report.
+
+    **This drives the product, not a test helper.** The earlier version of the stdin
+    memory check handed ``sys.stdin.buffer`` straight to :func:`_run_pipeline`, which
+    exercised :class:`~gigaxml.parser.streaming.StreamingRecordReader` and nothing
+    above it. The CLI's own ``-`` branch -- the one line P1 added, and the one a later
+    change is most likely to break by making it buffer the stream -- was never run at
+    all, so replacing that line with ``io.BytesIO(sys.stdin.buffer.read())`` left every
+    test in the repository green while the tool quietly read a 403 MB document into
+    memory. A guard has to guard the thing that ships.
+
+    The peak comes from the report the run writes about itself: ``--report`` records
+    ``peak_rss_mb`` read *inside that process*, which is the only way to get a true
+    number here. A parent reading a child's working set on this machine gets a frozen or
+    absurdly low figure, which is how a comparison sweep once reported 4.1 MB for every
+    implementation at every size.
+
+    Args:
+        source: the document, or the literal ``"-"`` to read standard input.
+        out_path: output file; the extension picks the writer.
+        work: scratch directory for the config and the report.
+        from_stdin: feed the document on standard input rather than naming it.
+
+    Returns:
+        The same shape :func:`pipeline_in_subprocess` returns, so the two can be
+        compared without special-casing.
+
+    Raises:
+        RuntimeError: the CLI exited non-zero, or wrote no usable report.
+    """
+    config = _write_pipeline_config(work)
+    report = work / "cli-report.json"
+    command = [
+        sys.executable,
+        "-m",
+        "gigaxml.cli",
+        "extract",
+        "-" if from_stdin else str(source),
+        "-c",
+        str(config),
+        "-o",
+        str(out_path),
+        "--report",
+        str(report),
+    ]
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    if from_stdin:
+        with Path(source).open("rb") as document:
+            completed = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                stdin=document,
+                capture_output=True,
+                env=env,
+                check=False,
+            )
+    else:
+        completed = subprocess.run(
+            command, cwd=REPO_ROOT, capture_output=True, env=env, check=False
+        )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"gigaxml extract exited {completed.returncode}\n"
+            f"--- stdout ---\n{completed.stdout}\n"
+            f"--- stderr ---\n{completed.stderr}"
+        )
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    # No `delta_mb` here: the report carries the process's own peak, and subtracting a
+    # baseline measured by a *different* process is how you get a number that is neither.
+    # Callers that want the increment measure an empty interpreter themselves.
+    return {
+        "records": int(payload["records"]["accepted"]),
+        "seconds": float(payload["elapsed_seconds"]),
+        "peak_mb": payload["peak_rss_mb"],
+        "input_mb": round(Path(source).stat().st_size / _MB, 3),
+        "output_mb": round(Path(out_path).stat().st_size / _MB, 3),
+        "rejected": int(payload["records"]["rejected"]),
+    }
 
 
 def pipeline_stdin_in_subprocess(

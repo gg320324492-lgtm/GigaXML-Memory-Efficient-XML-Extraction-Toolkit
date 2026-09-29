@@ -28,7 +28,7 @@ import pathlib
 
 import pytest
 
-from tests._mem import empty_baseline_mb, pipeline_in_subprocess, pipeline_stdin_in_subprocess
+from tests._mem import empty_baseline_mb, pipeline_via_cli
 
 pytestmark = pytest.mark.performance
 
@@ -57,21 +57,25 @@ def _require_dataset() -> None:
 
 def test_a_piped_document_is_streamed_not_buffered(tmp_path: pathlib.Path) -> None:
     """Same records, same peak band, and a peak far below the size of the input."""
-    document = DATASET.read_bytes()
-    input_mb = len(document) / (1024 * 1024)
+    input_mb = DATASET.stat().st_size / (1024 * 1024)
 
-    from_file = pipeline_in_subprocess(DATASET, tmp_path / "file.csv")
-    from_stdin = pipeline_stdin_in_subprocess(tmp_path / "stdin.csv", document)
+    # Both sides go through the real CLI. That is the point: an earlier version of this
+    # check handed sys.stdin.buffer straight to the harness's own pipeline function,
+    # which exercised the reader and nothing above it. The CLI's "-" branch -- the line
+    # that turns "-" into a stream -- was therefore never run, and replacing it with
+    # io.BytesIO(sys.stdin.buffer.read()) left this test reporting a flat 8% of the
+    # document while the tool read all 403 MB of it into memory. A guard has to guard
+    # the code that ships, and the code that ships is the command line.
+    from_file = pipeline_via_cli(DATASET, tmp_path / "file.csv", tmp_path)
+    from_stdin = pipeline_via_cli(DATASET, tmp_path / "stdin.csv", tmp_path, from_stdin=True)
     empty = empty_baseline_mb()
 
-    print(
-        f"[pipe] file  peak={from_file['peak_mb']:.3f} MiB  delta={from_file['delta_mb']:.3f}  "
-        f"records={from_file['records']:,}  {from_file['seconds']:.1f}s"
-    )
-    print(
-        f"[pipe] stdin peak={from_stdin['peak_mb']:.3f} MiB  delta={from_stdin['delta_mb']:.3f}  "
-        f"records={from_stdin['records']:,}  {from_stdin['seconds']:.1f}s"
-    )
+    for label, profile in (("file", from_file), ("stdin", from_stdin)):
+        print(
+            f"[pipe] {label:<5} peak={profile['peak_mb']:8.3f} MiB  "
+            f"over-empty={profile['peak_mb'] - empty:6.3f}  "
+            f"records={profile['records']:,}  {profile['seconds']:6.1f}s"
+        )
     print(
         f"[pipe] difference {abs(from_file['peak_mb'] - from_stdin['peak_mb']):.3f} MiB   "
         f"input {input_mb:.1f} MiB   stdin peak is "

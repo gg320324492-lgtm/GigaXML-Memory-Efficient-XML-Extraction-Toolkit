@@ -274,9 +274,10 @@ report got wrong. What GigaXML adds is that a user never has to find either of t
    and not memory — xmltodict's peak did not change by a byte across that spread.
 
    The sweep behind this report is the one after it, on an idle machine. It came back
-   clean for eleven of its twelve groups. The exception was **raw lxml's 1 GB group,
-   whose repeats 4 and 5 ran at 61.3 s and 57.3 s against 43.7–44.5 s for the other
-   three** — a `stdev` of 8.4 s where GigaXML's simultaneous group sat at 1.1 s. That
+   clean of contention for eleven of its twelve groups. The exception was **raw lxml's
+   1 GB group, whose repeats 4 and 5 ran at 61.3 s and 57.3 s against 43.7–44.5 s for
+   the other three** — a `stdev` of 8.4 s where GigaXML's simultaneous group sat at
+   1.1 s. That
    asymmetry is the tell: a slower machine slows everything at once, so two groups
    holding steady while one alone jumps means something took the CPU for a few seconds,
    mid-group. That group was **re-measured on a separate pass** — 45.9 / 46.1 / 46.5 /
