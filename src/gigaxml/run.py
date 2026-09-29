@@ -135,7 +135,7 @@ def _linux_vmhwm_mb() -> float | None:
         return None
 
 
-def _windows_peak_working_set_mb() -> float | None:
+def _windows_peak_working_set_mb() -> float | None:  # pragma: no cover - Windows only
     """``PeakWorkingSetSize`` in MiB, or ``None`` if the call fails."""
     import ctypes
     from ctypes import wintypes

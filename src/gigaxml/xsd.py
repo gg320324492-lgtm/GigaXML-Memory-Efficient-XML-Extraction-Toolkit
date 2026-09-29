@@ -232,8 +232,10 @@ def _map_type(declared: object) -> FieldType | None:
     base = getattr(declared, "base_type", None)
     while base is not None:
         base_name = getattr(base, "name", None)
-        if base_name in XSD_FIELD_TYPES:
-            return XSD_FIELD_TYPES[base_name]
+        if base_name is not None:
+            mapped = XSD_FIELD_TYPES.get(_local(base_name))
+            if mapped is not None:
+                return mapped
         base = getattr(base, "base_type", None)
     return XSD_FIELD_TYPES.get(name)
 

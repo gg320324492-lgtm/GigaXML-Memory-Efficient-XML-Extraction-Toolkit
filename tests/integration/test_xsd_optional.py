@@ -66,7 +66,13 @@ XSD = """<?xml version="1.0" encoding="UTF-8"?>
                     <xs:element name="name"     type="xs:string"/>
                     <xs:element name="category" type="xs:string"/>
                     <xs:element name="price"    type="xs:decimal"/>
-                    <xs:element name="manufacturer" type="xs:string"/>
+                    <xs:element name="manufacturer">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="name" type="xs:string"/>
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
                   </xs:sequence>
                   <xs:attribute name="id"   type="xs:int"/>
                   <xs:attribute name="type" type="xs:string"/>
@@ -299,3 +305,145 @@ def test_a_schema_key_does_not_change_the_config_hash_without_the_extra() -> Non
     assert config_identity(base) == config_identity(same), (
         "a schema path must not invalidate a resume: it changes types, not the extraction"
     )
+
+
+# --- What happens when the extra is absent, from the inside --------------------
+#
+# The subprocess tests above prove the *core* survives without xmlschema. These prove
+# the schema module itself says so rather than raising something the CLI cannot turn
+# into one `error:` line.
+
+
+def test_requiring_the_schema_without_it_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The message names the extra and the command that installs it.
+
+    An ``ImportError`` from three frames down is a traceback; a user who has not
+    installed an optional extra needs one line telling them what to type.
+    """
+    import builtins
+
+    import gigaxml.xsd as xsd
+
+    real_import = builtins.__import__
+
+    def refuse(name: str, *args: object, **kwargs: object) -> object:
+        if name == "xmlschema":
+            raise ImportError("no module named xmlschema")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    assert xsd.available() is False
+    with pytest.raises(xsd.SchemaUnavailableError) as caught:
+        xsd.require_schema()
+    message = str(caught.value)
+    assert "pip install 'gigaxml[xsd]'" in message, message
+    assert "works without it" in message, message
+
+
+@pytest.mark.skipif(
+    not _have_xmlschema(), reason="install the 'xsd' extra: pip install 'gigaxml[xsd]'"
+)
+def test_a_missing_or_broken_schema_is_a_gigaxml_error(tmp_path: Path) -> None:
+    """A bad path and a malformed file both fail through the same door.
+
+    They are ordinary user mistakes, so they arrive as ``GigaXMLError`` -- which the
+    CLI renders as one ``error:`` line -- rather than as whatever the schema library
+    happens to raise, which is a family of its own and would reach the user raw.
+    """
+    from gigaxml.errors import GigaXMLError
+    from gigaxml.xsd import record_field_types
+
+    with pytest.raises(GigaXMLError) as missing:
+        record_field_types(tmp_path / "nope.xsd", "/a/b")
+    assert "does not exist" in str(missing.value)
+
+    broken = tmp_path / "broken.xsd"
+    broken.write_text("this is not XML at all", encoding="utf-8")
+    with pytest.raises(GigaXMLError) as unparseable:
+        record_field_types(broken, "/a/b")
+    assert "not a usable XSD" in str(unparseable.value)
+
+    # A well-formed schema that simply does not contain the path, with the alternatives
+    # named -- a user who misspelled a segment needs to see what is there.
+    _, schema, _ = write_inputs(tmp_path)
+    with pytest.raises(GigaXMLError) as wrong_top:
+        record_field_types(schema, "/envelope/items/item")
+    assert "no top-level element" in str(wrong_top.value)
+    assert "catalog" in str(wrong_top.value)
+
+    with pytest.raises(GigaXMLError) as wrong_nested:
+        record_field_types(schema, "/catalog/products/order")
+    assert "no element" in str(wrong_nested.value)
+
+    with pytest.raises(GigaXMLError) as empty_path:
+        record_field_types(schema, "///")
+    assert "names no element" in str(empty_path.value)
+
+
+@pytest.mark.skipif(
+    not _have_xmlschema(), reason="install the 'xsd' extra: pip install 'gigaxml[xsd]'"
+)
+def test_a_user_defined_simple_type_is_followed_to_its_base(tmp_path: Path) -> None:
+    """A named type resolves to what it is built from, not to a guess.
+
+    Schemas in the wild name their types. A schema that says ``MoneyType`` and never
+    says what that is should not type a price column as a string -- and a column whose
+    base is unrecognised should be left out rather than coerced.
+    """
+    from gigaxml.xsd import record_field_types
+
+    schema = tmp_path / "named.xsd"
+    schema.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="MoneyType">
+    <xs:restriction base="xs:decimal"/>
+  </xs:simpleType>
+  <xs:simpleType name="DurationType">
+    <xs:restriction base="xs:duration"/>
+  </xs:simpleType>
+  <xs:element name="thing">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="amount" type="MoneyType"/>
+        <xs:element name="blob"   type="DurationType"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
+""",
+        encoding="utf-8",
+    )
+    types = record_field_types(schema, "/thing")
+    assert types["amount"] is FieldType.DECIMAL, "a named type must resolve to its base"
+    assert "blob" not in types, (
+        "a type this project does not model must be absent, not guessed at -- coercing "
+        "it to a string would silently change what the column contains"
+    )
+
+
+@pytest.mark.skipif(
+    not _have_xmlschema(), reason="install the 'xsd' extra: pip install 'gigaxml[xsd]'"
+)
+def test_validation_reports_what_does_not_fit(tmp_path: Path) -> None:
+    """A valid document yields no errors and a broken one names the element."""
+    from gigaxml.errors import GigaXMLError
+    from gigaxml.xsd import validate_document
+
+    _, schema, _ = write_inputs(tmp_path)
+
+    good = tmp_path / "good.xml"
+    good.write_text(SOURCE, encoding="utf-8")
+    assert validate_document(schema, good) == []
+
+    bad = tmp_path / "bad.xml"
+    bad.write_text(
+        '<?xml version="1.0"?><catalog><products><product id="not-an-int">'
+        "<name>x</name></product></products></catalog>",
+        encoding="utf-8",
+    )
+    errors = validate_document(schema, bad)
+    assert errors, "a product with a non-integer id does not fit the schema"
+
+    with pytest.raises(GigaXMLError):
+        validate_document(schema, tmp_path / "absent.xml")

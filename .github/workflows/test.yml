@@ -25,7 +25,15 @@ jobs:
           # The gui extra is installed so the desktop application's tests actually
           # run here. Without it they skip, and a stage whose tests always skip has
           # the appearance of coverage and none of it.
-          pip install -e ".[dev,gui]"
+          #
+          # The xsd extra is installed for the same reason, and the important part is
+          # what it does NOT change: the tests that prove the core works without any
+          # optional dependency hide the module in sys.modules themselves, so they
+          # still test a machine that has never heard of xmlschema. Installing it here
+          # means the schema code is exercised rather than skipped -- the first CI run
+          # of it left gigaxml/xsd.py at 0% and the coverage gate failed, because a
+          # suite that skips the code it just added has measured nothing about it.
+          pip install -e ".[dev,gui,xsd]"
 
       - name: Install Qt's system libraries
         # PySide6's wheel ships the Qt shared objects and the Python bindings, not the
