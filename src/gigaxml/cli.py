@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import sys
 import time
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from itertools import chain, islice
 from pathlib import Path
 
@@ -45,6 +47,7 @@ from gigaxml.run import (
     RunStats,
     consume_records,
     elapsed_since,
+    peak_rss_mb,
 )
 from gigaxml.sample import sample_records
 from gigaxml.writers import (
@@ -366,6 +369,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
     checkpointing = args.checkpoint_every is not None
     report_path = _run_report_path(args, checkpoint=checkpointing)
     started = time.perf_counter()
+    started_at = datetime.now(UTC)
     progress = _progress_reporter(args)
 
     if args.resume and args.checkpoint_every is None:
@@ -407,6 +411,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
             rejections=rejections,
             error=exc,
             started=started,
+            started_at=started_at,
         )
         raise
 
@@ -418,6 +423,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
         rejections=rejections,
         error=None,
         started=started,
+        started_at=started_at,
     )
     print(json.dumps(_extract_summary(args, config, writer), indent=2))
     _report_rejections(stats)
@@ -877,6 +883,29 @@ def _partial_output_path(output: str | Path) -> Path:
     return target.with_name(target.name + PARTIAL_SUFFIX)
 
 
+def _identity_or_reason(
+    target: str | Path, label: str
+) -> tuple[dict[str, object] | None, str | None]:
+    """``source_identity`` for a report field, or ``None`` and why it was impossible.
+
+    **This never invents an identity.** If the path cannot be stat'ed or read -- because
+    the run is reading standard input, because the file is gone, because the output was
+    never created -- the report says so in words and leaves the value ``null``. Filling
+    in a zero, an empty string, or a hash of nothing would produce a report that reads
+    as complete and is not: a scanner looking for a source that changed would see an
+    unchanged ``"sha256": ""``. A field that cannot be measured has to look
+    unmeasurable, which is the only honest shape for it.
+
+    Reuses :func:`gigaxml.checkpoint.source_identity` rather than hashing again, so
+    "the hash in the report" and "the hash resume checks" cannot be two different
+    functions that agree today.
+    """
+    try:
+        return source_identity(target), None
+    except (CheckpointError, OSError) as exc:
+        return None, f"{label} could not be identified: {exc}"
+
+
 def _run_report_payload(
     args: argparse.Namespace,
     config: ExtractionConfig,
@@ -887,6 +916,7 @@ def _run_report_payload(
     *,
     partial: Path | None = None,
     checkpoint_info: dict[str, object] | None = None,
+    started_at: datetime | None = None,
 ) -> dict[str, object]:
     """The run summary, which is written whether the run finished or not.
 
@@ -938,7 +968,71 @@ def _run_report_payload(
     }
     if checkpoint_info is not None:
         payload["checkpoint"] = checkpoint_info
+
+    payload.update(_environment_fields(config, args, writer, rejections, started, started_at))
     return payload
+
+
+def _environment_fields(
+    config: ExtractionConfig,
+    args: argparse.Namespace,
+    writer: RowWriter | None,
+    rejections: RejectionLog,
+    started: float,
+    started_at: datetime | None,
+) -> dict[str, object]:
+    """The run report's provenance and cost block.
+
+    Split out of :func:`_run_report_payload` because it is the part that has to be
+    honest about failure: every field here is either a real measurement or an explicit
+    ``null`` paired with a sentence saying why. See :func:`_identity_or_reason`.
+
+    ``accepted`` and ``rejected`` are counted, not inferred. ``rows`` is what the writer
+    committed, ``rejections.count`` is what quarantine took, and a record that was
+    neither -- a run that died mid-record -- shows up as the two not summing to
+    ``records_seen`` rather than being absorbed into either number.
+    """
+    elapsed = elapsed_since(started)
+    accepted = 0 if writer is None else writer.rows_written
+    rejected = rejections.count
+    finished = datetime.now(UTC)
+    begin = started_at if started_at is not None else finished - timedelta(seconds=elapsed)
+
+    input_identity, input_error = _identity_or_reason(args.source, "the input source")
+    output_identity, output_error = _identity_or_reason(args.output, "the output file")
+
+    block: dict[str, object] = {
+        "environment": {
+            "python": platform.python_version(),
+            "python_implementation": platform.python_implementation(),
+            "os": platform.system(),
+            "os_release": platform.release(),
+            "machine": platform.machine(),
+        },
+        "started_at": begin.isoformat(timespec="seconds"),
+        "finished_at": finished.isoformat(timespec="seconds"),
+        "elapsed_seconds": elapsed,
+        "records": {
+            "accepted": accepted,
+            "rejected": rejected,
+            "seen": accepted + rejected,
+        },
+        "config_hash": config_identity(config),
+        "peak_rss_mb": peak_rss_mb(),
+        "input_identity": input_identity,
+        "output_identity": output_identity,
+    }
+    # Throughput over the elapsed time of the whole run, and only when it is defined:
+    # a run that took under a millisecond has no rate worth writing, and 0.0 there
+    # would read as "infinitely slow".
+    block["throughput_records_per_s"] = (
+        round((accepted + rejected) / elapsed, 1) if elapsed > 0 else None
+    )
+    if input_error is not None:
+        block["input_identity_error"] = input_error
+    if output_error is not None:
+        block["output_identity_error"] = output_error
+    return block
 
 
 def _write_run_report(
@@ -952,6 +1046,7 @@ def _write_run_report(
     started: float,
     partial: Path | None = None,
     checkpoint_info: dict[str, object] | None = None,
+    started_at: datetime | None = None,
 ) -> None:
     """Write the run summary. Raises ``OSError`` if the path cannot be written."""
     payload = _run_report_payload(
@@ -963,6 +1058,7 @@ def _write_run_report(
         started,
         partial=partial,
         checkpoint_info=checkpoint_info,
+        started_at=started_at,
     )
     report_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

@@ -265,6 +265,19 @@ def test_without_the_flag_nothing_changes(tmp_path: Path) -> None:
         "partial_path",
         "elapsed_seconds",
         "tool_version",
+        # The provenance and cost block. Listed explicitly rather than loosened into a
+        # subset check, because the point of this assertion is that the report holds
+        # exactly these keys -- a check that any extra key is a new field nobody
+        # reviewed. Adding one here is a contract change, not a test to relax.
+        "environment",
+        "started_at",
+        "finished_at",
+        "records",
+        "config_hash",
+        "peak_rss_mb",
+        "input_identity",
+        "output_identity",
+        "throughput_records_per_s",
     }
 
 

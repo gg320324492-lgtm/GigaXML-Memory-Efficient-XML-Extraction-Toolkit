@@ -255,7 +255,7 @@ def test_the_report_lands_on_both_paths_with_every_field(
     assert main(["extract", str(source), "-c", str(config), "-o", str(output)]) == expected_exit
 
     report = read_report(tmp_path / "run-report.json")
-    assert set(report) == {
+    base_keys = {
         "status",
         "source",
         "output",
@@ -270,7 +270,35 @@ def test_the_report_lands_on_both_paths_with_every_field(
         "partial_path",
         "elapsed_seconds",
         "tool_version",
+        # The provenance and cost block. Listed explicitly rather than loosened into a
+        # subset check, because the point of this assertion is that the report holds
+        # exactly these keys -- a check that any extra key is a new field nobody
+        # reviewed. Adding one here is a contract change, not a test to relax.
+        "environment",
+        "started_at",
+        "finished_at",
+        "records",
+        "config_hash",
+        "peak_rss_mb",
+        "input_identity",
+        "output_identity",
+        "throughput_records_per_s",
     }
+    # A run that aborted never produced its output, so the report carries an extra key
+    # saying exactly that. Asserted per path rather than folded into the set above,
+    # because "the identity is null *and* there is a sentence saying why" is the
+    # property worth holding: a null with no explanation is indistinguishable from a
+    # measurement that silently failed, which is the failure mode this whole field
+    # exists to prevent.
+    if expected_status == "failed":
+        assert report["output_identity"] is None
+        assert "output_identity_error" in report
+        assert "the output file" in report["output_identity_error"]
+        assert set(report) == base_keys | {"output_identity_error"}
+    else:
+        assert "output_identity_error" not in report
+        assert report["output_identity"]["sha256"]
+        assert set(report) == base_keys
     assert report["status"] == expected_status
     assert report["output_complete"] is (expected_status == "ok")
     assert report["record_path"] == "/root/item"

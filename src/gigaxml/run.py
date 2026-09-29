@@ -23,6 +23,7 @@ was rejected when nothing was.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ __all__ = [
     "RejectionLog",
     "RunStats",
     "consume_records",
+    "peak_rss_mb",
 ]
 
 #: File name of the rejection log, written beside the output file.
@@ -65,6 +67,71 @@ QUARANTINABLE: Final = (FieldTypeError, MissingRequiredFieldError)
 #: Bytes buffered by the rejection log's handle. Bounded, so a run with a million
 #: rejections costs no more memory than one with a hundred.
 _REJECTION_BUFFER_BYTES: Final = 1 << 20
+
+_MB: Final = 1024 * 1024
+
+
+def peak_rss_mb() -> float | None:
+    """The OS high-water mark for this process, in MiB -- or ``None``.
+
+    **``None`` means "this platform cannot tell", and it is load-bearing.** A run report
+    that filled an unavailable peak with ``0.0`` would be worse than one that omitted it:
+    a reader scanning for regressions would see a memory figure that is obviously
+    impossible, or -- worse, once downstream code stopped being surprised by it -- would
+    treat "we could not measure" as "it used nothing". A missing measurement has to look
+    missing.
+
+    On Windows this is ``PeakWorkingSetSize`` through ``psapi``, the same counter the
+    performance suite uses. Elsewhere it is ``getrusage``, whose unit differs between
+    Linux (kibibytes) and macOS (bytes), and whose ``ru_maxrss`` is a maximum over the
+    process's life rather than an instantaneous reading -- which is what a report wants.
+    """
+    if sys.platform == "win32":
+        return _windows_peak_working_set_mb()
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - no getrusage on this platform
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports kibibytes, the BSDs and macOS report bytes.
+    return peak / 1024 if sys.platform != "darwin" else peak / _MB
+
+
+def _windows_peak_working_set_mb() -> float | None:
+    """``PeakWorkingSetSize`` in MiB, or ``None`` if the call fails."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    counters = _Counters()
+    counters.cb = ctypes.sizeof(counters)
+    handle = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]
+    read = ctypes.windll.psapi.GetProcessMemoryInfo  # type: ignore[attr-defined]
+    # The signatures are declared, and that is not decoration. Without them ctypes
+    # assumes every argument is a 32-bit int, which truncates the 64-bit pseudo-handle
+    # GetCurrentProcess returns; the call then fails, returns 0, and a reader that
+    # treats that as "no measurement" silently falls back to current RSS -- which is a
+    # different quantity that happens to be available. Declared, it returns TRUE.
+    read.restype = wintypes.BOOL
+    read.argtypes = [wintypes.HANDLE, ctypes.POINTER(_Counters), wintypes.DWORD]
+    ok = read(handle, ctypes.byref(counters), counters.cb)
+    if not ok:  # pragma: no cover - the call has no failure mode in practice
+        return None
+    return counters.PeakWorkingSetSize / _MB
+
 
 #: Rejections written between explicit flushes.
 #:
