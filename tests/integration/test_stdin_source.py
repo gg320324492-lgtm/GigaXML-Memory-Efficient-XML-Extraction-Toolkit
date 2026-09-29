@@ -18,6 +18,7 @@ CSV that looks like a document with no records in it.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -210,3 +211,120 @@ def test_an_empty_pipe_is_an_error_not_an_empty_csv(tmp_path: Path) -> None:
 
     assert completed.returncode != 0
     assert not output.exists()
+
+
+# --- The same token in the other two subcommands -----------------------------
+#
+# `-` meant "standard input" to extract and "a file whose name is a hyphen" to
+# inspect and sample, which answered "no such file". A user reading that concludes
+# their path is wrong, when in fact the tool had never been asked the question: the
+# token is a sentinel, and a sentinel that means one thing in one place and something
+# else in the next two is a bug wearing a feature's clothes.
+#
+# Both of these commands need exactly one pass over the document, so neither is
+# technically barred from a stream -- and neither is stopped by anything that streams
+# cannot do. There is nothing to refuse here, and the earlier "no such file" answer was
+# not a constraint but an omission.
+
+
+def _run_subcommand(args: list[str], document: Path) -> subprocess.CompletedProcess[str]:
+    """Run one CLI subcommand with the document on standard input."""
+    with document.open("rb") as handle:
+        return subprocess.run(
+            [sys.executable, "-m", "gigaxml.cli", *args],
+            stdin=handle,
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(REPO_ROOT),
+        )
+
+
+def test_inspect_reads_a_pipe_and_says_its_size_is_unknown(tmp_path: Path) -> None:
+    """``gigaxml inspect -`` reports the structure, and does not invent a size.
+
+    The size is the one thing a pipe cannot give, and it is reported as unknown rather
+    than as 0.00 MiB -- a zero would say "empty document", which is a claim the walk has
+    no way to support and which a reader would have no reason to doubt.
+    """
+    source, _ = write_inputs(tmp_path)
+    completed = _run_subcommand(["inspect", "-"], source)
+
+    assert completed.returncode == 0, completed.stderr[-500:]
+    assert "no such file" not in completed.stderr.lower()
+    assert "elements seen" in completed.stdout
+    assert "/root/item" in completed.stdout, "the record path should be proposed"
+    assert "unknown" in completed.stdout, (
+        "a stream has no length; reporting 0.00 MiB would claim the document is empty"
+    )
+    assert "0.00 MiB" not in completed.stdout
+
+
+def test_inspect_on_a_pipe_produces_the_same_report_as_the_file(tmp_path: Path) -> None:
+    """The walk is the same walk: identical output, byte for byte, minus the size.
+
+    The one field that may differ is ``input_mb``, and only because a pipe has no
+    length. Everything else -- element count, depth, candidate paths, type inference --
+    is computed identically, which is the claim that ``-`` is a source and not a special
+    mode.
+    """
+    source, _ = write_inputs(tmp_path)
+    from_file = subprocess.run(
+        [sys.executable, "-m", "gigaxml.cli", "inspect", str(source), "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+    with source.open("rb") as handle:
+        from_stdin = subprocess.run(
+            [sys.executable, "-m", "gigaxml.cli", "inspect", "-", "--json"],
+            stdin=handle,
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(REPO_ROOT),
+        )
+
+    assert from_stdin.returncode == 0, from_stdin.stderr[-500:]
+    piped, named = json.loads(from_stdin.stdout), json.loads(from_file.stdout)
+
+    assert piped["input_mb"] is None
+    assert named["input_mb"] is not None
+    piped.pop("input_mb")
+    named.pop("input_mb")
+    piped.pop("source")
+    named.pop("source")
+    assert piped == named, "a pipe must be walked exactly as a file is"
+
+
+def test_sample_reads_a_pipe(tmp_path: Path) -> None:
+    """``gigaxml sample -`` writes the first records of a piped document."""
+    source, config = write_inputs(tmp_path)
+    output = tmp_path / "sample.csv"
+    completed = _run_subcommand(
+        ["sample", "-", "-c", str(config), "-n", "2", "-o", str(output)], source
+    )
+
+    assert completed.returncode == 0, completed.stderr[-500:]
+    assert "no such file" not in completed.stderr.lower()
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        "id,name",
+        "1,A",
+        "2,B",
+    ]
+
+
+def test_sample_on_a_pipe_produces_the_same_bytes_as_the_file(tmp_path: Path) -> None:
+    """Same rows, same order, same bytes -- a pipe is a source, not a mode."""
+    source, config = write_inputs(tmp_path)
+    from_file = tmp_path / "file.csv"
+    from_stdin = tmp_path / "stdin.csv"
+
+    assert main(["sample", str(source), "-c", str(config), "-n", "2", "-o", str(from_file)]) == 0
+    completed = _run_subcommand(
+        ["sample", "-", "-c", str(config), "-n", "2", "-o", str(from_stdin)], source
+    )
+
+    assert completed.returncode == 0, completed.stderr[-500:]
+    assert from_stdin.read_bytes() == from_file.read_bytes()

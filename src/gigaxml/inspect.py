@@ -36,7 +36,7 @@ import gzip
 import math
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import closing
+from contextlib import ExitStack, closing
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Final
@@ -223,7 +223,10 @@ class InspectionReport:
     """The result of one :func:`inspect_document` walk."""
 
     source: str
-    input_mb: float
+    #: Size of the input in MiB, or ``None`` when the source is a stream. A pipe has no
+    #: length to stat, and ``0.0`` would read as an empty document rather than as one
+    #: whose size nobody measured -- the same rule the run report follows.
+    input_mb: float | None
     elements_seen: int
     max_depth_seen: int
     max_depth_limit: int
@@ -304,7 +307,8 @@ class InspectionReport:
         """A human-readable rendering."""
         lines: list[str] = [
             f"gigaxml inspect: {self.source}",
-            f"  input            {self.input_mb:,.2f} MiB",
+            "  input            "
+            + (f"{self.input_mb:,.2f} MiB" if self.input_mb is not None else "unknown (stream)"),
             f"  elements seen    {self.elements_seen:,}",
             f"  max depth        {self.max_depth_seen} (limit {self.max_depth_limit})"
             + ("  [TRUNCATED]" if self.depth_truncated else ""),
@@ -524,8 +528,17 @@ class _PathAccumulator:
         )
 
 
-def _open_binary(path: Path) -> IO[bytes]:
-    """Open ``path`` for reading, transparently decompressing gzip."""
+def _open_binary(source: str | Path | IO[bytes]) -> IO[bytes]:
+    """A readable byte stream for ``source``, transparently decompressing gzip.
+
+    A stream is returned untouched -- it belongs to whoever opened it, and ``inspect``
+    does not close what it did not open. The walk below is identical either way: lxml
+    pulls blocks from a file-like whether or not it can seek, so ``inspect -`` costs
+    the same bounded memory as a file on disk.
+    """
+    if hasattr(source, "read"):
+        return source  # type: ignore[return-value]
+    path = Path(source)
     if path.suffix.lower() in _GZIP_SUFFIXES:
         return gzip.open(path, "rb")
     return path.open("rb")
@@ -755,7 +768,7 @@ class _ValueCollector:
 
 
 def inspect_document(
-    source: str | Path,
+    source: str | Path | IO[bytes],
     *,
     max_paths: int = DEFAULT_MAX_PATHS,
     max_depth: int = DEFAULT_MAX_DEPTH,
@@ -765,7 +778,10 @@ def inspect_document(
     """Walk ``source`` once and report its structure.
 
     Args:
-        source: XML file, optionally gzipped.
+        source: XML file (optionally gzipped), an open binary stream, or ``"-"`` to
+            read standard input. A stream is walked exactly as a file is, at the same
+            bounded memory; the report records its size as unknown, because a pipe has
+            no length and this walk never needed one.
         max_paths: distinct paths tracked before the table stops growing.
         max_depth: nesting depth beyond which paths are counted but not tracked.
         collect_values: sample field values, for ``--infer-types``. Off by default:
@@ -779,8 +795,12 @@ def inspect_document(
         OSError: the file cannot be read.
         lxml.etree.XMLSyntaxError: the document is not well-formed XML.
     """
-    location = Path(source)
-    input_mb = location.stat().st_size / _MB
+    is_stream = hasattr(source, "read")
+    location = Path("<stream>") if is_stream else Path(source)
+    # A stream has no length to stat, and the walk is streaming precisely so that it
+    # never had to know one. Reporting 0.0 would say "empty document", which is a claim
+    # this module has no way to support.
+    input_mb = None if is_stream else location.stat().st_size / _MB
 
     scope = _NamespaceScope()
     pending_ns: list[tuple[str, str]] = []
@@ -799,7 +819,13 @@ def inspect_document(
     open_children: list[set[str]] = []
     scope_marks: list[int] = []
 
-    with closing(_open_binary(location)) as stream:
+    # Closed only if opened here: a caller's stream belongs to the caller, and the
+    # walk below is identical either way because lxml pulls blocks from a file-like
+    # whether or not it can seek. Same shape as StreamingRecordReader.__iter__.
+    with ExitStack() as owned:
+        stream = _open_binary(source)
+        if not is_stream:
+            owned.enter_context(closing(stream))
         context = etree.iterparse(
             stream,
             events=("start", "end", "start-ns"),
@@ -901,7 +927,7 @@ def inspect_document(
 
     return InspectionReport(
         source=str(source),
-        input_mb=round(input_mb, 3),
+        input_mb=None if input_mb is None else round(input_mb, 3),
         elements_seen=elements_seen,
         max_depth_seen=max_depth_seen,
         max_depth_limit=max_depth,

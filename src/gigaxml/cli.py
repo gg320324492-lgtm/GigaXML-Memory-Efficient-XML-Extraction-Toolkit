@@ -218,7 +218,15 @@ def build_parser() -> argparse.ArgumentParser:
             "runnable config."
         ),
     )
-    inspect.add_argument("source", help="Input XML file (optionally gzipped).")
+    inspect.add_argument(
+        "source",
+        help=(
+            "Input XML file (optionally gzipped), or - to read the document from "
+            "standard input. A stream is walked exactly as a file is, at the same "
+            "bounded memory; the reported input size is unknown, because a pipe has "
+            "no length."
+        ),
+    )
     inspect.add_argument(
         "--json",
         action="store_true",
@@ -280,7 +288,14 @@ def build_parser() -> argparse.ArgumentParser:
             "document order -- reproducible, and biased, which the report says."
         ),
     )
-    sample.add_argument("source", help="Input XML file (optionally gzipped).")
+    sample.add_argument(
+        "source",
+        help=(
+            "Input XML file (optionally gzipped), or - to read the document from "
+            "standard input. A stream is read exactly as a file is, at the same "
+            "bounded memory."
+        ),
+    )
     sample.add_argument("-c", "--config", required=True, help="YAML config to apply.")
     sample.add_argument(
         "-n",
@@ -384,6 +399,13 @@ def _open_source(source: str) -> str | Path | IO[bytes]:
 
     ``sys.stdin.buffer`` rather than ``sys.stdin``, because lxml parses bytes and a
     text-mode handle would have to be re-encoded by lxml one chunk at a time.
+
+    **Every subcommand that reads a document goes through here**, so ``-`` means the
+    same thing everywhere. It used not to: ``extract`` understood it while ``inspect``
+    and ``sample`` treated the token as a file name and answered "no such file", which
+    tells a user their path is wrong when in fact the tool had simply never been asked
+    the question. A sentinel with one meaning in one place and another in the next two
+    is a bug wearing a feature's clothes.
     """
     if _is_stdin(source):
         return sys.stdin.buffer
@@ -506,7 +528,7 @@ def _warn_on_batch_size(batch_size: int) -> None:
 def _handle_inspect(args: argparse.Namespace) -> int:
     """Handle ``gigaxml inspect``."""
     report = inspect_document(
-        args.source,
+        _open_source(args.source),
         max_paths=args.max_paths,
         max_depth=args.max_depth,
         collect_values=args.infer_types,
@@ -566,7 +588,7 @@ def _handle_sample(args: argparse.Namespace) -> int:
         )
         with rejections:
             result = sample_records(
-                args.source,
+                _open_source(args.source),
                 config,
                 args.output,
                 limit=args.limit,
