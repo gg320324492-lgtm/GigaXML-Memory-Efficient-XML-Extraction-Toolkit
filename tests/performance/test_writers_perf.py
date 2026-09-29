@@ -52,9 +52,10 @@ PLATEAU_ADDITIVE_LIMIT_MB = 8.0
 #: the additive one below.
 #:
 #: What actually tests boundedness is :data:`PLATEAU_ADDITIVE_LIMIT_MB`, which this
-#: path passes: 4.01x the input costs +2.9 MiB, against a +8 MiB band. An absolute
-#: ceiling cannot tell a library's fixed cost from a leak -- only the additive one can
-#: -- so this constant is a sanity bound on the Arrow path's footprint, not the claim.
+#: path passes: 4.01x the input costs about +3 MiB (+2.9 to +3.2 across runs here),
+#: against a +8 MiB band. An absolute ceiling cannot tell a library's fixed cost from
+#: a leak -- only the additive one can -- so this constant is a sanity bound on the
+#: Arrow path's footprint, not the claim.
 PARQUET_ABSOLUTE_LIMIT_MB = 90.0
 
 
