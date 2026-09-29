@@ -27,6 +27,43 @@ python benchmarks/bench_inspect.py        # inspect throughput and profile
 
 Each prints a table and writes `results.json` next to its scratch files.
 
+## The regression baseline — the one performance number CI asserts
+
+The rest of this directory produces numbers that are **recorded, never asserted**: a
+benchmark that fails when a machine is busy is worse than no benchmark, and this project
+decided that (roadmap A11) after paying for it. `perf_baseline.py` is the deliberate
+exception, and it is loose on purpose.
+
+```bash
+python benchmarks/perf_baseline.py             # check against the recorded baseline
+python benchmarks/perf_baseline.py --update    # re-record it, and say why
+```
+
+It generates a 10 MB document, extracts it five times in fresh interpreters that measure
+their **own** peak working set, and requires two things:
+
+| | |
+|---|---|
+| throughput | at least **60%** of the recorded reference, taken as the median of five runs |
+| peak memory | at most **60 MiB** — absolute, not relative |
+
+The memory ceiling is the one that matters. Bounded memory is the property the tool is
+sold on, it belongs to the code rather than to the hardware, and a regression in it does
+not need a reference to be visible. The throughput floor exists to catch a change that
+made the tool twice as slow, which is the size of regression a person would defend and
+the size nobody ships on purpose.
+
+**What it was verified against.** Adding a per-record loop that does no useful work and
+changes no output at all — byte-for-byte identical CSV, so all 1,288 functional tests
+stay green — drops throughput to 51% of the reference and turns the check red. That is
+the whole reason this file exists: the failure it catches is invisible to every other
+test in the repository.
+
+If it goes red on a change you believe is harmless, read the numbers it printed before
+touching the baseline. A shared runner under load and a real 50% regression look
+identical from here; re-recording the baseline is how you tell them apart, and the file
+records the machine the reference came from.
+
 ## Two configs, and why both
 
 `bench_extraction.py` runs a **six-field** config and a **one-field** control.

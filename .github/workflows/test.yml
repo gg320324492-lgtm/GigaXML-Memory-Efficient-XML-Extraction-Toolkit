@@ -65,6 +65,8 @@ jobs:
         # The performance tests are excluded: they measure memory and throughput, take
         # minutes, and are not a pass/fail signal (see the performance marker in
         # pyproject.toml). Coverage is measured over the source only.
+        # The coarse regression check below is the deliberate exception, and it is
+        # loose on purpose -- see that job.
         env:
           # A CI runner has no display. The desktop tests build real widgets
           # and drive the real CLI; only the windowing system is substituted,
@@ -73,3 +75,43 @@ jobs:
         shell: bash
         run: |
           pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 tests/unit tests/integration
+
+  performance-baseline:
+    # The one performance signal in CI, and the loose version of the A11 decision
+    # that performance numbers are recorded and never asserted.
+    #
+    # A11 is not being overturned. The assertion there was "is this as fast as the
+    # recording machine", which is red within a week because every runner is a
+    # different computer from every other runner and a neighbouring job moves the
+    # number. What is asserted here is "is this still within half of where it was",
+    # which is the size of regression worth a build failure and the size nobody
+    # ships on purpose.
+    #
+    # Single job, not the interpreter matrix: the quantity is throughput in records
+    # per second, and comparing 3.11's number against 3.13's reference would be
+    # measuring the interpreter, not the code.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Performance regression baseline
+        # Generates a 10 MB document, extracts it five times, and compares the median
+        # throughput and the peak memory against benchmarks/perf-baseline.json. Both
+        # counters are self-read inside the child that does the work.
+        #
+        # If this goes red on a change you believe is harmless, the honest response is
+        # to look at the numbers it printed before touching the baseline: a shared
+        # runner under load and a real 50% regression look identical from here, and
+        # re-recording the baseline is how you tell them apart.
+        shell: bash
+        run: python benchmarks/perf_baseline.py

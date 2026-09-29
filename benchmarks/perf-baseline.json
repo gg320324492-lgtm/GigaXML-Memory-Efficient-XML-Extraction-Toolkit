@@ -1,0 +1,26 @@
+{
+  "records": 29090,
+  "records_per_s": 42246.0,
+  "peak_rss_mb": 27.6,
+  "repeats": 5,
+  "size": "10MB",
+  "rates": [
+    39013.5,
+    41947.1,
+    42246.0,
+    43630.4,
+    43206.3
+  ],
+  "peaks": [
+    27.1,
+    27.5,
+    27.6,
+    27.1,
+    27.2
+  ],
+  "measured_on": {
+    "python": "3.13.14",
+    "machine": "AMD64",
+    "system": "Windows"
+  }
+}
