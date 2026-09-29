@@ -1,6 +1,6 @@
 {
   "environment": {
-    "recorded_at": "2026-09-28T07:43:48+00:00",
+    "recorded_at": "2026-09-28T19:07:29+00:00",
     "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
     "machine": "AMD64",
     "memory_total_gb": 31.8,
@@ -15,13 +15,13 @@
     "100MB": {
       "raw_lxml": {
         "summary": {
-          "median_s": 4.594,
-          "min_s": 4.435,
-          "max_s": 4.608,
-          "stdev_s": 0.073,
-          "p95_s": 4.608,
-          "peak_rss_median_mb": 48.1,
-          "records_per_s_median": 63321,
+          "median_s": 4.761,
+          "min_s": 4.576,
+          "max_s": 6.286,
+          "stdev_s": 0.696,
+          "p95_s": 6.286,
+          "peak_rss_median_mb": 24.8,
+          "records_per_s_median": 61100,
           "rows_written_median": 290900,
           "rows_in_document": 290900,
           "complete_output": true,
@@ -30,57 +30,57 @@
         },
         "runs": [
           {
-            "wall_s": 4.435,
+            "wall_s": 6.286,
             "exit_code": 0,
-            "peak_rss_mb": 48.0,
+            "peak_rss_mb": 24.9,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__50290688",
+            "stderr_tail": "__GIGAXML_PEAK__26058752",
             "repeat": 1,
             "rows_written": 290900
           },
           {
-            "wall_s": 4.574,
+            "wall_s": 4.761,
             "exit_code": 0,
-            "peak_rss_mb": 48.0,
+            "peak_rss_mb": 24.8,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__50315264",
+            "stderr_tail": "__GIGAXML_PEAK__26005504",
             "repeat": 2,
             "rows_written": 290900
           },
           {
-            "wall_s": 4.605,
+            "wall_s": 4.726,
             "exit_code": 0,
-            "peak_rss_mb": 48.1,
+            "peak_rss_mb": 24.7,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__50487296",
+            "stderr_tail": "__GIGAXML_PEAK__25866240",
             "repeat": 3,
             "rows_written": 290900
           },
           {
-            "wall_s": 4.594,
+            "wall_s": 5.109,
             "exit_code": 0,
-            "peak_rss_mb": 48.1,
+            "peak_rss_mb": 24.8,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__50409472",
+            "stderr_tail": "__GIGAXML_PEAK__25968640",
             "repeat": 4,
             "rows_written": 290900
           },
           {
-            "wall_s": 4.608,
+            "wall_s": 4.576,
             "exit_code": 0,
-            "peak_rss_mb": 48.2,
+            "peak_rss_mb": 24.8,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__50524160",
+            "stderr_tail": "__GIGAXML_PEAK__26013696",
             "repeat": 5,
             "rows_written": 290900
           }
@@ -88,13 +88,13 @@
       },
       "xmltodict": {
         "summary": {
-          "median_s": 5.607,
-          "min_s": 5.569,
-          "max_s": 5.696,
-          "stdev_s": 0.059,
-          "p95_s": 5.696,
+          "median_s": 5.7,
+          "min_s": 5.575,
+          "max_s": 6.58,
+          "stdev_s": 0.414,
+          "p95_s": 6.58,
           "peak_rss_median_mb": 43.4,
-          "records_per_s_median": 51881,
+          "records_per_s_median": 51035,
           "rows_written_median": 290900,
           "rows_in_document": 290900,
           "complete_output": true,
@@ -103,130 +103,57 @@
         },
         "runs": [
           {
-            "wall_s": 5.696,
-            "exit_code": 0,
-            "peak_rss_mb": 43.5,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 18906466,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__45637632",
-            "repeat": 1,
-            "rows_written": 290900
-          },
-          {
-            "wall_s": 5.684,
-            "exit_code": 0,
-            "peak_rss_mb": 43.3,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 18906466,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__45449216",
-            "repeat": 2,
-            "rows_written": 290900
-          },
-          {
-            "wall_s": 5.607,
+            "wall_s": 6.58,
             "exit_code": 0,
             "peak_rss_mb": 43.4,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__45481984",
-            "repeat": 3,
+            "stderr_tail": "__GIGAXML_PEAK__45543424",
+            "repeat": 1,
             "rows_written": 290900
           },
           {
-            "wall_s": 5.579,
+            "wall_s": 5.575,
+            "exit_code": 0,
+            "peak_rss_mb": 43.4,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 18906466,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__45510656",
+            "repeat": 2,
+            "rows_written": 290900
+          },
+          {
+            "wall_s": 5.654,
             "exit_code": 0,
             "peak_rss_mb": 43.5,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__45658112",
-            "repeat": 4,
-            "rows_written": 290900
-          },
-          {
-            "wall_s": 5.569,
-            "exit_code": 0,
-            "peak_rss_mb": 43.1,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 18906466,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__45146112",
-            "repeat": 5,
-            "rows_written": 290900
-          }
-        ]
-      },
-      "pandas": {
-        "summary": {
-          "median_s": 5.887,
-          "min_s": 5.686,
-          "max_s": 5.921,
-          "stdev_s": 0.112,
-          "p95_s": 5.921,
-          "peak_rss_median_mb": 2050.0,
-          "records_per_s_median": 49413,
-          "rows_written_median": 290900,
-          "rows_in_document": 290900,
-          "complete_output": true,
-          "ok_runs": 5,
-          "failed_runs": 0
-        },
-        "runs": [
-          {
-            "wall_s": 5.887,
-            "exit_code": 0,
-            "peak_rss_mb": 2049.8,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 13541981,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__2149371904",
-            "repeat": 1,
-            "rows_written": 290900
-          },
-          {
-            "wall_s": 5.715,
-            "exit_code": 0,
-            "peak_rss_mb": 2050.0,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 13541981,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__2149605376",
-            "repeat": 2,
-            "rows_written": 290900
-          },
-          {
-            "wall_s": 5.686,
-            "exit_code": 0,
-            "peak_rss_mb": 2049.9,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 13541981,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__2149519360",
+            "stderr_tail": "__GIGAXML_PEAK__45592576",
             "repeat": 3,
             "rows_written": 290900
           },
           {
-            "wall_s": 5.9,
+            "wall_s": 5.724,
             "exit_code": 0,
-            "peak_rss_mb": 2050.3,
+            "peak_rss_mb": 43.4,
             "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 13541981,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__2149928960",
+            "output_bytes": 18906466,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__45477888",
             "repeat": 4,
             "rows_written": 290900
           },
           {
-            "wall_s": 5.921,
+            "wall_s": 5.7,
             "exit_code": 0,
-            "peak_rss_mb": 2050.0,
+            "peak_rss_mb": 43.4,
             "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 13541981,
-            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__2149564416",
+            "output_bytes": 18906466,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__45547520",
             "repeat": 5,
             "rows_written": 290900
           }
@@ -234,13 +161,13 @@
       },
       "gigaxml": {
         "summary": {
-          "median_s": 7.05,
-          "min_s": 6.989,
-          "max_s": 7.197,
-          "stdev_s": 0.095,
-          "p95_s": 7.197,
-          "peak_rss_median_mb": 19.4,
-          "records_per_s_median": 41262,
+          "median_s": 6.705,
+          "min_s": 6.693,
+          "max_s": 6.855,
+          "stdev_s": 0.085,
+          "p95_s": 6.855,
+          "peak_rss_median_mb": 33.2,
+          "records_per_s_median": 43385,
           "rows_written_median": 290900,
           "rows_in_document": 290900,
           "complete_output": true,
@@ -249,57 +176,130 @@
         },
         "runs": [
           {
-            "wall_s": 7.18,
+            "wall_s": 6.855,
             "exit_code": 0,
-            "peak_rss_mb": 19.3,
+            "peak_rss_mb": 33.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20283392",
+            "stderr_tail": "__GIGAXML_PEAK__34697216",
             "repeat": 1,
             "rows_written": 290900
           },
           {
-            "wall_s": 7.197,
+            "wall_s": 6.851,
             "exit_code": 0,
-            "peak_rss_mb": 19.2,
+            "peak_rss_mb": 33.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20160512",
+            "stderr_tail": "__GIGAXML_PEAK__34918400",
             "repeat": 2,
             "rows_written": 290900
           },
           {
-            "wall_s": 7.05,
+            "wall_s": 6.705,
             "exit_code": 0,
-            "peak_rss_mb": 19.5,
+            "peak_rss_mb": 33.2,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20406272",
+            "stderr_tail": "__GIGAXML_PEAK__34783232",
             "repeat": 3,
             "rows_written": 290900
           },
           {
-            "wall_s": 7.022,
+            "wall_s": 6.693,
             "exit_code": 0,
-            "peak_rss_mb": 19.5,
+            "peak_rss_mb": 33.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20451328",
+            "stderr_tail": "__GIGAXML_PEAK__34947072",
             "repeat": 4,
             "rows_written": 290900
           },
           {
-            "wall_s": 6.989,
+            "wall_s": 6.696,
             "exit_code": 0,
-            "peak_rss_mb": 19.4,
+            "peak_rss_mb": 33.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 18906466,
             "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20393984",
+            "stderr_tail": "__GIGAXML_PEAK__34668544",
+            "repeat": 5,
+            "rows_written": 290900
+          }
+        ]
+      },
+      "pandas": {
+        "summary": {
+          "median_s": 5.778,
+          "min_s": 5.633,
+          "max_s": 6.818,
+          "stdev_s": 0.482,
+          "p95_s": 6.818,
+          "peak_rss_median_mb": 2050.0,
+          "records_per_s_median": 50346,
+          "rows_written_median": 290900,
+          "rows_in_document": 290900,
+          "complete_output": true,
+          "ok_runs": 5,
+          "failed_runs": 0
+        },
+        "runs": [
+          {
+            "wall_s": 6.818,
+            "exit_code": 0,
+            "peak_rss_mb": 2049.8,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 13541981,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__2149363712",
+            "repeat": 1,
+            "rows_written": 290900
+          },
+          {
+            "wall_s": 5.633,
+            "exit_code": 0,
+            "peak_rss_mb": 2050.0,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 13541981,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__2149621760",
+            "repeat": 2,
+            "rows_written": 290900
+          },
+          {
+            "wall_s": 5.771,
+            "exit_code": 0,
+            "peak_rss_mb": 2050.1,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 13541981,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__2149654528",
+            "repeat": 3,
+            "rows_written": 290900
+          },
+          {
+            "wall_s": 5.778,
+            "exit_code": 0,
+            "peak_rss_mb": 2049.8,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 13541981,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__2149412864",
+            "repeat": 4,
+            "rows_written": 290900
+          },
+          {
+            "wall_s": 5.83,
+            "exit_code": 0,
+            "peak_rss_mb": 2050.0,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 13541981,
+            "stdout_tail": "290900 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-100MB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__2149605376",
             "repeat": 5,
             "rows_written": 290900
           }
@@ -309,13 +309,13 @@
     "1GB": {
       "raw_lxml": {
         "summary": {
-          "median_s": 44.233,
-          "min_s": 43.759,
-          "max_s": 44.663,
-          "stdev_s": 0.321,
-          "p95_s": 44.663,
-          "peak_rss_median_mb": 296.6,
-          "records_per_s_median": 67343,
+          "median_s": 44.544,
+          "min_s": 43.739,
+          "max_s": 61.318,
+          "stdev_s": 8.376,
+          "p95_s": 61.318,
+          "peak_rss_median_mb": 25.0,
+          "records_per_s_median": 66873,
           "rows_written_median": 2978816,
           "rows_in_document": 2978816,
           "complete_output": true,
@@ -324,57 +324,57 @@
         },
         "runs": [
           {
-            "wall_s": 44.663,
+            "wall_s": 44.512,
             "exit_code": 0,
-            "peak_rss_mb": 296.4,
+            "peak_rss_mb": 25.0,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__310767616",
+            "stderr_tail": "__GIGAXML_PEAK__26202112",
             "repeat": 1,
             "rows_written": 2978816
           },
           {
-            "wall_s": 44.267,
+            "wall_s": 43.739,
             "exit_code": 0,
-            "peak_rss_mb": 297.8,
+            "peak_rss_mb": 25.0,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__312238080",
+            "stderr_tail": "__GIGAXML_PEAK__26263552",
             "repeat": 2,
             "rows_written": 2978816
           },
           {
-            "wall_s": 43.759,
+            "wall_s": 44.544,
             "exit_code": 0,
-            "peak_rss_mb": 296.6,
+            "peak_rss_mb": 25.0,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__311005184",
+            "stderr_tail": "__GIGAXML_PEAK__26226688",
             "repeat": 3,
             "rows_written": 2978816
           },
           {
-            "wall_s": 44.233,
+            "wall_s": 61.318,
             "exit_code": 0,
-            "peak_rss_mb": 290.0,
+            "peak_rss_mb": 25.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__304041984",
+            "stderr_tail": "__GIGAXML_PEAK__26308608",
             "repeat": 4,
             "rows_written": 2978816
           },
           {
-            "wall_s": 44.196,
+            "wall_s": 57.341,
             "exit_code": 0,
-            "peak_rss_mb": 298.3,
+            "peak_rss_mb": 24.9,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__312819712",
+            "stderr_tail": "__GIGAXML_PEAK__26140672",
             "repeat": 5,
             "rows_written": 2978816
           }
@@ -382,13 +382,13 @@
       },
       "xmltodict": {
         "summary": {
-          "median_s": 57.063,
-          "min_s": 56.46,
-          "max_s": 57.3,
-          "stdev_s": 0.372,
-          "p95_s": 57.3,
+          "median_s": 56.836,
+          "min_s": 56.409,
+          "max_s": 58.638,
+          "stdev_s": 0.89,
+          "p95_s": 58.638,
           "peak_rss_median_mb": 191.7,
-          "records_per_s_median": 52202,
+          "records_per_s_median": 52410,
           "rows_written_median": 2978816,
           "rows_in_document": 2978816,
           "complete_output": true,
@@ -397,57 +397,130 @@
         },
         "runs": [
           {
-            "wall_s": 56.706,
+            "wall_s": 58.638,
+            "exit_code": 0,
+            "peak_rss_mb": 191.8,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 196653526,
+            "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__201068544",
+            "repeat": 1,
+            "rows_written": 2978816
+          },
+          {
+            "wall_s": 56.96,
+            "exit_code": 0,
+            "peak_rss_mb": 191.7,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 196653526,
+            "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__201043968",
+            "repeat": 2,
+            "rows_written": 2978816
+          },
+          {
+            "wall_s": 56.409,
+            "exit_code": 0,
+            "peak_rss_mb": 191.7,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 196653526,
+            "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__200962048",
+            "repeat": 3,
+            "rows_written": 2978816
+          },
+          {
+            "wall_s": 56.617,
             "exit_code": 0,
             "peak_rss_mb": 191.4,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__200663040",
-            "repeat": 1,
+            "stderr_tail": "__GIGAXML_PEAK__200736768",
+            "repeat": 4,
             "rows_written": 2978816
           },
           {
-            "wall_s": 57.3,
+            "wall_s": 56.836,
             "exit_code": 0,
             "peak_rss_mb": 191.7,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
             "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
             "stderr_tail": "__GIGAXML_PEAK__201027584",
+            "repeat": 5,
+            "rows_written": 2978816
+          }
+        ]
+      },
+      "gigaxml": {
+        "summary": {
+          "median_s": 67.895,
+          "min_s": 67.05,
+          "max_s": 69.741,
+          "stdev_s": 1.077,
+          "p95_s": 69.741,
+          "peak_rss_median_mb": 33.4,
+          "records_per_s_median": 43873,
+          "rows_written_median": 2978816,
+          "rows_in_document": 2978816,
+          "complete_output": true,
+          "ok_runs": 5,
+          "failed_runs": 0
+        },
+        "runs": [
+          {
+            "wall_s": 68.546,
+            "exit_code": 0,
+            "peak_rss_mb": 33.2,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 196653526,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__34844672",
+            "repeat": 1,
+            "rows_written": 2978816
+          },
+          {
+            "wall_s": 67.895,
+            "exit_code": 0,
+            "peak_rss_mb": 33.6,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 196653526,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35192832",
             "repeat": 2,
             "rows_written": 2978816
           },
           {
-            "wall_s": 57.063,
+            "wall_s": 69.741,
             "exit_code": 0,
-            "peak_rss_mb": 191.3,
+            "peak_rss_mb": 33.5,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
-            "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__200622080",
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35155968",
             "repeat": 3,
             "rows_written": 2978816
           },
           {
-            "wall_s": 56.46,
+            "wall_s": 67.325,
             "exit_code": 0,
-            "peak_rss_mb": 191.7,
+            "peak_rss_mb": 33.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
-            "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__200978432",
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__34889728",
             "repeat": 4,
             "rows_written": 2978816
           },
           {
-            "wall_s": 57.296,
+            "wall_s": 67.05,
             "exit_code": 0,
-            "peak_rss_mb": 191.7,
+            "peak_rss_mb": 33.4,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 196653526,
-            "stdout_tail": "2978816 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-1GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__201003008",
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35004416",
             "repeat": 5,
             "rows_written": 2978816
           }
@@ -462,9 +535,9 @@
         },
         "runs": [
           {
-            "wall_s": 3.137,
+            "wall_s": 3.183,
             "exit_code": 1,
-            "peak_rss_mb": 6284.5,
+            "peak_rss_mb": 6284.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 0,
             "stdout_tail": "",
@@ -473,9 +546,9 @@
             "rows_written": 0
           },
           {
-            "wall_s": 2.813,
+            "wall_s": 2.825,
             "exit_code": 1,
-            "peak_rss_mb": 6284.6,
+            "peak_rss_mb": 6284.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 0,
             "stdout_tail": "",
@@ -484,9 +557,9 @@
             "rows_written": 0
           },
           {
-            "wall_s": 2.608,
+            "wall_s": 2.751,
             "exit_code": 1,
-            "peak_rss_mb": 6284.5,
+            "peak_rss_mb": 6284.7,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 0,
             "stdout_tail": "",
@@ -495,9 +568,9 @@
             "rows_written": 0
           },
           {
-            "wall_s": 2.613,
+            "wall_s": 2.727,
             "exit_code": 1,
-            "peak_rss_mb": 6284.4,
+            "peak_rss_mb": 6284.7,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 0,
             "stdout_tail": "",
@@ -506,7 +579,7 @@
             "rows_written": 0
           },
           {
-            "wall_s": 2.595,
+            "wall_s": 2.753,
             "exit_code": 1,
             "peak_rss_mb": 6284.5,
             "peak_rss_method": "peak_wset (self-read in child)",
@@ -515,79 +588,6 @@
             "stderr_tail": "lxml.etree.XMLSyntaxError: switching encoding: encoder error, line 1, column 1",
             "repeat": 5,
             "rows_written": 0
-          }
-        ]
-      },
-      "gigaxml": {
-        "summary": {
-          "median_s": 70.455,
-          "min_s": 69.496,
-          "max_s": 71.189,
-          "stdev_s": 0.789,
-          "p95_s": 71.189,
-          "peak_rss_median_mb": 19.4,
-          "records_per_s_median": 42279,
-          "rows_written_median": 2978816,
-          "rows_in_document": 2978816,
-          "complete_output": true,
-          "ok_runs": 5,
-          "failed_runs": 0
-        },
-        "runs": [
-          {
-            "wall_s": 69.628,
-            "exit_code": 0,
-            "peak_rss_mb": 19.4,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 196653526,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20320256",
-            "repeat": 1,
-            "rows_written": 2978816
-          },
-          {
-            "wall_s": 71.189,
-            "exit_code": 0,
-            "peak_rss_mb": 19.5,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 196653526,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20455424",
-            "repeat": 2,
-            "rows_written": 2978816
-          },
-          {
-            "wall_s": 71.076,
-            "exit_code": 0,
-            "peak_rss_mb": 19.3,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 196653526,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20189184",
-            "repeat": 3,
-            "rows_written": 2978816
-          },
-          {
-            "wall_s": 70.455,
-            "exit_code": 0,
-            "peak_rss_mb": 19.2,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 196653526,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20082688",
-            "repeat": 4,
-            "rows_written": 2978816
-          },
-          {
-            "wall_s": 69.496,
-            "exit_code": 0,
-            "peak_rss_mb": 19.5,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 196653526,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20422656",
-            "repeat": 5,
-            "rows_written": 2978816
           }
         ]
       }
@@ -595,13 +595,13 @@
     "4GB": {
       "raw_lxml": {
         "summary": {
-          "median_s": 176.586,
-          "min_s": 175.312,
-          "max_s": 178.371,
-          "stdev_s": 1.297,
-          "p95_s": 178.371,
-          "peak_rss_median_mb": 1222.0,
-          "records_per_s_median": 67475,
+          "median_s": 173.65,
+          "min_s": 172.455,
+          "max_s": 174.162,
+          "stdev_s": 0.798,
+          "p95_s": 174.162,
+          "peak_rss_median_mb": 25.1,
+          "records_per_s_median": 68616,
           "rows_written_median": 11915264,
           "rows_in_document": 11915264,
           "complete_output": true,
@@ -610,57 +610,57 @@
         },
         "runs": [
           {
-            "wall_s": 175.312,
+            "wall_s": 173.899,
             "exit_code": 0,
-            "peak_rss_mb": 1212.7,
+            "peak_rss_mb": 25.0,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__1271615488",
+            "stderr_tail": "__GIGAXML_PEAK__26226688",
             "repeat": 1,
             "rows_written": 11915264
           },
           {
-            "wall_s": 178.371,
+            "wall_s": 174.162,
             "exit_code": 0,
-            "peak_rss_mb": 1224.1,
+            "peak_rss_mb": 25.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__1283579904",
+            "stderr_tail": "__GIGAXML_PEAK__26337280",
             "repeat": 2,
             "rows_written": 11915264
           },
           {
-            "wall_s": 176.019,
+            "wall_s": 173.65,
             "exit_code": 0,
-            "peak_rss_mb": 1222.7,
+            "peak_rss_mb": 25.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__1282043904",
+            "stderr_tail": "__GIGAXML_PEAK__26341376",
             "repeat": 3,
             "rows_written": 11915264
           },
           {
-            "wall_s": 177.987,
+            "wall_s": 172.455,
             "exit_code": 0,
-            "peak_rss_mb": 1221.6,
+            "peak_rss_mb": 25.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__1280946176",
+            "stderr_tail": "__GIGAXML_PEAK__26361856",
             "repeat": 4,
             "rows_written": 11915264
           },
           {
-            "wall_s": 176.586,
+            "wall_s": 172.516,
             "exit_code": 0,
-            "peak_rss_mb": 1222.0,
+            "peak_rss_mb": 25.1,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-raw_lxml-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__1281372160",
+            "stderr_tail": "__GIGAXML_PEAK__26275840",
             "repeat": 5,
             "rows_written": 11915264
           }
@@ -668,13 +668,13 @@
       },
       "xmltodict": {
         "summary": {
-          "median_s": 226.153,
-          "min_s": 218.464,
-          "max_s": 228.649,
-          "stdev_s": 3.894,
-          "p95_s": 228.649,
-          "peak_rss_median_mb": 707.4,
-          "records_per_s_median": 52686,
+          "median_s": 224.431,
+          "min_s": 224.317,
+          "max_s": 225.637,
+          "stdev_s": 0.661,
+          "p95_s": 225.637,
+          "peak_rss_median_mb": 707.3,
+          "records_per_s_median": 53090,
           "rows_written_median": 11915264,
           "rows_in_document": 11915264,
           "complete_output": true,
@@ -683,57 +683,130 @@
         },
         "runs": [
           {
-            "wall_s": 226.153,
+            "wall_s": 224.334,
             "exit_code": 0,
-            "peak_rss_mb": 707.2,
+            "peak_rss_mb": 707.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__741580800",
+            "stderr_tail": "__GIGAXML_PEAK__741703680",
             "repeat": 1,
             "rows_written": 11915264
           },
           {
-            "wall_s": 228.649,
-            "exit_code": 0,
-            "peak_rss_mb": 707.4,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__741801984",
-            "repeat": 2,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 226.461,
-            "exit_code": 0,
-            "peak_rss_mb": 707.4,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__741785600",
-            "repeat": 3,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 226.137,
-            "exit_code": 0,
-            "peak_rss_mb": 707.5,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__741916672",
-            "repeat": 4,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 218.464,
+            "wall_s": 225.485,
             "exit_code": 0,
             "peak_rss_mb": 707.6,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 791847899,
             "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__741945344",
+            "stderr_tail": "__GIGAXML_PEAK__741941248",
+            "repeat": 2,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 224.431,
+            "exit_code": 0,
+            "peak_rss_mb": 707.7,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__742027264",
+            "repeat": 3,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 225.637,
+            "exit_code": 0,
+            "peak_rss_mb": 707.2,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__741515264",
+            "repeat": 4,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 224.317,
+            "exit_code": 0,
+            "peak_rss_mb": 707.2,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "11915264 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-xmltodict-4GB.csv",
+            "stderr_tail": "__GIGAXML_PEAK__741560320",
+            "repeat": 5,
+            "rows_written": 11915264
+          }
+        ]
+      },
+      "gigaxml": {
+        "summary": {
+          "median_s": 268.626,
+          "min_s": 261.844,
+          "max_s": 270.835,
+          "stdev_s": 3.676,
+          "p95_s": 270.835,
+          "peak_rss_median_mb": 33.5,
+          "records_per_s_median": 44356,
+          "rows_written_median": 11915264,
+          "rows_in_document": 11915264,
+          "complete_output": true,
+          "ok_runs": 5,
+          "failed_runs": 0
+        },
+        "runs": [
+          {
+            "wall_s": 268.626,
+            "exit_code": 0,
+            "peak_rss_mb": 33.4,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35057664",
+            "repeat": 1,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 267.532,
+            "exit_code": 0,
+            "peak_rss_mb": 33.5,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35086336",
+            "repeat": 2,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 270.835,
+            "exit_code": 0,
+            "peak_rss_mb": 33.6,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35188736",
+            "repeat": 3,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 261.844,
+            "exit_code": 0,
+            "peak_rss_mb": 33.6,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__35217408",
+            "repeat": 4,
+            "rows_written": 11915264
+          },
+          {
+            "wall_s": 270.747,
+            "exit_code": 0,
+            "peak_rss_mb": 33.3,
+            "peak_rss_method": "peak_wset (self-read in child)",
+            "output_bytes": 791847899,
+            "stdout_tail": "}",
+            "stderr_tail": "__GIGAXML_PEAK__34951168",
             "repeat": 5,
             "rows_written": 11915264
           }
@@ -741,13 +814,13 @@
       },
       "pandas": {
         "summary": {
-          "median_s": 859.927,
-          "min_s": 829.129,
-          "max_s": 892.623,
-          "stdev_s": 23.892,
-          "p95_s": 892.623,
-          "peak_rss_median_mb": 26838.2,
-          "records_per_s_median": 12193,
+          "median_s": 935.777,
+          "min_s": 780.477,
+          "max_s": 1073.968,
+          "stdev_s": 116.761,
+          "p95_s": 1073.968,
+          "peak_rss_median_mb": 26004.8,
+          "records_per_s_median": 11205,
           "rows_written_median": 10485760,
           "rows_in_document": 11915264,
           "complete_output": false,
@@ -756,132 +829,59 @@
         },
         "runs": [
           {
-            "wall_s": 829.129,
+            "wall_s": 818.157,
             "exit_code": 0,
-            "peak_rss_mb": 26856.2,
+            "peak_rss_mb": 24357.3,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 502051521,
             "stdout_tail": "10485760 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__28160798720",
+            "stderr_tail": "__GIGAXML_PEAK__25540530176",
             "repeat": 1,
             "rows_written": 10485760
           },
           {
-            "wall_s": 878.283,
+            "wall_s": 780.477,
             "exit_code": 0,
-            "peak_rss_mb": 27083.0,
+            "peak_rss_mb": 26222.8,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 502051521,
             "stdout_tail": "10485760 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__28398575616",
+            "stderr_tail": "__GIGAXML_PEAK__27496620032",
             "repeat": 2,
             "rows_written": 10485760
           },
           {
-            "wall_s": 892.623,
+            "wall_s": 952.362,
             "exit_code": 0,
-            "peak_rss_mb": 26644.0,
+            "peak_rss_mb": 26296.7,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 502051521,
             "stdout_tail": "10485760 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__27938271232",
+            "stderr_tail": "__GIGAXML_PEAK__27574108160",
             "repeat": 3,
             "rows_written": 10485760
           },
           {
-            "wall_s": 858.722,
+            "wall_s": 1073.968,
             "exit_code": 0,
-            "peak_rss_mb": 26824.3,
+            "peak_rss_mb": 26003.7,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 502051521,
             "stdout_tail": "10485760 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__28127354880",
+            "stderr_tail": "__GIGAXML_PEAK__27266822144",
             "repeat": 4,
             "rows_written": 10485760
           },
           {
-            "wall_s": 859.927,
+            "wall_s": 935.777,
             "exit_code": 0,
-            "peak_rss_mb": 26838.2,
+            "peak_rss_mb": 26004.8,
             "peak_rss_method": "peak_wset (self-read in child)",
             "output_bytes": 502051521,
             "stdout_tail": "10485760 rows -> G:\\XML Data Extraction Specialist\\.scratch\\cmp-pandas-4GB.csv",
-            "stderr_tail": "__GIGAXML_PEAK__28141887488",
+            "stderr_tail": "__GIGAXML_PEAK__27268014080",
             "repeat": 5,
             "rows_written": 10485760
-          }
-        ]
-      },
-      "gigaxml": {
-        "summary": {
-          "median_s": 266.179,
-          "min_s": 263.217,
-          "max_s": 267.646,
-          "stdev_s": 1.795,
-          "p95_s": 267.646,
-          "peak_rss_median_mb": 19.1,
-          "records_per_s_median": 44764,
-          "rows_written_median": 11915264,
-          "rows_in_document": 11915264,
-          "complete_output": true,
-          "ok_runs": 5,
-          "failed_runs": 0
-        },
-        "runs": [
-          {
-            "wall_s": 266.179,
-            "exit_code": 0,
-            "peak_rss_mb": 19.1,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20078592",
-            "repeat": 1,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 266.255,
-            "exit_code": 0,
-            "peak_rss_mb": 19.1,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20074496",
-            "repeat": 2,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 263.217,
-            "exit_code": 0,
-            "peak_rss_mb": 19.1,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20017152",
-            "repeat": 3,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 267.646,
-            "exit_code": 0,
-            "peak_rss_mb": 19.2,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__20185088",
-            "repeat": 4,
-            "rows_written": 11915264
-          },
-          {
-            "wall_s": 264.069,
-            "exit_code": 0,
-            "peak_rss_mb": 18.9,
-            "peak_rss_method": "peak_wset (self-read in child)",
-            "output_bytes": 791847899,
-            "stdout_tail": "}",
-            "stderr_tail": "__GIGAXML_PEAK__19836928",
-            "repeat": 5,
-            "rows_written": 11915264
           }
         ]
       }

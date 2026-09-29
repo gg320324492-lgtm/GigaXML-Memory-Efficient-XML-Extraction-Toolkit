@@ -195,25 +195,26 @@ that is stated first because it is true:**
 
 | Implementation | 100 MB | 1 GB | 4 GB | Peak RSS (100 MB → 4 GB) |
 |---|---|---|---|---|
-| hand-written `lxml` | **4.59 s** | **44.2 s** | **176.6 s** | 48 MB → 1222 MB |
-| GigaXML | 7.05 s | 70.5 s | 266.2 s | **19.4 MB → 19.1 MB** |
+| hand-written `lxml` | **4.76 s** | **44.5 s** | **173.7 s** | 24.8 MB → 25.1 MB |
+| GigaXML | 6.71 s | 67.9 s | 268.6 s | 33.2 MB → 33.5 MB |
 
 A fixed task, known fields and one script you maintain: that is the case where the
 hand-written script is the better tool on time, and no amount of toolkit changes that.
-The margin was larger before the comparison was corrected, and the correction is the
-point — see the memory note below.
 
-**The hand-written script loses on memory, and that is also measured.** Written the way
-lxml's own documentation shows (`events=("end",)` with a `tag=` filter), it grows with
-the file: 118.7 MB at 100 MB of input, 3850 MB at 4 GB. That is the documented cleanup
-idiom, and nothing warns you — elements outside the `tag=` filter never deliver a closing
-event, so the containers are never released. Switching to `events=("start", "end")` and
-releasing everything outside the record cut it to the 1222 MB above, at a cost of about
-24% throughput. Sampling every 500,000 records shows the
-record loop itself flat at ~24 MB at every size; the rest appears when libxml2 releases
-its parse context at the end, and that allocation scales with the document. **The
-knowledge is learnable and a determined script can get much further** — what GigaXML
-adds is that you never have to learn it.
+**On memory, the two are now within 8 MB of each other and both are flat across a 40×
+range** — and that is a correction, not a win. Two numbers in an earlier version of this
+table were not measurements of the thing they claimed to measure. GigaXML's 19.4 / 19.4 /
+19.1 MB was the benchmark harness's own overhead: the CLI ran in a grandchild process,
+outside the counter the sampler was reading, and the figure repeated because it never saw
+the input. The hand-written script's 1222 MB was real, but it had been attributed to
+libxml2's parse context rather than to the actual cause, which was calling `clear()`
+without unlinking — `clear()` empties an element, it does not detach it, so every
+element outside the record stayed reachable. These documents carry a 96,966-element
+`<orders>` section after `</products>` that makes that unavoidable to miss. Fixing both
+is what produced the two flat curves above. **The knowledge is learnable — a determined
+script can land within 8 MB of the tool** — and what GigaXML adds is that you never have
+to find either trap, or find out which of your measurements are really the harness
+describing itself.
 
 What the throughput buys, each measured rather than asserted: a corrupted record
 mid-file ends the hand-written script (exit 1, header only in the CSV) while
@@ -227,11 +228,11 @@ run never leaves a half-written file where a reader would find it.
 ### vs `xmltodict`
 
 xmltodict's streaming mode (`item_depth`) does keep the document from accumulating —
-but its peak still climbs with the file (43.4 MB at 100 MB, 707.4 MB at 4 GB), which
+but its peak still climbs with the file (43.4 MB at 100 MB, 707.3 MB at 4 GB), which
 the comparison records rather than hides — and it is the right pick when you want the
 whole document as Python dicts, not a field extraction. For the extraction task it costs
-about 1.3× the time against GigaXML (5.61 s vs 7.05 s per 100 MB is GigaXML's loss;
-57.1 s vs 70.5 s per 1 GB and 226.2 s vs 266.2 s per 4 GB are xmltodict's), and it
+about 1.2× the time against GigaXML (5.70 s vs 6.71 s per 100 MB is GigaXML's loss;
+56.8 s vs 67.9 s per 1 GB and 224.4 s vs 268.6 s per 4 GB are xmltodict's), and it
 shares the hand-written script's weakness on bad records: one
 malformed value ends the run.
 
@@ -239,14 +240,15 @@ malformed value ends the run.
 
 `read_xml` is the fastest route *into a DataFrame* and the natural pick when the goal
 is analysis, not extraction. Three measured limits. It cannot reach the nested
-`manufacturer/name` field (its output in the comparison carries the column empty, and at
-100 MB and 1 GB its five extracted columns match the other implementations line for
-line). On the 1 GB document it fails outright — `lxml.etree.XMLSyntaxError: switching
-encoding` from pandas 3.0.6, reproducible with both path and file-object inputs, while
-the 100 MB file of the same generator parses fine. And on the 4 GB document **it returns
-exit 0 and writes 1,429,504 rows fewer than the document contains** — it stopped at
-exactly 10 × 2²⁰ and wrote nothing further, with no error, no warning, and a
-structurally perfect CSV that any tool will open.
+`manufacturer/name` field (its output in the comparison carries the column empty; on the
+five columns it *can* extract it is still correct — byte-for-byte against the other
+implementations for all 290,900 rows at 100 MB, and for all 10,485,760 it delivered at
+4 GB). On the 1 GB document it fails outright — `lxml.etree.XMLSyntaxError: switching
+encoding` from pandas 3.0.6, reproducible with both path and file-object inputs, having
+already committed 6.3 GB — while the 100 MB file of the same generator parses fine. And
+on the 4 GB document **it returns exit 0 and writes 1,429,504 rows fewer than the
+document contains** — it stopped at exactly 10 × 2²⁰ and wrote nothing further, with no
+error, no warning, and a structurally perfect CSV that any tool will open.
 
 That last one is the reason this suite counts output rows rather than trusting the
 document's record count. A rate measured over a truncated output is not a rate: an
