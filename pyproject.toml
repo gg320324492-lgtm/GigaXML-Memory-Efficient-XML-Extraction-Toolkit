@@ -30,6 +30,10 @@ dependencies = [
 
 [project.optional-dependencies]
 parquet = ["pyarrow>=14.0"]
+# XSD field-type inference and validation. Optional like every other capability
+# that is not CSV: the streaming parser never imports it, and gigaxml works
+# without it, so a plain install stays a two-dependency install.
+xsd = ["xmlschema>=2.0"]
 pretty = ["rich>=13.0"]
 # Competitor comparison, used only by benchmarks/compare/. Not a product dependency --
 # nobody who installs gigaxml ever needs these; keeping them out of `dev` keeps

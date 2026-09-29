@@ -420,6 +420,14 @@ def _reject_stdin_if_unsupported(args: argparse.Namespace, source: str) -> None:
 def _handle_extract(args: argparse.Namespace) -> int:
     """Handle ``gigaxml extract``."""
     config = load_config(args.config)
+    if config.schema:
+        # Imported here rather than at module scope so that a config without a schema
+        # -- which is every config on a machine without the extra -- never reaches the
+        # optional dependency at all. See gigaxml.xsd for why this is deliberately not
+        # in the parsing path.
+        from gigaxml.xsd import apply_schema_types
+
+        config = apply_schema_types(config)
     _warn_on_format_mismatch(args.output, args.format)
     _warn_on_batch_size(args.batch_size)
 

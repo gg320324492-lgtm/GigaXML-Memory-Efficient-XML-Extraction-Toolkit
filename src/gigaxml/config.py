@@ -54,7 +54,7 @@ __all__ = [
 ]
 
 #: Keys allowed at the top level of a config document.
-_TOP_LEVEL_KEYS: Final = frozenset({"record", "namespaces", "fields", "on_error"})
+_TOP_LEVEL_KEYS: Final = frozenset({"record", "namespaces", "fields", "on_error", "schema"})
 
 #: Keys allowed inside one entry of ``fields``.
 _FIELD_KEYS: Final = frozenset({"path", "type", "required"})
@@ -115,6 +115,11 @@ class ExtractionConfig:
         fields: the validated field definitions, in config order.
         on_error: what to do when one record cannot be extracted. Defaults to
             :attr:`ErrorPolicy.ABORT`.
+        schema: path to an XSD whose declared types override the ones written in
+            the config, or ``None`` for none. Read through
+            :mod:`gigaxml.xsd`, which imports the optional ``xmlschema`` package
+            lazily and is **not** imported by the parser: the streaming reader is
+            unchanged whether this is set or not, which is the whole point.
     """
 
     record_path: str
@@ -122,6 +127,7 @@ class ExtractionConfig:
     namespaces: dict[str, str]
     fields: tuple[FieldConfig, ...]
     on_error: ErrorPolicy = ErrorPolicy.ABORT
+    schema: str | None = None
 
     @property
     def field_names(self) -> tuple[str, ...]:
@@ -200,6 +206,7 @@ def parse_config(data: object, *, source: str = "<config>") -> ExtractionConfig:
     namespaces = _parse_namespaces(data.get("namespaces"), source)
     fields = _parse_fields(data.get("fields"), namespaces, source)
     on_error = _parse_error_policy(data.get("on_error"), source)
+    schema = _parse_schema(data.get("schema"), source)
 
     return ExtractionConfig(
         record_path=record_path,
@@ -207,7 +214,23 @@ def parse_config(data: object, *, source: str = "<config>") -> ExtractionConfig:
         namespaces=namespaces,
         fields=fields,
         on_error=on_error,
+        schema=schema,
     )
+
+
+def _parse_schema(raw: object, source: str) -> str | None:
+    """Validate the optional ``schema`` key.
+
+    Only its *shape* is checked here. Whether the file exists, whether it parses, and
+    whether it declares the record element are all answered when the types are actually
+    wanted, so that a config can be loaded and printed on a machine without the
+    optional dependency installed -- which is most machines, and all of CI.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{source} must set 'schema' to a path string, got {raw!r}")
+    return raw.strip()
 
 
 def _parse_error_policy(raw: object, source: str) -> ErrorPolicy:
