@@ -1,0 +1,39 @@
+# Item master: one row per product.
+#
+# Two things here are worth reading before you copy them into a real ERP export:
+#
+#   * `decimal` for the price, not `float`. 6069.86 is not representable in
+#     binary floating point, and a money column is the one place where that
+#     shows up as a wrong total rather than as a slightly-off average. Note that
+#     `inspect --infer-types` will NEVER choose decimal for you -- its own
+#     docstring says why: a sampled "49.90" cannot be told from "49.9", so
+#     narrowing money from sampled text is a guess between two readings of the
+#     same value. Decimal is a decision, so this file makes it.
+#
+#   * `price/@currency`, an attribute on a *nested* element. The currency is
+#     not a child of the price, and a path that stops at `price` would get the
+#     number without it -- which for a money column is half the answer.
+#
+# Run it with:
+#   python -m gigaxml.cli extract erp.xml -c examples/erp/products.yaml -o products.csv
+
+record: /catalog/products/product
+
+fields:
+  sku:
+    path: '@id'
+  kind:
+    path: '@type'
+  name:
+    path: name
+  category:
+    path: category
+  price:
+    path: price
+    type: decimal
+  currency:
+    path: 'price/@currency'
+  manufacturer:
+    path: manufacturer/name
+  country:
+    path: manufacturer/country

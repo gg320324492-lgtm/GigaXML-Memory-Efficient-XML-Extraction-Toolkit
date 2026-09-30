@@ -1,0 +1,27 @@
+# Order lines: one row per order, referencing a product by number.
+#
+# The same document, a different record path. This is the half of an ERP export
+# that makes the tool's point about record paths: a document holds several
+# repeating structures at once, and which one you are extracting is decided by the
+# config, not by anything the tool can guess.
+#
+# `product_ref` points at a product's `sku`, and the two tables are joined by
+# whoever wants a report. **gigaxml does not join them** -- it is an extractor,
+# not a query engine, and pretending otherwise would be a promise this tool does
+# not make. The join in the example's README is three lines of Python, written
+# there rather than sold here.
+#
+# Run it with:
+#   python -m gigaxml.cli extract erp.xml -c examples/erp/orders.yaml -o orders.csv
+
+record: /catalog/orders/order
+
+fields:
+  order_id:
+    path: '@id'
+  product_ref:
+    path: product-ref
+    type: int
+  quantity:
+    path: qty
+    type: int

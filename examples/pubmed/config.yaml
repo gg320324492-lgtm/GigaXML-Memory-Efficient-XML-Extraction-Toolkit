@@ -1,0 +1,55 @@
+# One row per citation in a day of PubMed's baseline export.
+#
+# Four shapes this document has that a flat product list does not:
+#
+#   * ATTRIBUTES beside text, at two levels. `MedlineCitation/@Status` and
+#     `ISSN/@IssnType` sit on elements that also carry the value, so one row
+#     holds both halves of a fact that belongs together.
+#
+#   * DEEP paths. The journal abbreviation is four levels down, under
+#     MedlineCitation/Article/Journal/.
+#
+#   * A DATE THE TOOL WILL NOT REASSEMBLE. `DateRevised` is not a date -- it is
+#     three elements, and 01 means January while `PubDate/Month` on the same
+#     article says "Jan". There is no `date` type that spans this, and gigaxml
+#     does not concatenate: the three columns are extracted as three columns,
+#     and joining them is the reader's call. See the README.
+#
+#   * REPEATED children. Every article has several `AbstractText` and several
+#     `Author`. Neither becomes a column, and that is a real limit rather than an
+#     oversight: this is a one-record-one-row extractor. See the README.
+#
+# Run it with:
+#   python -m gigaxml.cli extract pubmed-baseline.xml.gz \
+#       -c examples/pubmed/config.yaml -o pubmed.csv
+
+record: /PubmedArticleSet/PubmedArticle
+
+fields:
+  pmid:
+    path: MedlineCitation/PMID
+    type: int
+  pmid_version:
+    path: MedlineCitation/PMID/@Version
+  indexing:
+    path: MedlineCitation/@IndexingMethod
+  title:
+    path: MedlineCitation/Article/ArticleTitle
+  journal:
+    path: MedlineCitation/Article/Journal/Title
+  journal_abbr:
+    path: MedlineCitation/Article/Journal/ISOAbbreviation
+  issn:
+    path: MedlineCitation/Article/Journal/ISSN
+  issn_type:
+    path: MedlineCitation/Article/Journal/ISSN/@IssnType
+  pub_model:
+    path: MedlineCitation/Article/@PubModel
+  revised_year:
+    path: MedlineCitation/DateRevised/Year
+    type: int
+  revised_month:
+    path: MedlineCitation/DateRevised/Month
+  revised_day:
+    path: MedlineCitation/DateRevised/Day
+    type: int

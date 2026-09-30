@@ -1,0 +1,39 @@
+# Extract one row per Wikipedia article out of a real 1.6 GB export.
+#
+# The three things this shape needs and a generated file does not:
+#
+#   * a NAMESPACE. Every element here lives in MediaWiki's default namespace,
+#     so a path written without it does not resolve.
+#   * a NESTED path. The timestamp is three levels down, under revision/.
+#   * TYPES. The ids are numbers, and the timestamp is an ISO date -- and both
+#     are converted, not merely carried across as text.
+#
+# `ns` is the MediaWiki namespace number: 0 is an article, 1 is a talk page,
+# 14 is a category. Filtering on it is the first thing anyone does with this
+# dump, so it is extracted as an int rather than left as text.
+#
+# Run it with:  python -m gigaxml.cli extract <dump> -c examples/wikipedia/config.yaml -o out.csv
+
+namespaces:
+  mw: http://www.mediawiki.org/xml/export-0.11/
+
+record: /mw:mediawiki/mw:page
+
+fields:
+  id:
+    path: mw:id
+    type: int
+  ns:
+    path: mw:ns
+    type: int
+  title:
+    path: mw:title
+  # `string`, not `date`, and the reason is worth knowing before you change it.
+  #
+  # gigaxml's `date` type is a *date* -- it is `datetime.date.fromisoformat`, which
+  # accepts 2026-05-18 and refuses anything carrying a time. MediaWiki writes
+  # 2026-05-18T12:42:53Z, so `date` raises a FieldTypeError on the first record.
+  # There is no datetime type, and the honest fix is to carry the text across
+  # rather than to drop the time off it or invent a format.
+  timestamp:
+    path: mw:revision/mw:timestamp

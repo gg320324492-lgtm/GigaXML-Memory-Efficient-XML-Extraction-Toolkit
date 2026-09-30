@@ -1,0 +1,8 @@
+{
+  "url": "https://ftp.ncbi.nlm.nih.gov/pubmed/baseline/pubmed26n1334.xml.gz",
+  "name": "pubmed26n1334.xml.gz",
+  "fetched_at": "2026-09-30T08:11:07+00:00",
+  "sha256_gz": "d241061caa1b5631aa5a0bb429da04b8a6a3a7b6240ffa275008a07924f79aee",
+  "bytes_gz": 13837691,
+  "note": "NCBI keeps a rolling window of these and deletes older ones, so a name pinned in a script fails eventually. Re-run this to get whatever is current."
+}

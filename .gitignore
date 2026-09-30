@@ -50,3 +50,10 @@ docs/
 # GUI 探针在仓库根目录创建的状态目录（`tests/_gui_mem.py` 用 `Path.cwd() / "state"`）。
 # 只在本机跑测试时产生，不属于项目内容。
 state/
+
+# Where the examples write their output (`examples/*/README.md` say to run from the
+# repository root). A run of the Wikipedia example leaves a 1.6 GB document's worth of CSV
+# and a report in here, and the point of A3 in the examples brief is that data is never
+# committed -- so the directory that catches it has to be ignored by name, in one place,
+# rather than by each example remembering to say so.
+out/
