@@ -27,6 +27,7 @@ __all__ = [
     "InspectionError",
     "MissingRequiredFieldError",
     "RecordPathError",
+    "RunInterruptedError",
     "WriterError",
 ]
 
@@ -148,3 +149,58 @@ class WriterError(GigaXMLError, ValueError):
     Descending from :class:`GigaXMLError` keeps the promise that one ``except``
     clause can cover everything the library raises deliberately.
     """
+
+
+class RunInterruptedError(GigaXMLError):
+    """The run was stopped by a signal, and had an exit on which to write its report.
+
+    **What it is for.** The run report is written on the way out of a command, so a run
+    that never gets out leaves nothing behind -- measured on a 4 GiB document, stopping the
+    process at 4 s left 66 committed parts and a manifest saying ``complete: false``, and
+    no report at all. Anything reading the reports afterwards therefore cannot see the runs
+    that were stopped, which are the ones most likely to be picked up again.
+
+    A signal handler that raises this turns a stop into an ordinary unwinding path: the
+    ``except`` clauses the library already has write the report on the way past, so the run
+    leaves a record of how far it got instead of only the parts it managed to commit.
+
+    **What it does not cover, and this is the important half.** A process given no chance
+    to run its own code cannot write anything:
+
+    * ``SIGINT`` -- Ctrl-C. Covered on every platform, and the one that matters, because
+      stopping a long run is something people do deliberately.
+    * ``SIGTERM`` -- ``kill``, ``systemctl stop``, a container's stop signal. Covered on
+      POSIX. **On Windows there is no such thing**: ``os.kill(pid, SIGTERM)`` calls
+      ``TerminateProcess``, the process is gone at once, and no handler runs.
+    * **``TerminateProcess`` -- the Windows task manager, and anything else that kills
+      without a signal. Not covered on any platform, and cannot be.** There is no code to
+      run and no moment in which to run it.
+
+    So this closes the common case and leaves the rest. A report saying a run was
+    interrupted is worth more than no report, and it is **not** a promise that every
+    interrupted run leaves one.
+
+    **A ``GigaXMLError`` because that is what puts a stopped run where a failed one already
+    is.** No new code is needed on the way out: the report is written from an ``except``
+    that exists, and :func:`gigaxml.cli.main` turns the exception into a one-line message
+    and a non-zero exit code. The name is not the built-in ``InterruptedError``, which
+    exists on every Python this package supports and means something else.
+
+    It is not an error about the document, the config or the
+    output -- it is an external signal -- but nothing in the tree treats those three
+    differently on the way out, and the one place that does care dispatches on this class
+    rather than on the message. Inheriting :class:`ValueError` is **not** done here: no
+    caller hands over a value, so the promise the rest of this module makes about
+    ``except ValueError`` does not apply.
+
+    Attributes:
+        signum: the signal number, or ``None`` when the platform did not supply one.
+        signame: its name where there is a name -- ``SIGINT``, ``SIGTERM`` -- and
+            ``""`` otherwise. Shown to the user in place of a number, because ``2`` and
+            ``15`` say nothing to somebody who pressed Ctrl-C.
+    """
+
+    def __init__(self, message: str, *, signum: int | None = None, signame: str = "") -> None:
+        super().__init__(message)
+        self.signum = signum
+        self.signame = signame

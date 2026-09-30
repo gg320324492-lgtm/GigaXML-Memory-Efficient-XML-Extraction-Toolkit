@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import platform
+import signal
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -30,7 +32,7 @@ from gigaxml.checkpoint import (
     write_checkpoint,
 )
 from gigaxml.config import ExtractionConfig, load_config
-from gigaxml.errors import CheckpointError, GigaXMLError
+from gigaxml.errors import CheckpointError, GigaXMLError, RunInterruptedError
 from gigaxml.generate import generate_dataset
 from gigaxml.inspect import (
     DEFAULT_MAX_DEPTH,
@@ -679,30 +681,12 @@ def _extract_checkpointed(
     index = 0
     checkpoint: Checkpoint | None = None
     if args.resume:
+        # **Read before the try below, deliberately.** Reading a manifest is cheap and it
+        # failing is an ordinary refusal -- a missing one, a version this build does not
+        # know -- and none of those should write a report: the report beside the output
+        # belongs to whichever run last reached its end, and a run that refused before
+        # doing anything has not earned the right to overwrite it.
         checkpoint = read_checkpoint(manifest)
-        validate_resume(checkpoint, args.source, config)
-        if checkpoint.parts:
-            # Continue in the format the checkpoint was started in, whatever --format
-            # says now: the parts already on disk are the ones being added to.
-            extension = checkpoint.parts[-1].name.rsplit(".", 1)[-1]
-        if args.format is not None and args.format != extension:
-            # Say so rather than quietly doing the right thing. The parts are the
-            # truth and they win, but a caller who asked for parquet and got csv has
-            # been overruled, and silence about that is how a downstream tool ends up
-            # calling a parquet reader on a CSV.
-            print(
-                f"warning: --format {args.format} was ignored: this checkpoint holds "
-                f"{extension} parts, and the parts already written decide the format",
-                file=sys.stderr,
-            )
-        # The manifest is only worth trusting if the parts it names are still there.
-        # `records_consumed` is what a resume skips, so a part that has been deleted
-        # means walking straight past rows nobody will ever write -- and finishing
-        # with a success. Refuse instead.
-        require_intact_parts(checkpoint, parts_dir, extension)
-        resumed_from = checkpoint.records_consumed
-        parts = list(checkpoint.parts)
-        index = len(parts)
     elif manifest.is_file():
         raise CheckpointError(
             f"a checkpoint already exists at {str(manifest)!r}. Use --resume to "
@@ -710,41 +694,106 @@ def _extract_checkpointed(
             f"writing over it would throw away work that has already been committed."
         )
 
-    if checkpoint is not None and checkpoint.complete:
-        # Reached only when the parts agree, because require_intact_parts has already
-        # run: a complete checkpoint whose parts are gone is refused above rather than
-        # waved through with a warning. The user is about to use that output, and a
-        # warning on a command that exits 0 is the kind of thing that gets missed --
-        # which is the same reasoning that made the incomplete case an error.
-        print(
-            f"the checkpoint at {str(manifest)!r} is already complete; nothing to do",
-            file=sys.stderr,
-        )
-        _write_report_safely(
-            report_path,
-            args=args,
-            config=config,
-            writer=None,
-            rejections=_rejection_log(parts_dir),
-            error=None,
-            started=started,
-            partial=None,
-            checkpoint_info=_checkpoint_info(
-                args, parts_dir, extension, resumed_from, resumed_from, parts, 0, True
-            ),
-        )
-        return 0
-
-    # Hashed once: the source does not change during a run, and hashing 403 MB costs
-    # a quarter of a second -- worth doing once, not once per part.
-    identity = source_identity(args.source)
-    config_hash = config_identity(config)
-
     rejections = _rejection_log(
         parts_dir,
         append=bool(args.resume),
         initial=0 if checkpoint is None else checkpoint.rejected,
     )
+
+    # **This block is slow, and that is why a stopped run needs it handled.**
+    # `validate_resume` hashes the source, `require_intact_parts` reads every part back,
+    # and `source_identity` hashes the source again for the manifest -- so on a 4 GiB
+    # document this is several seconds in which a Ctrl-C has somewhere to land. Measured
+    # on that document: without this, interrupting at 2.5 s left 0 parts, no report, and
+    # only the words `error: the run was interrupted by SIGINT` on stderr.
+    #
+    # **Only RunInterruptedError is caught here.** Every other failure keeps the path it
+    # had, including the one that matters most: a refusal such as "a checkpoint already
+    # exists" must not write a report, because the one on disk is the record of the run
+    # that *did* finish, and overwriting it with a `failed` summary loses it.
+    try:
+        if args.resume:
+            validate_resume(checkpoint, args.source, config)
+            if checkpoint.parts:
+                # Continue in the format the checkpoint was started in, whatever --format
+                # says now: the parts already on disk are the ones being added to.
+                extension = checkpoint.parts[-1].name.rsplit(".", 1)[-1]
+            if args.format is not None and args.format != extension:
+                # Say so rather than quietly doing the right thing. The parts are the
+                # truth and they win, but a caller who asked for parquet and got csv has
+                # been overruled, and silence about that is how a downstream tool ends up
+                # calling a parquet reader on a CSV.
+                print(
+                    f"warning: --format {args.format} was ignored: this checkpoint holds "
+                    f"{extension} parts, and the parts already written decide the format",
+                    file=sys.stderr,
+                )
+            # The manifest is only worth trusting if the parts it names are still there.
+            # `records_consumed` is what a resume skips, so a part that has been deleted
+            # means walking straight past rows nobody will ever write -- and finishing
+            # with a success. Refuse instead.
+            require_intact_parts(checkpoint, parts_dir, extension)
+            resumed_from = checkpoint.records_consumed
+            parts = list(checkpoint.parts)
+            index = len(parts)
+
+        if checkpoint is not None and checkpoint.complete:
+            # Reached only when the parts agree, because require_intact_parts has already
+            # run: a complete checkpoint whose parts are gone is refused above rather than
+            # waved through with a warning. The user is about to use that output, and a
+            # warning on a command that exits 0 is the kind of thing that gets missed --
+            # which is the same reasoning that made the incomplete case an error.
+            print(
+                f"the checkpoint at {str(manifest)!r} is already complete; nothing to do",
+                file=sys.stderr,
+            )
+            _write_report_safely(
+                report_path,
+                args=args,
+                config=config,
+                writer=None,
+                rejections=rejections,
+                error=None,
+                started=started,
+                partial=None,
+                checkpoint_info=_checkpoint_info(
+                    args, parts_dir, extension, resumed_from, resumed_from, parts, 0, True
+                ),
+            )
+            return 0
+
+        # Hashed once: the source does not change during a run, and hashing 403 MB costs
+        # a quarter of a second -- worth doing once, not once per part.
+        identity = source_identity(args.source)
+        config_hash = config_identity(config)
+    except RunInterruptedError as exc:
+        # The counts are the manifest's, not this run's: whatever the checkpoint recorded
+        # is exactly how many parts were on disk when the signal arrived, and this run has
+        # committed none of them. A report saying 0 parts for a resume that was checking
+        # 193 of them would be the false measurement this whole report is about.
+        recorded = checkpoint.records_consumed if checkpoint is not None else 0
+        _write_report_safely(
+            report_path,
+            args=args,
+            config=config,
+            writer=None,
+            rejections=rejections,
+            error=exc,
+            started=started,
+            partial=None,
+            checkpoint_info=_checkpoint_info(
+                args,
+                parts_dir,
+                extension,
+                0,
+                recorded,
+                list(checkpoint.parts) if checkpoint is not None else [],
+                0,
+                False,
+            ),
+        )
+        raise
+
     writer: RowWriter | None = None
     current_part: Path | None = None
     records_consumed = resumed_from
@@ -1037,7 +1086,10 @@ def _run_report_payload(
         partial_path = _partial_output_path(args.output)
 
     payload: dict[str, object] = {
-        "status": "failed" if error is not None else "ok",
+        # Three states, not two: see `_status_for`. A run that was stopped is not
+        # a success, and saying `ok` here would put a complete-output claim in a
+        # report written by a run that produced half an output.
+        "status": _status_for(error),
         "source": str(args.source),
         "output": str(args.output),
         "format": output_format,
@@ -1219,29 +1271,134 @@ def _extract_summary(
     }
 
 
+def _install_interrupt_handlers() -> Callable[[], None]:
+    """Make a stop signal unwind like any other error, and return how to undo it.
+
+    **The signal handler does nothing but raise.** That is deliberate and it is the whole
+    design: a handler that tried to write the report itself would be interrupted at any
+    point, and what it left behind would be a half-written report -- worse than none,
+    because a truncated ``run-report.json`` is not JSON and every reader has to cope with
+    it. Raising instead unwinds through the ``except`` clauses the library already has, so
+    the report is written on the ordinary way out with the ordinary code, where a second
+    signal arriving finds the process already committing to its end.
+
+    **Measured, and it is why the raise is not a nicety.** With no handler installed,
+    Python's own :class:`KeyboardInterrupt` lands wherever the signal happens to arrive.
+    Two runs of the same test, the same document, the same moment in the extraction:
+    one put it inside ``os.replace`` in :func:`gigaxml.checkpoint.write_checkpoint`, the
+    other inside ``elem.itertext()`` in :func:`gigaxml.fields.normalize_text`. Neither is
+    catchable by the ``except`` clauses the library has -- ``KeyboardInterrupt`` descends
+    from ``BaseException`` -- so both left no report at all. A stop is not something to be
+    met halfway down a call stack: it has to arrive as the kind of exception the code on the
+    way out already knows how to finish work for.
+
+    **Both signals, and only both.** ``SIGINT`` is what Ctrl-C sends, on every platform,
+    and Python would raise :class:`KeyboardInterrupt` for it anyway -- installing a handler
+    for it is what makes the stop take the same path as everything else instead of a
+    ``BaseException`` that none of the library's ``except`` clauses name.
+    ``SIGTERM`` has no such default: it terminates the process outright, so without a
+    handler there is nothing to catch.
+
+    **What this does not reach.** ``TerminateProcess`` -- the Windows task manager, and
+    ``os.kill(pid, SIGTERM)`` on Windows, which is the same call -- gives the process no
+    code to run, so no handler in any language could fire. On POSIX ``kill`` is covered;
+    on Windows there is no signal that reaches a handler from outside, and a stopped run
+    there leaves parts and a manifest and no report. See
+    :class:`gigaxml.errors.RunInterruptedError`, which says so where a reader of the
+    report format will meet it.
+
+    Returns:
+        A callable that puts the previous handlers back. **Restored on the way out of
+        :func:`main`,** because the CLI is a library function as well as a command: a test
+        that calls ``main()`` in-process would otherwise hand its own Ctrl-C behaviour --
+        and pytest's -- to whatever was installed here.
+    """
+    previous: dict[int, object] = {}
+
+    def _raise(signum: int, frame: object) -> None:  # noqa: ARG001 - the signal API's shape
+        name = signal.Signals(signum).name if signum in _signal_names() else str(signum)
+        raise RunInterruptedError(f"the run was interrupted by {name}", signum=signum, signame=name)
+
+    for name in ("SIGINT", "SIGTERM"):
+        number = getattr(signal, name, None)
+        if number is None:  # pragma: no cover - both exist on every supported platform
+            continue
+        try:
+            previous[int(number)] = signal.getsignal(number)
+            signal.signal(number, _raise)
+        except (OSError, ValueError):  # pragma: no cover - not the main thread, or no signal
+            previous.pop(int(number), None)
+
+    def restore() -> None:
+        for number, handler in previous.items():
+            # Same tolerance as installing: a handler this process cannot put back is no
+            # worse than one it could not install, and neither is worth raising over.
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(number, handler)  # type: ignore[arg-type]
+
+    return restore
+
+
+def _signal_names() -> set[int]:
+    """Every signal number this platform knows a name for."""
+    try:
+        return {int(member) for member in signal.Signals}
+    except (TypeError, ValueError):  # pragma: no cover - no enum of signals here
+        return set()
+
+
+def _status_for(error: BaseException | None) -> str:
+    """The report's ``status``, from the error the run ended with.
+
+    **Three values, and the third is the one this exists for.** A run that finished and a
+    run that failed were already distinguishable. A run that was *stopped* is neither, and
+    reporting it as ``ok`` would be the worst of the three -- a summary claiming a complete
+    output from a run that produced half of one, which is exactly what the field exists to
+    prevent. Reporting it as ``failed`` is not wrong in the way ``ok`` is, but it collapses
+    two different things: a record that could not be converted is a problem with the data,
+    while a signal is somebody deciding the run is no longer wanted.
+
+    Dispatched on the class, never on the message. Matching wording is the one thing worse
+    than not classifying, because it breaks the first time a message is reworded and looks
+    like it still works.
+    """
+    if error is None:
+        return "ok"
+    if isinstance(error, RunInterruptedError):
+        return "interrupted"
+    return "failed"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``gigaxml`` console script."""
     args = build_parser().parse_args(argv)
     handler: Callable[[argparse.Namespace], int] = args.handler
+    restore_signals = _install_interrupt_handlers()
     try:
-        return handler(args)
-    except GigaXMLError as exc:
-        # Every deliberate error descends from GigaXMLError, so this turns a bad
-        # config, a wrong path or a missing optional dependency into one readable
-        # line instead of a traceback.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except OSError as exc:
-        # A missing input file, an unwritable output directory, a bad gzip stream.
-        # These are environmental rather than library errors, but a command-line
-        # tool should still say what went wrong on one line.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except etree.XMLSyntaxError as exc:
-        # Malformed XML. Neither a GigaXMLError nor an OSError, but it is the most
-        # likely thing to go wrong with an unknown file, and a traceback helps nobody.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        try:
+            return handler(args)
+        except GigaXMLError as exc:
+            # Every deliberate error descends from GigaXMLError, so this turns a bad
+            # config, a wrong path or a missing optional dependency into one readable
+            # line instead of a traceback. A run that was stopped arrives here too, and
+            # says so in the same shape.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except OSError as exc:
+            # A missing input file, an unwritable output directory, a bad gzip stream.
+            # These are environmental rather than library errors, but a command-line
+            # tool should still say what went wrong on one line.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except etree.XMLSyntaxError as exc:
+            # Malformed XML. Neither a GigaXMLError nor an OSError, but it is the most
+            # likely thing to go wrong with an unknown file, and a traceback helps nobody.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        # The CLI is a library function as well as a command, and a caller in this
+        # process keeps its own signal behaviour. See `_install_interrupt_handlers`.
+        restore_signals()
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess
