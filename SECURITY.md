@@ -116,19 +116,32 @@ DEFUSE = "always"  # 不解析 XML 实体
 `--resume` 信任 `checkpoint.json`，而那个文件**可以被第三方改动**。
 边界规则：manifest 里的值必须经过验证才能被当作参数用。
 
-★ **这条边界当前是有缺口的**（三个已实测的缺陷，钉在
-`tests/golden/test_known_defects.py`，按当前错误行为断言，待后续里程碑修复）：
+**这条边界现在是严格执行的**：`read_checkpoint` 对每个字段做**类型检查**
+（`type(v) is int` / `is bool` 这一类），不做任何 `int()` / `bool()` / `str()` 转换，
+并且在构造 `Checkpoint` 之前就拒绝越界的值。**转换是缺陷，检查是修复**——
+`int("100")` 和 `bool("false")` 永不抛异常，所以任何建立在它们之上的读取器
+都会把 manifest 想要的类型当作调用方假设的类型还回去。
 
-1. `read_checkpoint` 用 `str()` / `int()` / `bool()` **强制转换**而非校验 ——
-   `"complete": "false"` 被读成 `True`（非空字符串为真），
-   九种敌意 manifest 八种被接受。
-2. `verify_parts` 直接 `directory / part.name`，**不检查 part 名** ——
-   恶意 manifest 可让续跑去打开并解析 parts 目录外的文件（**读**，不是写；
-   写入侧的名字由 `part_name()` 生成，不受影响）。
-3. `config_identity()` **不含 `schema`** ——
-   改 XSD 内容而不改路径，哈希不变，`--resume` 放行。
+| 校验 | 规则 |
+|---|---|
+| `version` | 恰好是整数 `1`。★ **用 `type is int` 而非 `!=`**：`True == 1` 且 `1.0 == 1`，值比较会放行布尔和浮点 |
+| `records_consumed` / `rejected` / `part.rows` | 整数且 ≥ 0 |
+| `rejected ≤ records_consumed` | 一次运行不可能拒绝比读入更多的记录 |
+| `complete` | 恰好是 JSON 布尔（`"false"`、`1`、`0` 全拒） |
+| `config` / `source.sha256` | 64 位**小写**十六进制（与 `hexdigest()` 实际写入一致） |
+| `source` | 对象，且 `path` / `size` / `sha256` 三项齐全 |
+| `parts[].name` | `part-NNNNN.(csv\|jsonl\|parquet)` —— 即 `part_name()` 唯一会生成的形状；`../`、盘符、绝对路径、其他一切文件名全拒 |
 
-这些**不是已修复的项**，记录在此是因为安全模型要诚实地包含已知的缺口，
+★ **part 名在 manifest 被读取时就校验**，所以一个可疑名字不会被拼进路径、
+更不会被打开。**这是读面**：写入侧的名字始终由 `part_name(index, extension)`
+生成，从不来自 manifest，因此不存在「任意文件写」。
+
+**仍然开着的一个缺口（属 M4，不是本节修复的对象）**：`config_identity()` **不含
+`schema`** —— 改 XSD 内容而不改路径，哈希不变，`--resume` 放行。它钉在
+`tests/golden/test_known_defects.py` 的 `the_xsd_is_absent_from_the_run_identity`
+（该测试明确标着归属里程碑），按当前行为断言，等它的里程碑修复。
+
+缺口记录在这里，是因为安全模型要诚实地包含还没挡住的部分，
 而不是只画出挡住的部分。
 
 ### 已知行为变更（一处，会让此前能用的输入失败）

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -277,13 +278,136 @@ def require_intact_parts(
     )
 
 
+#: The only shape a part name may have: exactly what :func:`part_name` writes, no
+#: separators and no traversal. Every other spelling -- ``../``, a drive letter, an
+#: absolute path, a plain other filename -- is rejected rather than joined onto the
+#: parts directory, because a manifest chooses that name and a manifest is not ours.
+PART_NAME_PATTERN: Final = re.compile(r"^part-\d{5}\.(?:csv|jsonl|parquet)$")
+
+#: A sha256 as :meth:`hashlib.sha256().hexdigest` writes one: 64 **lowercase** hex
+#: digits. The case is part of the check rather than folded away, because the value
+#: written by this tool is lowercase -- an uppercased one is a file somebody edited.
+_SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _untrusted(target: Path, detail: str) -> CheckpointError:
+    """A refusal for a manifest whose *contents* are wrong.
+
+    Every field-level rejection is raised through this so they all open the same way.
+    A reader who sees ``cannot be trusted`` knows the manifest is the problem -- not the
+    file's encoding, not their config, not the source document -- and knows that nothing
+    was resumed. The detail after it says which field and what was expected, because
+    "the checkpoint is malformed" leaves nobody with anything to do.
+    """
+    return CheckpointError(
+        f"the checkpoint at {str(target)!r} cannot be trusted: {detail}. "
+        "Nothing was resumed. Delete the checkpoint to start a fresh run."
+    )
+
+
+def _field(raw: dict[str, object], key: str, target: Path) -> object:
+    """One manifest field, required and with no conversion of its type.
+
+    The conversion this replaces -- ``int(raw[k])``, ``bool(raw[k])``, ``str(raw[k])`` --
+    was the defect: ``int("100")`` and ``bool("false")`` never raise, so a manifest
+    could hand back any value it liked under the type the caller expected. Checking with
+    ``type(v) is ...`` instead means the value arrives exactly as JSON gave it, or the
+    manifest is refused.
+    """
+    if key not in raw:
+        raise _untrusted(target, f"it is missing {key!r}")
+    value = raw[key]
+    return value
+
+
+def _integer(raw: dict[str, object], key: str, target: Path, *, minimum: int = 0) -> int:
+    """A field that must be a JSON integer (not a bool, not a string) of ``minimum`` or more.
+
+    ``type(...) is int`` rather than ``isinstance(..., int)`` is deliberate: ``bool`` is a
+    subclass of ``int`` in Python, so ``isinstance(True, int)`` is True and a manifest
+    carrying ``"records_consumed": true`` would sail through an isinstance check. The same
+    distinction is why ``!=`` could not be used on ``version``: ``True == 1`` and
+    ``1.0 == 1`` are both true, so a value comparison accepts a bool and a float.
+    """
+    value = _field(raw, key, target)
+    if type(value) is not int:
+        raise _untrusted(target, f"{key!r} must be a JSON integer, got {value!r}")
+    if value < minimum:
+        raise _untrusted(target, f"{key!r} must be at least {minimum}, got {value!r}")
+    return value
+
+
+def _hex_digest(raw: dict[str, object], key: str, target: Path) -> str:
+    """A field that must be a sha256 digest as this tool writes one."""
+    value = _field(raw, key, target)
+    if type(value) is not str or not _SHA256_PATTERN.match(value):
+        raise _untrusted(
+            target, f"{key!r} must be 64 lowercase hexadecimal characters, got {value!r}"
+        )
+    return value
+
+
+def _check_source(raw: dict[str, object], target: Path) -> dict[str, object]:
+    """The ``source`` block, checked field by field.
+
+    All three are required, not two: :func:`source_identity` writes all three and
+    :func:`validate_resume` reads them all, so a manifest missing one describes a run
+    that cannot be compared against anything. Refusing here rather than letting the
+    mismatch surface as "the source has changed" keeps a malformed manifest from
+    masquerading as a changed file.
+    """
+    source = _field(raw, "source", target)
+    if type(source) is not dict:
+        raise _untrusted(target, f"'source' must be a JSON object, got {source!r}")
+    if "path" not in source or "size" not in source or "sha256" not in source:
+        raise _untrusted(target, "'source' must hold 'path', 'size' and 'sha256'")
+    if type(source["path"]) is not str:
+        raise _untrusted(target, f"'source.path' must be a string, got {source['path']!r}")
+    _integer(source, "size", target)
+    _hex_digest(source, "sha256", target)
+    return dict(source)
+
+
+def _check_parts(raw: dict[str, object], target: Path) -> tuple[PartRecord, ...]:
+    """The ``parts`` list, one entry at a time."""
+    parts = _field(raw, "parts", target)
+    if type(parts) is not list:
+        raise _untrusted(target, f"'parts' must be a JSON array, got {parts!r}")
+
+    records: list[PartRecord] = []
+    for index, part in enumerate(parts):
+        if type(part) is not dict:
+            raise _untrusted(target, f"'parts[{index}]' must be a JSON object, got {part!r}")
+        if "name" not in part or "rows" not in part:
+            raise _untrusted(target, f"'parts[{index}]' must hold 'name' and 'rows'")
+        name = part["name"]
+        if type(name) is not str or not PART_NAME_PATTERN.match(name):
+            raise _untrusted(
+                target,
+                f"'parts[{index}].name' must be a part filename of the form "
+                f"part-00000.csv, part-00000.jsonl or part-00000.parquet, got {name!r}",
+            )
+        rows = _integer(part, "rows", target)
+        records.append(PartRecord(name=name, rows=rows))
+    return tuple(records)
+
+
 def read_checkpoint(path: str | Path) -> Checkpoint:
-    """Read and validate a manifest.
+    """Read and validate a manifest, refusing anything it did not write itself.
+
+    **A manifest is hostile input.** It lives on disk, it describes a run that has
+    already committed work, and ``--resume`` will trust it to decide how many records to
+    skip and which files to open. So every field is checked for the exact JSON type it
+    must have and the range it must sit in; nothing is converted, defaulted, or looked
+    past. The write side is unaffected -- :func:`write_checkpoint` still emits the same
+    bytes it always has, because a stricter reader has to accept everything the existing
+    writer produced.
 
     Raises:
-        CheckpointError: the file is missing, is not JSON, is not an object, is a
-            newer format version than this build understands, or is missing a
-            required key.
+        CheckpointError: the file is missing or unreadable (an I/O problem), or its
+            contents do not describe a run this build could resume (a trust problem).
+            The two are worded differently on purpose: the first is about the file, the
+            second says plainly that the manifest cannot be trusted.
     """
     target = Path(path)
     if not target.is_file():
@@ -305,49 +429,46 @@ def read_checkpoint(path: str | Path) -> Checkpoint:
             f"{type(raw).__name__}"
         )
 
-    version = raw.get("version")
-    if version != CHECKPOINT_VERSION:
-        raise CheckpointError(
-            f"the checkpoint at {str(target)!r} has format version {version!r}, but "
-            f"this build writes version {CHECKPOINT_VERSION}"
+    # Checked by type before value: True == 1 and 1.0 == 1, so a bare value comparison
+    # would accept a boolean and a float for a version number. The refusal is worded like
+    # every other content refusal -- it is the same kind of problem, a manifest that does
+    # not describe a run this build can resume.
+    version = _field(raw, "version", target)
+    if type(version) is not int or version != CHECKPOINT_VERSION:
+        raise _untrusted(
+            target,
+            f"it declares format version {version!r}, but this build reads version "
+            f"{CHECKPOINT_VERSION}",
         )
 
-    required = ("source", "config", "records_consumed", "rejected", "parts", "complete")
-    missing = [key for key in required if key not in raw]
-    if missing:
-        raise CheckpointError(
-            f"the checkpoint at {str(target)!r} is missing {missing}; it cannot be "
-            f"trusted to describe a run"
+    config = _hex_digest(raw, "config", target)
+    records_consumed = _integer(raw, "records_consumed", target)
+    rejected = _integer(raw, "rejected", target)
+    # A run cannot have quarantined more records than it read. Nothing checked this
+    # before, so a manifest could claim any number of rejections at all.
+    if rejected > records_consumed:
+        raise _untrusted(
+            target,
+            f"'rejected' is {rejected} but 'records_consumed' is only "
+            f"{records_consumed}: it cannot reject more records than it read",
         )
 
-    source = raw["source"]
-    if not isinstance(source, dict) or "sha256" not in source:
-        raise CheckpointError(
-            f"the checkpoint at {str(target)!r} has a malformed 'source' block: {source!r}"
+    complete = _field(raw, "complete", target)
+    if type(complete) is not bool:
+        raise _untrusted(
+            target,
+            f"'complete' must be a JSON boolean, got {complete!r}. A string such as "
+            f'"false" is not false here, and a run that believes it finished would '
+            f"skip the records nobody wrote.",
         )
-
-    parts = raw["parts"]
-    if not isinstance(parts, list):
-        raise CheckpointError(
-            f"the checkpoint at {str(target)!r} has a malformed 'parts' list: {parts!r}"
-        )
-
-    try:
-        records = tuple(
-            PartRecord(name=str(part["name"]), rows=int(part["rows"])) for part in parts
-        )
-    except (TypeError, KeyError, ValueError) as exc:
-        raise CheckpointError(
-            f"the checkpoint at {str(target)!r} has a malformed part entry: {exc}"
-        ) from exc
 
     return Checkpoint(
-        source=dict(source),
-        config=str(raw["config"]),
-        records_consumed=int(raw["records_consumed"]),
-        rejected=int(raw["rejected"]),
-        parts=records,
-        complete=bool(raw["complete"]),
+        source=_check_source(raw, target),
+        config=config,
+        records_consumed=records_consumed,
+        rejected=rejected,
+        parts=_check_parts(raw, target),
+        complete=complete,
         version=CHECKPOINT_VERSION,
     )
 

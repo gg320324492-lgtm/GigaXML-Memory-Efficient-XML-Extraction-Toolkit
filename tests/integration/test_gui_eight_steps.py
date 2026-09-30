@@ -498,8 +498,16 @@ def test_a_stopped_run_is_offered_for_continuation_from_the_window(
     write_checkpoint(
         parts / CHECKPOINT_FILENAME,
         Checkpoint(
-            source={"path": str(document), "size": document.stat().st_size, "sha256": "x" * 64},
-            config="y" * 64,
+            source={
+                "path": str(document),
+                "size": document.stat().st_size,
+                # Well-formed digests, because the reader checks them: this builds a
+                # manifest the window must *recognise*, and one carrying a stand-in
+                # value would be refused as untrustworthy rather than offered as a
+                # run to resume.
+                "sha256": "ab" * 32,
+            },
+            config="cd" * 32,
             records_consumed=2,
             rejected=0,
             parts=(PartRecord(name="part-00000.csv", rows=2),),

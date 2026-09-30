@@ -1,13 +1,22 @@
-"""Tests that pin the three defects this milestone confirmed, as they behave today.
+"""The three defects this milestone confirmed: two now pinned as repairs, one still open.
 
-**These assert the wrong behaviour on purpose.** Each one records what the tool does now
-so that a fix has something to point at: without a test that says "this used to be
-accepted", a fix proves only that the new test passes, not that the defect was real.
-Every test here carries a comment naming the milestone that repairs it and what to assert
-once it has.
+The file has changed shape once already, and the history is worth keeping.
 
-None of this is a licence. The defects are real and are scheduled for repair -- pinning
-them is what makes "fixed" mean something.
+**At M0** every test here asserted the *wrong* behaviour, on purpose -- "reading this
+manifest accepts ``"complete": "false"``" -- so that a fix would have something to point
+at. A fix proved only by its own new test proves nothing about whether the defect was
+real.
+
+**At M2** the manifest checks landed. The tests that pinned a coercion now assert the
+refusal instead, keeping their names: ``test_a_known_defect_...`` records where each one
+came from, and the docstring of each says what used to happen and what happens now. What
+they protect has not changed -- only the direction of the assertion, from "it was
+accepted" to "it is refused".
+
+**The third defect is still open**, and its test still asserts today's behaviour. It is
+marked with the milestone that owns it, because nothing here is a licence: pinning a
+defect is what makes "fixed" mean something, and a defect nobody pinned can be removed
+without anyone noticing.
 
 **Why these call the library rather than the CLI.** Each defect lives in a data contract:
 what a manifest is allowed to contain, what a part name may point at, and what a run's
@@ -15,8 +24,8 @@ identity covers. The CLI is where those contracts are *used*, but a test that re
 them through a subprocess would have to arrange a whole interrupted run to observe one
 coercion, and would then be asserting on a report full of the very values it is trying to
 probe. The command-line surface is frozen separately, in
-:mod:`tests.golden.test_cli_golden`, and the one place where a defect does reach the
-user's screen -- a manifest that says "incomplete" being believed -- is tested there.
+:mod:`tests.golden.test_cli_golden`, and the one place where a manifest defect reaches
+the user's screen -- a manifest that says "incomplete" being believed -- is tested there.
 """
 
 from __future__ import annotations
@@ -25,13 +34,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from gigaxml.checkpoint import (
     CHECKPOINT_VERSION,
     config_identity,
     read_checkpoint,
-    verify_parts,
 )
 from gigaxml.config import parse_config
+from gigaxml.errors import CheckpointError
 from tests.golden.conftest import run_cli
 
 #: A manifest that is valid in every way the reader checks, so each test can break
@@ -56,98 +67,107 @@ def write_manifest(directory: Path, **overrides: object) -> Path:
     return path
 
 
-# --- defect 1: a manifest is coerced rather than validated ------------------
+# --- defect 1: a manifest was coerced rather than validated -------------------
 #
-# read_checkpoint applies str() / int() / bool() to each field. Every one of those
-# conversions is total: it raises on nothing a JSON document can contain, so a manifest
-# can say almost anything and still be believed.
+# read_checkpoint applied str() / int() / bool() to each field. Every one of those
+# conversions is total: it raised on nothing a JSON document can contain, so a manifest
+# could say almost anything and still be believed. The field checks replace them with
+# exact type tests, and these tests now record the refusal each one produces.
 
 
 def test_a_known_defect_string_false_is_read_as_complete(tmp_path: Path) -> None:
-    """``"complete": "false"`` is read as ``True`` -- the worst of the coercions.
+    """``"complete": "false"`` is refused instead of being read as ``True``.
 
-    ``bool("false")`` is ``True`` because the string is non-empty. So a manifest that
-    spells out that the run did *not* finish is accepted and believed, and a resume
-    skips the work that was never done. Everything about this is the defect; the
-    reader's own version check is the only thing standing between it and a wrong
-    answer.
+    **What it used to do**: ``bool("false")`` is ``True`` because the string is
+    non-empty, so a manifest spelling out that the run did *not* finish was accepted and
+    believed -- and a resume skipped the work nobody had done. That was the worst of the
+    coercions, because it failed toward "we are finished" rather than toward an error.
 
-    **When M2 repairs this, assert the refusal instead**: that reading this manifest
-    raises :class:`CheckpointError`, and that ``complete`` is never ``True`` for it.
+    **Now**: the field must be a JSON boolean, and a string is not one. The refusal
+    names the field and says why a string is dangerous here, because the mistake it
+    prevents -- believing a finished run that is not -- is not obvious from the value
+    alone.
     """
     path = write_manifest(tmp_path, complete="false")
 
-    checkpoint = read_checkpoint(path)
-
-    assert checkpoint.complete is True
+    with pytest.raises(CheckpointError, match="cannot be trusted"):
+        read_checkpoint(path)
 
 
 def test_a_known_defect_numeric_strings_are_coerced_to_ints(tmp_path: Path) -> None:
-    """``"records_consumed": "100"`` and ``"rows": "5"`` are accepted as numbers.
+    """Numeric text is refused for both a count and a row count.
 
-    A number written as text still becomes a number, so a manifest written by a
-    different tool -- or edited by hand, or produced by a serialiser that quotes
-    everything -- resumes as though it were produced by this one.
+    **What it used to do**: ``"records_consumed": "100"`` and ``"rows": "5"`` became
+    numbers, so a manifest written by something else -- or edited by hand, or produced by
+    a serialiser that quotes everything -- resumed as though this tool had written it.
 
-    **When M2 repairs this, assert the refusal for both keys.**
+    **Now**: both must be JSON integers. Tested as two separate manifests so that a fix
+    covering one key but not the other still fails here.
     """
-    path = write_manifest(
-        tmp_path,
-        records_consumed="100",
-        parts=[{"name": "part-00000.csv", "rows": "5"}],
-    )
+    for broken in (
+        {"records_consumed": "100"},
+        {"parts": [{"name": "part-00000.csv", "rows": "5"}]},
+    ):
+        path = write_manifest(tmp_path, **broken)
 
-    checkpoint = read_checkpoint(path)
-
-    assert checkpoint.records_consumed == 100
-    assert checkpoint.parts[0].rows == 5
+        with pytest.raises(CheckpointError, match="cannot be trusted"):
+            read_checkpoint(path)
 
 
-def test_a_known_defect_rejected_is_never_compared_with_records_consumed(tmp_path: Path) -> None:
-    """``rejected`` is accepted at any magnitude, including above the records consumed.
+def test_a_known_defect_rejected_is_never_compared_with_records_consumed(
+    tmp_path: Path,
+) -> None:
+    """``rejected`` above ``records_consumed`` is refused.
 
-    The two counts are not independent: a run cannot have rejected more records than
-    it read. Nothing checks that, so a manifest claiming 999,999 rejections against
-    2,909 records is believed, and the rejection total in the run report becomes
-    larger than the document it describes.
+    **What it used to do**: nothing checked the two against each other, so a manifest
+    claiming 999,999 rejections against 2,909 records was believed and the report's
+    rejection total exceeded the document it described.
 
-    **When M2 repairs this, assert the refusal.**
+    **Now**: a run cannot have quarantined more records than it read, and a manifest
+    that says otherwise describes a run that cannot have happened.
+
+    Note what is *not* asserted: this is a relation between two fields, not a type check,
+    so a manifest with both fields as the right types but the wrong relationship has to
+    be caught by comparing them -- which is the part this pins.
     """
     path = write_manifest(tmp_path, rejected=999999)
 
-    checkpoint = read_checkpoint(path)
-
-    assert checkpoint.rejected == 999999
-    assert checkpoint.rejected > checkpoint.records_consumed
+    with pytest.raises(CheckpointError, match="cannot be trusted"):
+        read_checkpoint(path)
 
 
 def test_a_known_defect_a_config_hash_of_any_type_is_accepted(tmp_path: Path) -> None:
-    """``"config": 123`` is accepted and becomes ``"123"``.
+    """A config hash that is not a hash is refused.
 
-    The one coercion with a consequence beyond this module: the hash is what a resume
-    compares against to decide whether the run would be the same run, so a manifest
-    carrying something that was never a hash is compared as though it were one.
+    **What it used to do**: ``"config": 123`` became ``"123"`` through ``str()``, which
+    will stringify anything. That hash is what a resume compares against to decide
+    whether this would be the same run, so a manifest carrying something that was never a
+    hash was compared as though it were one.
 
-    **When M2 repairs this, assert the refusal.**
+    **Now**: it must be 64 lowercase hexadecimal characters -- exactly what
+    :func:`gigaxml.checkpoint.config_identity` writes. The case is checked too: this
+    tool's digests are lowercase, so an uppercased one is a file somebody edited.
     """
     path = write_manifest(tmp_path, config=123)
 
-    checkpoint = read_checkpoint(path)
-
-    assert checkpoint.config == "123"
+    with pytest.raises(CheckpointError, match="cannot be trusted"):
+        read_checkpoint(path)
 
 
 def test_a_known_defect_an_incomplete_manifest_tells_resume_there_is_nothing_to_do(
     workdir: Path,
 ) -> None:
-    """The coercion's consequence, as a user meets it: exit 0, "already complete".
+    """The refusal reaches the command line: the run stops instead of exiting 0.
 
-    This is the end of defect 1, and it is why the defect matters. A manifest whose
-    ``complete`` is the string ``"false"`` ends a resumed run that has work left to do,
-    with a success code and a message saying there is nothing to do.
+    **What it used to do**: a manifest whose ``complete`` was the string ``"false"``
+    ended a resumed run that had work left to do with exit code 0 and the words
+    ``already complete; nothing to do`` -- which is why the coercion above mattered to
+    anyone who was not reading the code.
 
-    **When M2 repairs this, the run should refuse instead**, with a non-zero exit code
-    and an error naming the manifest.
+    **Now**: the manifest is refused before the run decides anything, the exit code is
+    non-zero, and the output the run was supposed to produce stays incomplete rather
+    than being declared finished. The assertion is on all three, because any one of them
+    alone would still let a partially-written output look done.
     """
     parts = workdir / "parts"
     first = run_cli(
@@ -188,38 +208,41 @@ def test_a_known_defect_an_incomplete_manifest_tells_resume_there_is_nothing_to_
         cwd=workdir,
     )
 
-    assert result.returncode == 0
-    assert "already complete" in result.stderr
-    # The record that was never extracted is not in the output.
+    assert result.returncode != 0
+    assert "already complete" not in result.stderr
+    assert "cannot be trusted" in result.stderr
+    # And the record that was never extracted is still not in the output -- nothing
+    # about the refusal may have advanced the run.
     rows = (parts / "part-00000.csv").read_text(encoding="utf-8")
     assert "Gamma Valve" not in rows
 
 
-# --- defect 2: a part name is used as a path, unexamined ---------------------
+# --- defect 2: a part name was used as a path, unexamined ---------------------
 #
-# verify_parts resolves each manifest part name against the parts directory with no
-# check on what the name is. A name containing separators or a drive letter therefore
-# reaches a file outside the directory.
+# verify_parts resolved each manifest part name against the parts directory with no check
+# on what the name was, so a name containing separators or a drive letter reached a file
+# outside it. The check now happens when the manifest is read, before any path is built.
 
 
 def test_a_known_defect_a_part_name_can_reach_a_file_outside_the_parts_directory(
     tmp_path: Path,
 ) -> None:
-    """``"../outside.csv"`` is opened and read, and the bytes are believed.
+    """A part name that is not a part filename is refused when the manifest is read.
 
-    The file is a real CSV one level above the parts directory, so the check finds it,
-    counts its rows, and reports a mismatch. That is the shape of the problem: the tool
-    reads a file the manifest named, from wherever the manifest pointed.
+    **What it used to do**: ``"../outside.csv"`` was joined onto the parts directory and
+    opened. The file one level above was a real CSV, so it was counted, and the only
+    complaint was that its row count disagreed -- the tool had read a file the manifest
+    pointed at, from outside the directory it was supposed to stay in.
 
-    **This is a read, not a write.** Part names are generated by ``part_name(index,
-    extension)`` on the writing side and never come from a manifest, so no run can be
-    made to write outside the directory. The exposure is a manifest being able to make a
-    resume open and parse an arbitrary file.
+    **This was a read, not a write.** Part names are generated by ``part_name(index,
+    extension)`` on the writing side and never come from a manifest, so no run could be
+    made to write outside the directory. The exposure was a resume opening an arbitrary
+    file.
 
-    **When M2 repairs this, assert the refusal instead of the read**: a part name that
-    is not a plain file name in the parts directory should raise
-    :class:`CheckpointError` *before* the path is opened, so the row count in this
-    assertion is never computed.
+    **Now**: the name must be one this tool would have produced -- ``part-00000.csv``,
+    ``.jsonl`` or ``.parquet`` -- and the refusal happens while the manifest is being
+    read, so no path is built from it at all. The outside file is still there and still
+    readable; the assertion that matters is that reaching for it never starts.
     """
     parts_dir = tmp_path / "parts"
     parts_dir.mkdir()
@@ -227,13 +250,9 @@ def test_a_known_defect_a_part_name_can_reach_a_file_outside_the_parts_directory
     outside.write_text("id,name\n1,not this run's data\n", encoding="utf-8")
 
     manifest = write_manifest(parts_dir, parts=[{"name": "../outside.csv", "rows": 2906}])
-    checkpoint = read_checkpoint(manifest)
 
-    problems = verify_parts(checkpoint, parts_dir, "csv")
-
-    # It was found, and read: the problem is about row counts, not about a missing file,
-    # which is exactly what "it looked outside the parts directory" looks like from here.
-    assert problems == ["rows differ: ../outside.csv (checkpoint 2906, file 1)"]
+    with pytest.raises(CheckpointError, match="cannot be trusted"):
+        read_checkpoint(manifest)
 
 
 # --- defect 3: the schema is not part of what a run is ------------------------
@@ -241,6 +260,10 @@ def test_a_known_defect_a_part_name_can_reach_a_file_outside_the_parts_directory
 # config_identity hashes what the run depends on -- record path, namespaces, error
 # policy, fields -- and does not include the XSD, which decides how those fields are
 # typed. So two runs that would produce different data can share one identity.
+#
+# ★ STILL OPEN. Owned by M4, not M2. This test must keep asserting equality until that
+# milestone lands; a change here belongs to a change in config_identity, not to any work
+# on manifest parsing.
 
 
 def test_a_known_defect_the_xsd_is_absent_from_the_run_identity() -> None:
