@@ -38,9 +38,17 @@ def config(**overrides: object) -> ExtractionConfig:
 
 
 def sample_checkpoint(**overrides: object) -> Checkpoint:
+    """A manifest-shaped object for the write/read tests.
+
+    The ``config`` and ``sha256`` values are *well-formed* digests rather than
+    placeholders like ``"hash"``: the reader checks both as digests now, and a fixture
+    carrying a stand-in would be refused -- not because the round trip is broken, but
+    because the fixture never represented a real one. The writer takes either; the
+    reader's job is to refuse what the writer would never be handed.
+    """
     base: dict[str, object] = {
-        "source": {"path": "x.xml", "size": 1, "sha256": "ab"},
-        "config": "hash",
+        "source": {"path": "x.xml", "size": 1, "sha256": "ab" * 32},
+        "config": "cd" * 32,
         "records_consumed": 5,
         "rejected": 1,
         "parts": (PartRecord("part-00000.csv", 4),),
@@ -238,7 +246,10 @@ def test_a_manifest_with_a_malformed_source_block_is_rejected(tmp_path: Path) ->
     payload["source"] = {"path": "x", "size": 1}
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(CheckpointError, match="malformed 'source'"):
+    # The message names the missing fields rather than calling the block malformed:
+    # "malformed" says what is wrong with it in the abstract, and a reader who knows
+    # only that still has nothing to fix.
+    with pytest.raises(CheckpointError, match="'source' must hold"):
         read_checkpoint(path)
 
 
@@ -248,7 +259,7 @@ def test_a_manifest_with_a_malformed_part_is_rejected(tmp_path: Path) -> None:
     payload["parts"] = [{"name": "part-00000.csv"}]
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(CheckpointError, match="malformed part"):
+    with pytest.raises(CheckpointError, match="'parts\\[0\\]' must hold"):
         read_checkpoint(path)
 
 

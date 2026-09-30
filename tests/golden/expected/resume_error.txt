@@ -1,2 +1,2 @@
 # exit_code=1 stream=stderr
-error: the checkpoint at '<TMP>/parts/checkpoint.json' has format version 99, but this build writes version 1
+error: the checkpoint at '<TMP>/parts/checkpoint.json' cannot be trusted: it declares format version 99, but this build reads version 1. Nothing was resumed. Delete the checkpoint to start a fresh run.
