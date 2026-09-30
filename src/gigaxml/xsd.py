@@ -114,14 +114,74 @@ def require_schema() -> object:
     return xmlschema
 
 
+#: What a schema is allowed to pull in while it compiles: files from its own directory,
+#: and nothing else. ``sandbox`` blocks a path that escapes the schema's directory
+#: before it is opened; the default ``all`` opens it.
+ALLOW: Final = "sandbox"
+
+#: Whether XML entities are resolved while reading a schema. ``always`` refuses them,
+#: which matches the streaming parser's own ``load_dtd=False`` / ``resolve_entities=False``
+#: -- a schema has no business reading entities when a document never may. The default
+#: is ``remote``, which permits them locally.
+DEFUSE: Final = "always"
+
+#: Explaining the policy where a user will read it, in the same shape as the refusal
+#: above, so the error is actionable rather than a library name nobody can search for.
+#: The wording is what tells a refusal apart from a schema that is merely broken; see
+#: :func:`_refuse_by_policy`.
+_POLICY_NOTE: Final = (
+    "A schema may include files from its own directory only; it cannot reach outside "
+    "that directory, read a remote resource, or resolve an XML entity. See "
+    "docs/security-model.md."
+)
+
+
+def _refuse_by_policy(target: pathlib.Path, reason: object) -> GigaXMLError:
+    """The error for a resource the schema policy refused.
+
+    Deliberately *not* the same sentence as "not a usable XSD". A schema that is
+    malformed and a schema the policy stopped are different problems with different
+    fixes -- the first wants editing, the second wants knowing that the policy is what
+    refused it -- and one message for both leaves a user unable to tell which they have.
+    """
+    return GigaXMLError(
+        f"the XSD file {str(target)!r} was refused by the schema security policy: "
+        f"{reason}. {_POLICY_NOTE}"
+    )
+
+
 def _open_schema(schema_path: str | pathlib.Path) -> object:
-    """Compile one XSD file, reporting a bad schema as a gigaxml error."""
+    """Compile one XSD file, reporting a bad schema as a gigaxml error.
+
+    **This is the only place a schema is compiled**, so it is also the only place the
+    policy in :data:`ALLOW` and :data:`DEFUSE` has to be stated. Both defaults are
+    permissive -- ``all`` and ``remote`` -- which means a caller that passes nothing
+    gets a schema compiler that reads any file the path points at and will open a
+    remote resource over the network. This module passes both explicitly, with no way
+    for a caller to relax them: an escape hatch for schema resources would contradict
+    the reader's four security defaults, which likewise take no options.
+
+    The rejection is classified rather than rewrapped. ``XMLResourceBlocked`` and
+    ``XMLResourceForbidden`` descend from ``XMLResourceError`` and mean "the policy said
+    no"; they are caught first and given the message above. Everything else -- an
+    unparseable file, an undeclared namespace, a schema that references nothing that
+    exists -- falls through to "not a usable XSD", which is the honest description of a
+    file that is simply wrong.
+    """
     xmlschema = require_schema()
     target = pathlib.Path(schema_path)
     if not target.is_file():
         raise GigaXMLError(f"the XSD file {str(target)!r} does not exist")
+    # Imported here, after require_schema(), so a machine without the extra never
+    # reaches it, and because these two live under xmlschema.exceptions rather than
+    # on the module's top level -- reaching them from a module-level import would be
+    # an ImportError at load time for anyone who installed a plain gigaxml.
+    from xmlschema.exceptions import XMLResourceBlocked, XMLResourceForbidden
+
     try:
-        return xmlschema.XMLSchema(str(target))
+        return xmlschema.XMLSchema(str(target), allow=ALLOW, defuse=DEFUSE)
+    except (XMLResourceBlocked, XMLResourceForbidden) as exc:
+        raise _refuse_by_policy(target, exc) from exc
     except Exception as exc:  # xmlschema raises a family of its own
         raise GigaXMLError(f"{str(target)!r} is not a usable XSD: {exc}") from exc
 

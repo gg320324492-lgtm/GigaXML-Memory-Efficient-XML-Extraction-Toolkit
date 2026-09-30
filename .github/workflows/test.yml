@@ -75,6 +75,14 @@ jobs:
         # pyproject.toml). Coverage is measured over the source only.
         # The coarse regression check below is the deliberate exception, and it is
         # loose on purpose -- see that job.
+        #
+        # The directories are listed rather than left to pyproject's testpaths, which
+        # only applies to a pytest with no paths given. This command names its paths,
+        # so a suite that is not written here does not run -- and a suite that does
+        # not run is worse than none: "the CI is green" would still be typed while
+        # nothing in it watched the new code. tests/golden holds the command line's
+        # frozen behaviour, tests/security the schema boundary; both arrived after
+        # this list was written and both had to be added to it.
         env:
           # A CI runner has no display. The desktop tests build real widgets
           # and drive the real CLI; only the windowing system is substituted,
@@ -82,7 +90,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         shell: bash
         run: |
-          pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 tests/unit tests/integration
+          pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 tests/unit tests/integration tests/golden tests/security
 
   performance-baseline:
     # The one performance signal in CI, and the loose version of the A11 decision
