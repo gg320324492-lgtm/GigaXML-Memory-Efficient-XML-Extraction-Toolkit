@@ -125,6 +125,8 @@ class ExecutionPanel(QWidget):
         #: The last progress drawn onto the widgets, and how many have been drawn.
         self._last_progress: Progress | None = None
         self._progress_updates = 0
+        #: How many of those updates happened with the child still alive.
+        self._progress_while_running = 0
 
         self._build()
 
@@ -521,6 +523,7 @@ class ExecutionPanel(QWidget):
         self._finished = False
         self._last_progress = None
         self._progress_updates = 0
+        self._progress_while_running = 0
         # Taken here, after the early returns, because a run that never started has no
         # report to attribute. See `report_was_rewritten` for what this is for.
         self._report_stamp = self._report_identity()
@@ -610,6 +613,24 @@ class ExecutionPanel(QWidget):
         the gap between the two is exactly where a run would appear to have hung.
         """
         return self._progress_updates
+
+    def progress_while_running(self) -> int:
+        """How many of those updates happened **while the child was still running**.
+
+        **This is the number that answers "does the bar move during the wait?", and it is
+        strictly more than :meth:`progress_updates` can tell you.** The CLI always writes a
+        closing progress line on the way out, so a run that never moved the bar until it
+        finished still produces one update -- indistinguishable, by count alone, from a run
+        that reported progress throughout. The difference is *when*, and that is the only
+        thing this panel can read: a progress bar that fills at the moment the work is
+        already done tells a person waiting on a large file nothing at all.
+
+        Counted inside :meth:`_show`, where the child's exit status is read at the same
+        moment the widgets are set. A caller cannot reconstruct it by polling, because
+        polling answers for *now* rather than for the instant of the update -- which is how
+        the first version of that test passed locally and failed on every CI platform.
+        """
+        return self._progress_while_running
 
     def report_was_rewritten(self) -> bool:
         """Whether the run that just finished wrote the report sitting beside the output.
@@ -955,8 +976,18 @@ class ExecutionPanel(QWidget):
             self.finished.emit()
 
     def _show(self, progress: Progress) -> None:
-        # Kept after the widgets are set, so a caller reading these is looking at the same
-        # call that drew the bar. See `progress_updates` for why they exist at all.
+        # **Recorded here, inside the call that draws the bar, and not by anything outside.**
+        # "The bar moved" and "the run was still going" are one statement only at this point;
+        # a caller that polls for the first and then checks the second is observing two
+        # different moments, and on a fast machine the run is over in between. That is not a
+        # theoretical gap -- it is why the first version of the test for this was green here
+        # and red on all three CI platforms, failing with "the run finished before any
+        # progress could be observed" on a document with four records in it.
+        #
+        # `is_running()` reads the child's exit status, so a count above zero says the bar
+        # was drawn while the child was alive. See `progress_while_running`.
+        if self.is_running():
+            self._progress_while_running += 1
         self._last_progress = progress
         self._progress_updates += 1
         fraction = fraction_done(progress.records, self._total)

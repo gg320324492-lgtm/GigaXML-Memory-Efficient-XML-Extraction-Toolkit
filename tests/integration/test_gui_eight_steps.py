@@ -72,6 +72,41 @@ def document(tmp_path: pathlib.Path) -> pathlib.Path:
     return path
 
 
+@pytest.fixture(scope="module")
+def long_document(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+    """A document with enough records that progress cannot be reported only at the end.
+
+    **Sized from the CLI's own progress rule, not from a guess.** The CLI emits a progress
+    line every 20,000 records (``PROGRESS_EVERY_DEFAULT``) or every second, whichever comes
+    first, plus a closing line whatever happens. So the first line arrives after 20,000
+    records, at which point 190,000 remain — and a process with 190,000 records still to go
+    is a process that cannot have exited. That is what makes the assertion below independent
+    of how fast the machine is, and it is why the size is a count of records rather than a
+    count of bytes: the padding is small on purpose, so the same number of records makes a
+    smaller file.
+
+    Small records, many of them: 20 padding characters against 200,000 products. The earlier
+    version of this test used a four-record document, which on this machine finished in under
+    the pump's interval and so never had a progress line to observe while running — the
+    reason it was green here and red on all three CI platforms.
+    """
+    path = tmp_path_factory.mktemp("long") / "long.xml"
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("<catalog><products>")
+        padding = "x" * 20
+        for number in range(1, 200_001):
+            handle.write(f'<product id="{number}"><name>{padding}</name></product>')
+        handle.write("</products></catalog>")
+    return path
+
+
+LONG_CONFIG = """record: /catalog/products/product
+fields:
+  id:
+    path: '@id'
+"""
+
+
 def _wait(qtbot: QtBot, predicate, timeout_ms: int = 120_000) -> None:  # noqa: ANN001
     qtbot.waitUntil(predicate, timeout=timeout_ms)
 
@@ -376,35 +411,59 @@ def test_extracting_from_the_window_produces_the_file_it_promised(
 
 
 def test_progress_moves_while_the_run_is_still_going(
-    window: MainWindow, qtbot: QtBot, document: pathlib.Path, tmp_path: pathlib.Path
+    window: MainWindow,
+    qtbot: QtBot,
+    long_document: pathlib.Path,
+    tmp_path: pathlib.Path,
 ) -> None:
     """**⑦ Progress**, and specifically: it moves **before** the run ends.
 
     A bar that jumps from 0 to 100 when the file is finished would satisfy "the window shows
     progress" while telling the user nothing during the only period where waiting is
-    happening. So the assertion is made while the child is still running, from a document
-    with enough records that there is a period to observe.
+    happening. The CLI always writes a closing progress line on the way out, so a run that
+    reported nothing until that moment still produces one update and still looks like a
+    progress bar to anything counting them.
+
+    **The assertion is on one number, read at one moment, and it is strictly stronger than
+    "some progress arrived".** ``progress_while_running()`` counts updates that happened
+    while the child was alive -- the child's exit status is read inside the same call that
+    drew the bar -- so a value above zero says the bar moved *during the run*. An earlier
+    version polled for ``progress_updates() > 0`` and then asked ``is_running()``, which are
+    two observations at two times: the first version was green here and failed on all three
+    CI platforms with "the run finished before any progress could be observed", because on
+    a four-record document the whole run fits inside one pump interval.
+
+    **The document is sized so this cannot go red on a fast machine**, which is the half of
+    the fix that is not a code change: see :func:`long_document`. 200,000 records means the
+    first progress line is emitted at the 10% mark with 180,000 still to go, so there is no
+    scheduling in which the process has already exited when that line is drawn.
     """
-    _open(window, document)
-    _analyse(window, qtbot)
-    _choose_product_candidate(window)
-    fields = window.field_panel()
-    fields.regenerate_from_candidate()
-    _wait(qtbot, lambda: not fields.is_regenerating(), timeout_ms=120_000)
+    config = tmp_path / "long.yaml"
+    config.write_text(LONG_CONFIG, encoding="utf-8")
 
     execution = window.execution_panel()
-    execution._source.setText(str(document))
-    execution._config.setText(str(fields.generated_config_path()))
-    execution._output.setText(str(tmp_path / "out.csv"))
+    execution._source.setText(str(long_document))
+    execution._config.setText(str(config))
+    execution._output.setText(str(tmp_path / "long.csv"))
     execution._format.setCurrentIndex(execution._format.findData("csv"))
     execution.start()
 
-    # The window drew a progress value, and the child is still going when it did.
-    _wait(qtbot, lambda: execution.progress_updates() > 0, timeout_ms=60_000)
-    assert execution.is_running(), "the run finished before any progress could be observed"
+    _wait(
+        qtbot,
+        # Either the progress arrives while the child is alive, or the child is gone -- in
+        # which case the assertion below fails. Waiting on the progress alone would turn a
+        # bar that only moves at the end into a three-minute timeout rather than a sentence
+        # naming the fault, which is the difference between a failure you can read and one
+        # you have to time out to discover.
+        lambda: execution.progress_while_running() > 0 or not execution.is_running(),
+        timeout_ms=180_000,
+    )
+    assert execution.progress_while_running() > 0, (
+        "no progress was drawn while the child was alive, so the bar only ever moved "
+        f"after the work was done (draws: {execution.progress_updates()})"
+    )
     latest = execution.last_progress()
-    assert latest is not None
-    assert latest.records > 0, latest
+    assert latest is not None and latest.records > 0, latest
 
     execution.cancel()
     _wait(qtbot, lambda: not execution.is_running(), timeout_ms=60_000)
