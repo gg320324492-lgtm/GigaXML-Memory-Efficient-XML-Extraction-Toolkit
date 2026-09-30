@@ -251,23 +251,39 @@ def test_the_numbers_in_that_report_are_the_ones_on_disk(tmp_path: Path) -> None
     block = report["checkpoint"]
     assert block["complete"] is False, "a stopped run recorded itself as having finished"
     assert block["parts"], "the run committed no part, so this says nothing about the counts"
-    assert block["records_consumed"] >= manifest.records_consumed, (
-        f"the report says {block['records_consumed']} records consumed, fewer than the "
-        f"{manifest.records_consumed} the manifest says are committed on disk"
-    )
-    assert block["records_consumed"] - manifest.records_consumed < PART_SIZE, (
-        f"the report is {block['records_consumed'] - manifest.records_consumed} records "
-        f"ahead of the disk, which is more than the {PART_SIZE} of a single unwritten part"
-    )
-    # The parts, the same bound for the same reason: the report counts a part the moment
-    # it is committed and the manifest is written just after, so a signal landing between
-    # the two leaves the report one ahead. Measured, and it is the only shape seen.
-    assert len(block["parts"]) - len(manifest.parts) in (0, 1), (
-        f"the report lists {len(block['parts'])} parts against the manifest's "
-        f"{len(manifest.parts)}; the report cannot be more than one ahead, because one "
-        "part is being written at a time"
-    )
     assert manifest.records_consumed > 0, "nothing was committed, so there is no number to trust"
+
+    # **The report counts a part the moment it is committed; the manifest is written just
+    # after.** `_extract_checkpointed` updates `records_consumed` and appends to `parts`
+    # before it calls `write_checkpoint` -- deliberately, so the manifest never names a part
+    # that is not on disk -- which means there is a window in which this run's figures are
+    # one part ahead of the file's.
+    #
+    # **Both bounds are inclusive at the top, and the first version of the records one was
+    # not.** Written as ``< PART_SIZE`` it failed on 8 runs out of 20, with a signal landing
+    # in that window giving a difference of exactly ``PART_SIZE``; the message said "the
+    # report is 10 records ahead of the disk, which is more than the 10 of a single
+    # unwritten part" -- a sentence that reads as a reconciliation bug in the product and
+    # was a boundary written one digit wrong in the test. The parts bound beside it said
+    # ``in (0, 1)``, which is the same rule with the same top end open, and it never once
+    # fired. One fact, two copies, one of them not kept up.
+    #
+    # Written the same shape now, so the two cannot drift apart again: a difference of
+    # between zero and one part's worth, by either unit. A report claiming *fewer* records
+    # than the disk holds is the failure worth catching -- that is the claim that makes a
+    # resume skip rows which were never written.
+    records_ahead = block["records_consumed"] - manifest.records_consumed
+    assert 0 <= records_ahead <= PART_SIZE, (
+        f"the report is {records_ahead} records from the disk's {manifest.records_consumed} "
+        f"committed; it may be up to one unwritten part ({PART_SIZE} records) ahead, and "
+        "never behind"
+    )
+    parts_ahead = len(block["parts"]) - len(manifest.parts)
+    assert 0 <= parts_ahead <= 1, (
+        f"the report lists {len(block['parts'])} parts against the manifest's "
+        f"{len(manifest.parts)}; it may be one ahead, because one part is written at a "
+        "time, and never behind"
+    )
 
     assert report["elapsed_seconds"] > 0, "a run that did work cannot have taken no time"
     assert report["peak_rss_mb"] is not None, "a measurement that cannot be taken must be absent"
