@@ -32,13 +32,22 @@ from gigaxml.config import load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-SOURCE = """<?xml version="1.0" encoding="UTF-8"?>
-<root>
-  <item><id>1</id><name>A</name></item>
-  <item><id>2</id><name>B</name></item>
-  <item><id>3</id><name>C</name></item>
-</root>
-"""
+#: How many records the fixture holds. This number is load-bearing, and the reason is
+#: the field it protects: the report rounds ``elapsed_seconds`` to three places, and the
+#: code that writes the rate says why it tolerates a zero -- a run that took under a
+#: millisecond has no rate worth writing, so it reports ``None`` rather than a zero that
+#: would read as "infinitely slow". A three-record file *is* that run on a fast machine.
+#: Sized so the extraction is unmistakably longer than the timer's resolution, so the two
+#: assertions below read the report instead of the runner's speed -- which is how this
+#: file once failed on one Python version and passed on the others.
+RECORD_COUNT = 5_000
+
+SOURCE = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<root>\n"
+    + "".join(f"  <item><id>{i}</id><name>N{i}</name></item>\n" for i in range(RECORD_COUNT))
+    + "</root>\n"
+)
 
 FIELDS = {"id": {"path": "id", "type": "int"}, "name": {"path": "name"}}
 
@@ -107,12 +116,17 @@ def test_a_plain_run_reports_its_provenance(tmp_path: Path) -> None:
     assert report["config_hash"] == config_identity(load_config(config))
     assert len(report["config_hash"]) == 64
 
-    # Timing, both ends, and monotonic enough to be worth reading.
+    # Timing, both ends, and monotonic enough to be worth reading. The run is sized so
+    # that it takes longer than the three places this is rounded to; see RECORD_COUNT.
     assert report["started_at"] <= report["finished_at"]
     assert report["elapsed_seconds"] > 0
 
     # Counts that add up, and a rate computed over them.
-    assert report["records"] == {"accepted": 3, "rejected": 0, "seen": 3}
+    assert report["records"] == {
+        "accepted": RECORD_COUNT,
+        "rejected": 0,
+        "seen": RECORD_COUNT,
+    }
     assert report["records"]["accepted"] == report["rows"]
     assert report["throughput_records_per_s"] > 0
 
@@ -214,7 +228,7 @@ def test_an_unidentifiable_input_is_reported_missing_not_zero(
     # The rest of the run is unaffected: one missing measurement does not poison the
     # fields that were measured.
     assert report["output_identity"]["sha256"] == sha256_of(output)
-    assert report["records"]["accepted"] == 3
+    assert report["records"]["accepted"] == RECORD_COUNT
 
 
 def test_an_unidentifiable_output_is_reported_missing_not_zero(
@@ -293,7 +307,7 @@ def test_an_unmeasurable_peak_is_null_not_zero(
     assert report["peak_rss_mb"] is None
     assert report["peak_rss_mb"] != 0.0
     assert report["input_identity"]["sha256"] == sha256_of(source)
-    assert report["records"]["accepted"] == 3
+    assert report["records"]["accepted"] == RECORD_COUNT
 
 
 def test_the_peak_reader_returns_a_plausible_number_on_this_platform() -> None:
