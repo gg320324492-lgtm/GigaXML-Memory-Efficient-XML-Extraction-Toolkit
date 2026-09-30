@@ -24,8 +24,10 @@ absent, rather than an ``ImportError`` traceback from three frames down.
 from __future__ import annotations
 
 import pathlib
+import re
 from dataclasses import replace
 from typing import TYPE_CHECKING, Final
+from urllib.parse import unquote, urlsplit
 
 from gigaxml.config import ExtractionConfig
 from gigaxml.errors import GigaXMLError
@@ -135,6 +137,10 @@ _POLICY_NOTE: Final = (
     "docs/security-model.md."
 )
 
+#: ``file:///C:/x`` url-parses to the path ``/C:/x``; the leading slash is an artifact
+#: of the URL grammar, not part of the drive. Matched before trimming it away.
+_DRIVE_PREFIX: Final = re.compile(r"^/[A-Za-z]:")
+
 
 def _refuse_by_policy(target: pathlib.Path, reason: object) -> GigaXMLError:
     """The error for a resource the schema policy refused.
@@ -150,6 +156,104 @@ def _refuse_by_policy(target: pathlib.Path, reason: object) -> GigaXMLError:
     )
 
 
+def _path_from_url(url: str) -> pathlib.Path | None:
+    """The filesystem path a ``file://`` URL names, or ``None`` if it does not name one.
+
+    Written here rather than borrowed: :meth:`pathlib.Path.from_uri` is Python 3.13 and
+    this package supports 3.11, while the library's own URL helpers normalize *to* a URL
+    but never come back. The only fiddly case is Windows, where ``file:///C:/x`` parses
+    to the path ``/C:/x`` -- hence the drive-letter guard.
+    """
+    parsed = urlsplit(url)
+    if parsed.scheme not in ("file", "") or not parsed.path:
+        return None
+    raw = unquote(parsed.path)
+    if _DRIVE_PREFIX.match(raw):
+        raw = raw[1:]
+    return pathlib.Path(raw)
+
+
+def _within(path: pathlib.Path, boundary: pathlib.Path) -> bool:
+    """Is ``path`` inside ``boundary``? Both must already be resolved."""
+    try:
+        path.relative_to(boundary)
+    except ValueError:
+        return False
+    return True
+
+
+def _reject_escape(source: object, base_url: str | None, boundary: pathlib.Path) -> None:
+    """Refuse a resource that resolves outside the sandbox, before it is opened.
+
+    **This runs before the loader touches the file**, which is what makes the refusal a
+    refusal rather than an I/O error that happens to appear afterwards. The path is
+    resolved -- symlinks followed -- and only then compared, so a link whose literal
+    name sits inside the sandbox while its target sits outside does not slip through.
+    The question answered here is "which file", never "which name".
+
+    Anything this cannot answer locally is left to the library's own ``allow`` check,
+    which stays in force throughout: sources that are not strings (a stream, an element),
+    remote URLs, paths that do not resolve. Declining to answer is the safe direction --
+    a path this function cannot understand is still caught downstream rather than waved
+    through.
+    """
+    from xmlschema.exceptions import XMLResourceBlocked
+    from xmlschema.loaders import normalize_url
+    from xmlschema.utils.urls import is_local_url
+
+    if not isinstance(source, str):
+        return
+    url = normalize_url(source, base_url)
+    if not is_local_url(url):
+        return
+    resolved_path = _path_from_url(url)
+    if resolved_path is None:
+        return
+    try:
+        resolved = resolved_path.resolve()
+    except OSError:  # pragma: no cover - lets the library report the real problem
+        return
+    if not _within(resolved, boundary):
+        raise XMLResourceBlocked(f"block access to out of sandbox file {url}")
+
+
+def _sandbox_loader_class(boundary: pathlib.Path) -> type:
+    """Build the loader that measures every resource it is handed against ``boundary``.
+
+    A class is *built* rather than declared, because the library constructs it as
+    ``loader_class(maps=..., locations=..., use_fallback=...)`` -- three fixed arguments,
+    with no channel for a boundary. Closing over one here is the only place it can ride
+    along.
+
+    ``load_schema`` is the method overridden, not ``include_schema`` or ``import_schema``:
+    both of those end in ``load_schema``, and so does every other route to a resource
+    (redefines, overrides, namespace lookups), so intercepting the one method covers all
+    of them. The check happens **before** delegating, so by the time anything could
+    refuse, nothing has been opened yet.
+    """
+    from xmlschema.loaders import SchemaLoader
+
+    class _SandboxLoader(SchemaLoader):
+        def load_schema(
+            self,
+            source: object,
+            namespace: str | None = None,
+            base_url: str | None = None,
+            build: bool = False,
+            partial: bool = False,
+        ) -> object:
+            _reject_escape(source, base_url, boundary)
+            return super().load_schema(
+                source,
+                namespace,
+                base_url,
+                build,
+                partial,  # type: ignore[arg-type]
+            )
+
+    return _SandboxLoader
+
+
 def _open_schema(schema_path: str | pathlib.Path) -> object:
     """Compile one XSD file, reporting a bad schema as a gigaxml error.
 
@@ -159,7 +263,14 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     gets a schema compiler that reads any file the path points at and will open a
     remote resource over the network. This module passes both explicitly, with no way
     for a caller to relax them: an escape hatch for schema resources would contradict
-    the reader's four security defaults, which likewise take no options.
+    the reader's security defaults, which likewise take no options.
+
+    **The sandbox boundary is this file's resolved parent directory**, and it is set
+    here rather than inherited from the library. The caller named this path, so a symlink
+    *at* the root points where the user meant it to; everything reached *from* the root is
+    measured against what that name actually resolves to. A resource inside is fine, a
+    resource outside is refused, and a link is no different from the file it leads to --
+    which is the whole point of resolving before comparing.
 
     The rejection is classified rather than rewrapped. ``XMLResourceBlocked`` and
     ``XMLResourceForbidden`` descend from ``XMLResourceError`` and mean "the policy said
@@ -179,7 +290,12 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     from xmlschema.exceptions import XMLResourceBlocked, XMLResourceForbidden
 
     try:
-        return xmlschema.XMLSchema(str(target), allow=ALLOW, defuse=DEFUSE)
+        return xmlschema.XMLSchema(
+            str(target),
+            allow=ALLOW,
+            defuse=DEFUSE,
+            loader_class=_sandbox_loader_class(target.resolve().parent),
+        )
     except (XMLResourceBlocked, XMLResourceForbidden) as exc:
         raise _refuse_by_policy(target, exc) from exc
     except Exception as exc:  # xmlschema raises a family of its own
