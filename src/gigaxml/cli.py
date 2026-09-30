@@ -1043,6 +1043,16 @@ def _identity_or_reason(
         return None, f"{label} could not be identified: {exc}"
 
 
+#: The shape of a run report, as opposed to the version of the tool that wrote it
+#: (``tool_version``). Every report carries it so a consumer can tell which fields to
+#: expect without guessing from ``tool_version`` -- a patch release and a format change
+#: are different events and now look different.
+#:
+#: Independent of ``checkpoint``'s own ``version``: a manifest version and a report
+#: version are two contracts that move at their own pace. See ``RUN-REPORT-FORMAT.md``.
+SCHEMA_VERSION: Final = 1
+
+
 def _run_report_payload(
     args: argparse.Namespace,
     config: ExtractionConfig,
@@ -1105,6 +1115,7 @@ def _run_report_payload(
         ),
         "elapsed_seconds": elapsed_since(started),
         "tool_version": __version__,
+        "schema_version": SCHEMA_VERSION,
     }
     if checkpoint_info is not None:
         payload["checkpoint"] = checkpoint_info

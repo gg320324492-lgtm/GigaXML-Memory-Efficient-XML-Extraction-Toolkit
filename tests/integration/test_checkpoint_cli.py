@@ -278,6 +278,9 @@ def test_without_the_flag_nothing_changes(tmp_path: Path) -> None:
         "input_identity",
         "output_identity",
         "throughput_records_per_s",
+        # The report's own format version -- a contract change, recorded by adding the
+        # key rather than by loosening the assertion.
+        "schema_version",
     }
 
 

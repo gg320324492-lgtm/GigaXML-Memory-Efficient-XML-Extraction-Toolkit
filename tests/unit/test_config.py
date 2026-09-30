@@ -379,3 +379,51 @@ def test_the_config_is_immutable() -> None:
     config = parse_config(_minimal())
     with pytest.raises(AttributeError):
         config.record_path = "/other"  # type: ignore[misc]
+
+
+# --- versioning ---------------------------------------------------------------
+
+
+def test_a_config_without_a_version_still_loads() -> None:
+    """Every config ever written for this project has no ``version`` key.
+
+    Versioning is opt-in on purpose: a key that only new files carry must never be
+    required, or every existing config would break the day it was introduced. Asserted
+    separately from the value tests below so "absent" and "present and correct" can
+    never be confused for one another.
+    """
+    assert parse_config(_minimal()).record_path == "/catalog/products/product"
+
+
+def test_version_one_is_accepted_as_an_integer() -> None:
+    assert parse_config(_minimal(version=1)).record_path == "/catalog/products/product"
+
+
+@pytest.mark.parametrize(
+    ("version", "why"),
+    [
+        (2, "a future format this build cannot read"),
+        (0, "no version this build has ever written"),
+        ("1", "a numeric string is not the integer the key means"),
+        (1.0, "a float is not the integer the key means"),
+        (True, "a boolean is not the integer the key means, and True == 1"),
+        (None, "an explicit null is not the same as omitting the key"),
+    ],
+)
+def test_anything_but_the_integer_one_is_refused(version: object, why: str) -> None:
+    """A version that loads unrecognised is worse than one that fails.
+
+    ``version: 2`` read as version 1 would parse a future document under today's rules
+    and report success -- the silent misreading this key exists to prevent. Note what
+    each case refuses *for*: the type, not the value, because ``True == 1`` and
+    ``1.0 == 1`` both hold and a value comparison would accept them.
+    """
+    with pytest.raises(ConfigError) as refused:
+        parse_config(_minimal(version=version))
+
+    message = str(refused.value)
+    assert "reads version 1" in message, f"({why}) message was: {message}"
+    # And the two refusals must not read alike: an unknown key asks you to delete it,
+    # an unread version asks you to change it, and a reader who cannot tell which to do
+    # has been told nothing actionable.
+    assert "unknown key" not in message, f"({why}) refused as an unknown key: {message}"

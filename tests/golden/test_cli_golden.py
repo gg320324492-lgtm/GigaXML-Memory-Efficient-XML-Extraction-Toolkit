@@ -48,6 +48,9 @@ RUN_REPORT_FIELDS = frozenset(
         "rejected",
         "rejected_path",
         "rows",
+        # Added by the format, not by a run: this key now appears in every report.
+        # The other twenty-three above are unchanged since M0 froze them.
+        "schema_version",
         "source",
         "started_at",
         "status",

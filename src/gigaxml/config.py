@@ -54,7 +54,16 @@ __all__ = [
 ]
 
 #: Keys allowed at the top level of a config document.
-_TOP_LEVEL_KEYS: Final = frozenset({"record", "namespaces", "fields", "on_error", "schema"})
+#:
+#: ``version`` is optional and only ever ``1``: a config without it is this project's
+#: own format from before versioning, and must keep loading forever. The value is
+#: checked separately by :func:`_parse_version` rather than merely allowed here --
+#: admitting the key without checking it would mean ``version: 2`` loaded as version 1,
+#: which is worse than a refusal, because a file declaring a format this build does not
+#: understand would be read as one it does.
+_TOP_LEVEL_KEYS: Final = frozenset(
+    {"record", "namespaces", "fields", "on_error", "schema", "version"}
+)
 
 #: Keys allowed inside one entry of ``fields``.
 _FIELD_KEYS: Final = frozenset({"path", "type", "required"})
@@ -195,6 +204,7 @@ def parse_config(data: object, *, source: str = "<config>") -> ExtractionConfig:
         )
 
     _reject_unknown_keys(data.keys(), _TOP_LEVEL_KEYS, "the top level", source)
+    _parse_version(data, source)
 
     record_path = data.get("record")
     if not isinstance(record_path, str) or not record_path.strip():
@@ -258,6 +268,39 @@ def _reject_unknown_keys(
         raise ConfigError(
             f"unknown key(s) {unknown} in {where} of {source}; allowed keys are {sorted(allowed)}"
         )
+
+
+def _parse_version(data: Mapping[str, object], source: str) -> None:
+    """Check the optional ``version`` key, which is allowed but not assumed.
+
+    Absent means a config written before this key existed -- the common case, and it has
+    to keep loading. Present means a claim about which format the file uses, and a claim
+    is checked rather than taken: only ``1`` is read, anything else is refused instead of
+    being read as 1.
+
+    **A version that is accepted without being understood is the failure this avoids.**
+    ``version: 2`` loaded as version 1 would parse a future document under today's rules
+    and report success -- the silent misreading the rest of this module's validation
+    exists to prevent.
+
+    **The refusal is worded differently from an unknown key, on purpose.** A config with
+    a stray key wants the key removed; a config declaring a version this build does not
+    read wants the *value* changed (or the key removed if it predates versioning). One
+    message cannot tell a reader which of those two to do.
+
+    The value is checked by type, not compared: ``True == 1`` and ``1.0 == 1`` are both
+    true in Python, so ``version != 1`` would admit a boolean and a float -- which is
+    the same defect the manifest reader had before M2.
+    """
+    if "version" not in data:
+        return
+    version = data["version"]
+    if type(version) is int and version == 1:
+        return
+    raise ConfigError(
+        f"{source} declares config version {version!r}, but this build reads version 1. "
+        f"Set 'version: 1', or remove the key if the file predates versioning."
+    )
 
 
 def _parse_namespaces(raw: object, source: str) -> dict[str, str]:

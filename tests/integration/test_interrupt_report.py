@@ -205,6 +205,10 @@ def test_a_stopped_run_writes_a_report_that_says_it_was_interrupted(
     )
     assert report["error"]["type"] == "RunInterruptedError"
     assert "interrupted" in report["error"]["message"], report["error"]
+    # A stopped run is still a report, and the report still declares its own shape. This
+    # is one of the four cases the format promises it for -- the others are success,
+    # failure and checkpoint mode, asserted in test_schema_version.py.
+    assert report["schema_version"] == 1, report.get("schema_version")
     assert "SIGINT" in err, f"the child did not say why it stopped: {err.strip()[-300:]}"
 
 
