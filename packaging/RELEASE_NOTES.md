@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 1.1.0 — the version in this build's file properties, and the one the package reports |
+| **Version** | 1.2.0 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -33,6 +33,58 @@ The window does the same things: **GigaXML**
   the packaged application is the same program.
 - The interface runs in English or Chinese, chosen in the settings panel — see
   [Languages](#languages).
+
+### What changed in 1.2.0
+
+**A run now writes a report about itself.** `extract` and `sample` write a
+machine-readable summary — `run-report.json` beside the output unless you point
+`--report` somewhere else. It is written on success **and** on failure, and it carries
+the things you would otherwise have to guess: the source's size and sha256, a fingerprint
+of the parsed config, the peak RSS, the elapsed time, the throughput, and
+`output_complete`, which is true only once the finished file is actually in place. So a
+caller can tell a partial output from a complete one without parsing a message.
+
+> **This is a behaviour change worth noticing**: a file called `run-report.json` now
+> appears next to your output where there was none before. A script that globs the output
+> directory will see it. Pass `--report` to put it elsewhere if that matters.
+
+**`status` has a third value.** It was `ok` or `failed`; it is now `ok`, `failed`, or
+`interrupted`. A run stopped by a signal — Ctrl-C, or `kill` on POSIX — used to leave no
+report at all, and now leaves one that says so, along with how far it had got. That is
+the one a summary is most likely to get wrong, since an interrupted run is neither a
+success nor a failure.
+
+**What "interrupted" cannot cover.** `SIGINT` is covered on every platform and `SIGTERM`
+on POSIX. **On Windows `TerminateProcess` is not, and cannot be** — the task manager, and
+anything else that kills without a signal, leaves the process no code to run. A stopped
+run then leaves its parts and its manifest and no report.
+
+**A document can be read from a pipe.** `-` as the source means stdin, in `extract`,
+`inspect` and `sample` alike, at the same bounded memory — the reader does not know or
+care which it has. The two options that verify a source by hashing it (`--resume` and
+`--checkpoint-every`) are refused with an explanation rather than misbehaving quietly,
+because a stream cannot be read twice.
+
+**Field types can come from an XSD.** Point the config at a schema with a `schema:` key
+and the declared types win: a column the schema types as `xs:decimal` keeps `19.50`
+where the text would have arrived as `19.5`. It needs the optional `gigaxml[xsd]` extra,
+and **a schema changes types, not the parse** — the streaming reader never consults it,
+and the package works with `xmlschema` absent.
+
+**The window has a job history and a resume manager.** Past runs with their source, row
+count, time, peak, output and outcome, newest first — read out of the run reports rather
+than remembered by the window, so a run started in a terminal shows up too. A stopped run
+can be carried into the Execute tab from there. The window still never parses your
+document; that is enforced by a test that walks the AST of every module under
+`src/gigaxml/gui/` and fails if a parser becomes reachable from one.
+
+**Three worked examples ship in the repository**, each runnable by copying the commands
+out of its README: Simple English Wikipedia's full 1.6 GB dump (560,605 articles, peak
+about 36 MiB), a generated ERP item master and order log with a worked example of money
+as `decimal`, and one day of PubMed's baseline export — that last one chosen because two
+of what it does with that document are limits, and both are written down rather than left
+to be hit: `date` is a date and not a date-time, and a record's repeating children do not
+become columns.
 
 ### What changed in 1.1.0
 
