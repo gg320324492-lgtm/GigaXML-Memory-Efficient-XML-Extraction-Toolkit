@@ -412,6 +412,10 @@ large sizes; for analysis of documents that fit, it is.**
 
 - No full XPath 3.1 — XPath is evaluated only inside a single record subtree.
 - No arbitrary byte-offset seek/resume — XML byte offsets are not a safe parse boundary.
+- No parallel or distributed extraction. The memory ceiling this project promises is a
+  property of a single run: N workers each bounded are N times the memory, and the number
+  a reader actually cares about — the total — stops being bounded. Parallelism here would
+  mean redefining the one claim worth making.
 - No AI/ML structure inference — confidence values are deterministic statistics.
 - No customer data — the datasets here are generated, or public dumps of Wikipedia and
   PubMed that anyone may fetch. Nothing that is not already published is used.
