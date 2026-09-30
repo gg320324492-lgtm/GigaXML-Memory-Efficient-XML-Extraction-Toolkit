@@ -411,6 +411,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The release notes are a file in the repository, and this job is the only place
+      # that needs them: `body_path` below reads from the workspace, so without this
+      # checkout the path does not exist and the release is published with an empty
+      # description -- silently, because the action reads a missing body as "no body
+      # wanted" and the job still goes green. Four releases (v0.9.0, v1.0.0, v1.1.0 and
+      # v1.2.0rc1) went out that way, and nothing caught it: the run was green, the
+      # assets were attached, the tag existed. Only reading the published page found it.
+      - uses: actions/checkout@v4
+
+      # The guard for the line above, because "the job went green" is not the claim
+      # being made here -- "the release page carries these notes" is. A missing or
+      # empty file is the exact condition that produced four blank release pages, and
+      # it has to stop the run instead of passing quietly into a defect nobody looks
+      # at. Cheap: it reads one file.
+      - name: Refuse to publish a release with no notes
+        run: |
+          set -euo pipefail
+          if [ ! -s packaging/RELEASE_NOTES.md ]; then
+            echo "::error::packaging/RELEASE_NOTES.md is missing or empty, so the release would go out with a blank description."
+            exit 1
+          fi
+          echo "release notes: $(wc -c < packaging/RELEASE_NOTES.md) bytes"
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
