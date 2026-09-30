@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 1.2.0 — the version in this build's file properties, and the one the package reports |
+| **Version** | 1.2.1 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -33,6 +33,24 @@ The window does the same things: **GigaXML**
   the packaged application is the same program.
 - The interface runs in English or Chinese, chosen in the settings panel — see
   [Languages](#languages).
+
+### What changed in 1.2.1
+
+**Nothing the program does.** This release exists to correct the package's own
+description, and it is worth saying plainly why that needs a release at all.
+
+The page on PyPI is the first thing most people read about this package, and it was
+describing a narrower tool than the one that ships: it called this a command line
+toolkit while the window had been part of the product since 1.0.0, it offered one link
+where the issue tracker, the release notes and the comparison report are all somewhere a
+reader looks for them, and its keywords stopped short of the formats this writes. A
+release's metadata cannot be edited after it is uploaded -- it can only be yanked -- so
+the description a reader sees is fixed at the moment of upload, and the only way to
+correct it is to upload again.
+
+So this is that upload. The version number moves because the artefact changed, not
+because the code did: `pip install gigaxml` gets the same program as 1.2.0, byte for byte
+in everything that executes, with a truer label on the outside.
 
 ### What changed in 1.2.0
 
