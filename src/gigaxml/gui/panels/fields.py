@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -179,6 +180,18 @@ class FieldConfigPanel(QWidget):
         self._export = QPushButton(tr("Save config…"), self)
         self._export.clicked.connect(self.choose_save_path)
         buttons.addWidget(self._export)
+
+        self._infer_types = QCheckBox(tr("Infer types from the document"), self)
+        self._infer_types.setChecked(True)
+        self._infer_types.setToolTip(
+            tr(
+                "Look at the values in the document and type each field as narrowly as it "
+                "can be — a column of numbers becomes a number rather than text. Untick it "
+                "and every field arrives as text, which is lossless and never wrong but "
+                "leaves the types for you to set."
+            )
+        )
+        buttons.addWidget(self._infer_types)
         layout.addLayout(buttons)
 
         self._message = QLabel("", self)
@@ -203,6 +216,47 @@ class FieldConfigPanel(QWidget):
 
     def set_record_path(self, path: str) -> None:
         self._record.setText(path)
+
+    def type_of(self, name: str) -> str | None:
+        """The type one field currently carries, or ``None`` if there is no such row."""
+        return next((row.type_name for row in self._rows if row.name == name), None)
+
+    def set_infer_types(self, infer: bool) -> None:
+        """Tick or untick type inference, as if the user had.
+
+        **Only affects the next "From candidate"**, not the fields already on screen: a
+        checkbox that silently retyped the table would leave the user looking at rows they
+        never asked for. Regenerating is the deliberate act that applies it.
+        """
+        self._infer_types.setChecked(infer)
+
+    def is_inferring_types(self) -> bool:
+        return self._infer_types.isChecked()
+
+    def set_field_type(self, name: str, type_name: str) -> bool:
+        """Retype one field, as if the user had chosen it from that row's dropdown.
+
+        Goes through the data rather than the widget, which is the panel's own rule --
+        :meth:`rows` is the truth and the table is a rendering of it -- so there is one way
+        to change a field and no way to change one that skips the rebuild.
+
+        **The override is kept.** A field the analysis typed for the user can be typed
+        differently afterwards, and the change survives the next thing that happens to the
+        panel. Inference that cannot be overridden is not a default; it is a decision made
+        on the user's behalf.
+
+        Returns whether a row of that name was there to retype, so a caller can tell a
+        silent no-op from a change it made.
+        """
+        if type_name not in FIELD_TYPE_NAMES:
+            return False
+        rows = [
+            row if row.name != name else replace(row, type_name=type_name) for row in self._rows
+        ]
+        if rows == self._rows:
+            return False
+        self.set_rows(rows)
+        return True
 
     def set_namespaces(self, namespaces: dict[str, str]) -> None:
         """The namespace map field paths are resolved against.
@@ -293,7 +347,12 @@ class FieldConfigPanel(QWidget):
         self._message.setText(tr("asking the CLI for a config…"))
         process = CliProcess(
             # 1-based, matching what `inspect` prints and what the candidate table shows.
-            generate_config_args(source, self._generated_config, index + 1),
+            generate_config_args(
+                source,
+                self._generated_config,
+                index + 1,
+                infer_types=self._infer_types.isChecked(),
+            ),
             on_finished=lambda run, gen=generation: self._note_generated_config(run, gen),
         )
         self._regenerate_process = process

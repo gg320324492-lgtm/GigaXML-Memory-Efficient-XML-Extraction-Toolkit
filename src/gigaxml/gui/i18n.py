@@ -401,6 +401,82 @@ ZH: dict[str, str] = {
         "这通常是配置而非文档的问题 — 路径不匹配，或配置从未声明某个命名空间前缀。"
         "字段面板会在编辑时即时检查这两者，所以在这里失败的配置往往是事后被改动过的。"
     ),
+    # -- ⑫ job history ------------------------------------------------------
+    "History": "历史",
+    "When": "时间",
+    "Records": "记录数",
+    "Time": "耗时",
+    "Peak": "峰值",
+    "Status": "状态",
+    "not recorded": "未记录",
+    "report unreadable": "报告不可读",
+    "stopped \u2014 no report": "已中断 \u2014 无报告",
+    "unknown \u2014 the report could not be read": "未知 \u2014 报告无法读取",
+    "unknown \u2014 the run wrote no report": "未知 \u2014 这次运行没写报告",
+    "the reason was not recorded": "没有记录原因",
+    "no runs recorded yet": "还没有任何运行记录",
+    "Resume this job": "续跑这次作业",
+    "Forget this directory": "不再记录此目录",
+    "Refresh": "刷新",
+    "Fill the execution panel with this run so it can be continued. Nothing is "
+    "extracted until you press Start there.": (
+        "把这次运行填进执行面板，以便继续。在那里按「开始」之前不会提取任何东西。"
+    ),
+    "Stop listing this directory. The reports on disk are left alone.": (
+        "不再列出这个目录。磁盘上的报告不会被删除。"
+    ),
+    "Read the reports again, including ones written since.": ("重新读取报告，包括此后新写入的。"),
+    "This report could not be read, so nothing about the run can be shown: {}": (
+        "这份报告无法读取，因此无法显示这次运行的任何信息：{}"
+    ),
+    "This run was stopped and wrote no report, so nothing is known: {}": (
+        "这次运行被中断，没有写下报告，因此无从得知：{}"
+    ),
+    "This run was stopped, so it wrote no report: there is no count, no time and no "
+    "peak to show. Its parts are in {}. To continue it, point the Execute panel at "
+    "that directory \u2014 it reads the checkpoint and tells you whether it can.": (
+        "这次运行被中断，因此没有写下报告：没有记录数、没有耗时、没有峰值可显示。"
+        "它的分片在 {}。要续跑它，请把执行面板指向那个目录 —— "
+        "那里会读取 checkpoint 并告诉你能不能续。"
+    ),
+    "This run did not finish. Continuing it re-reads the source from the beginning.": (
+        "这次运行没有完成。续跑会从头重新读取源文件。"
+    ),
+    "Directory: {}": "目录：{}",
+    "Output: {}": "输出：{}",
+    "Format: {}": "格式：{}",
+    "Record path: {}": "记录路径：{}",
+    "Rejected: {}": "已拒绝：{}",
+    "Failed with: {}": "失败类型：{}",
+    "Parts directory: {}": "分片目录：{}",
+    "Records consumed: {}": "已消费记录数：{}",
+    "Part size: {}": "每片记录数：{}",
+    "The whole source was consumed: {}": "源文件已全部消费：{}",
+    "Config fingerprint: {}": "配置指纹：{}",
+    "Report: {}": "报告：{}",
+    "That run did not stop partway, so there is nothing to continue.": (
+        "那次运行并不是半途停止的，所以没有可续跑的东西。"
+    ),
+    "The config that run used is not remembered, and the report records a "
+    "fingerprint rather than a path. Choose a config here to continue it.": (
+        "没有记住那次运行用的配置文件，而报告记录的是配置指纹而不是路径。"
+        "请在这里选择一个配置来续跑。"
+    ),
+    "The config that run used, {}, is no longer there.": ("那次运行用的配置文件 {} 已经不在了。"),
+    "That report does not say which document it read.": "那份报告没有说明它读的是哪个文档。",
+    "That report does not say where its parts are.": "那份报告没有说明它的分片在哪里。",
+    "Press Start to continue the run. Nothing has been extracted yet.": (
+        "按「开始」以续跑这次运行。目前还没有提取任何东西。"
+    ),
+    # -- type inference -----------------------------------------------------
+    "Infer types from the document": "从文档推断类型",
+    "Look at the values in the document and type each field as narrowly as it "
+    "can be \u2014 a column of numbers becomes a number rather than text. Untick "
+    "it and every field arrives as text, which is lossless and never wrong but "
+    "leaves the types for you to set.": (
+        "查看文档中的取值，把每个字段尽可能窄地定型 —— 一列数字会变成数字而不是文本。"
+        "取消勾选则所有字段都以文本到达：无损且不会出错，但类型要你自己设。"
+    ),
 }
 
 _TABLES: dict[str, dict[str, str]] = {"zh": ZH}

@@ -110,8 +110,11 @@ def test_the_window_opens_with_the_execution_panel(window: MainWindow) -> None:
     labels = [window.tabs().tabText(index) for index in range(window.tabs().count())]
 
     # The first five are the workflow: opened, analysed, configured, previewed, extracted.
-    # Batch and Settings sit after it because they are not steps in it -- Batch runs the
-    # same job over several documents, and Settings changes what the job defaults to.
+    # Batch, History and Settings sit after it because they are not steps in it -- Batch runs
+    # the same job over several documents, History looks backwards at runs that already
+    # happened, and Settings changes what the job defaults to. History is placed before
+    # Settings for the same reason Batch is before it: it is about the work, and Settings is
+    # about the application.
     assert labels == [
         "Document",
         "Structure",
@@ -119,6 +122,7 @@ def test_the_window_opens_with_the_execution_panel(window: MainWindow) -> None:
         "Preview",
         "Execute",
         "Batch",
+        "History",
         "Settings",
     ]
     assert isinstance(window.execution_panel(), ExecutionPanel)

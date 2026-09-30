@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from gigaxml.checkpoint import CheckpointError
+from gigaxml.errors import GigaXMLError
 from gigaxml.gui.error_advice import (
     KIND_CHECK_CONFIG,
     KIND_CHECKPOINT,
@@ -42,11 +43,13 @@ from gigaxml.gui.error_advice import (
     KIND_QUARANTINE,
 )
 from gigaxml.gui.i18n import set_language, tr
+from gigaxml.gui.job_history import HistoryEntry, JobHistory
 from gigaxml.gui.panels.batch import BatchPanel
 from gigaxml.gui.panels.document import DocumentPanel
 from gigaxml.gui.panels.errors import ErrorPanel
 from gigaxml.gui.panels.execution import ExecutionPanel
 from gigaxml.gui.panels.fields import FieldConfigPanel
+from gigaxml.gui.panels.history import HistoryPanel
 from gigaxml.gui.panels.preview import PreviewPanel
 from gigaxml.gui.panels.results import ResultPanel
 from gigaxml.gui.panels.settings import SettingsPanel
@@ -64,6 +67,10 @@ from gigaxml.gui.settings import Settings, SettingsStore
 #: The file the recent-documents list lives in, under the state directory.
 RECENT_FILES_NAME = "recent_files.json"
 SETTINGS_FILE_NAME = "settings.json"
+#: The file the job history keeps its list of directories in. **It holds no run records** --
+#: see :mod:`gigaxml.gui.job_history`; the runs themselves are the CLI's run reports, and
+#: this file only remembers where to look for them and which config each was run with.
+HISTORY_FILE_NAME = "job_history.json"
 
 
 def about_text() -> str:
@@ -129,6 +136,10 @@ class MainWindow(QMainWindow):
         # ⑨ 与 ⑧ 的持久化落点,和「最近文件」同一个目录、同一个注入方式.
         self._settings_store = SettingsStore(self._state_dir / SETTINGS_FILE_NAME)
         self._config_library = ConfigLibrary(self._state_dir)
+        # ⑫ The history is a pointer list, not a store of runs: it remembers which
+        # directories have been run into, and every number it shows is read back out of the
+        # report the CLI left there.
+        self._job_history = JobHistory(self._state_dir / HISTORY_FILE_NAME)
         # The language is read before anything is built, because every panel writes its
         # labels during construction and :mod:`gigaxml.gui.i18n` has no retranslate pass:
         # a window built first and translated after would come up in whichever language the
@@ -147,6 +158,7 @@ class MainWindow(QMainWindow):
         self._results = ResultPanel(self)
         self._errors = ErrorPanel(self)
         self._batch = BatchPanel(self)
+        self._history = HistoryPanel(self._job_history, self)
         self._settings = SettingsPanel(self._settings_store, self)
         # The two outcome panels live with the run rather than in tabs of their own: they
         # are about the thing that just happened in this tab, and both are empty until
@@ -164,6 +176,7 @@ class MainWindow(QMainWindow):
             (self._preview, tr("Preview")),
             (self._execute_tab, tr("Execute")),
             (self._batch, tr("Batch")),
+            (self._history, tr("History")),
             (self._settings, tr("Settings")),
         ):
             self._tabs.addTab(panel, title)
@@ -192,6 +205,7 @@ class MainWindow(QMainWindow):
         self._execution.start_failed.connect(self._on_run_start_failed)
         self._errors.action_requested.connect(self._on_error_action)
         self._results.path_copy_requested.connect(self._on_path_copy_requested)
+        self._history.resume_requested.connect(self._on_history_resume)
 
     def _on_run_start_failed(self, message: str, error_type: str) -> None:
         """A run that never started, because the config would not load.
@@ -226,6 +240,7 @@ class MainWindow(QMainWindow):
             return
         output = self._execution.output_path()
         checkpointing = self._execution.is_checkpointing()
+        self._remember_run(output, checkpointing=checkpointing)
         left = left_behind(output, checkpointing=checkpointing)
 
         if run.killed:
@@ -250,7 +265,18 @@ class MainWindow(QMainWindow):
         # the same output was reported as the WriterError again, advice and all, with this
         # run's ``.tmp`` sitting there unmentioned.
         if run.warnings:
-            failure = read_failure(output, checkpointing=checkpointing)
+            # Whether this run wrote that report is asked rather than assumed, because a run
+            # refused before it starts never gets to write one. ``validate_resume`` on a
+            # changed source, and a second run over a directory that already holds a
+            # checkpoint, both exit with words on stderr and nothing on disk -- and reading
+            # the report there anyway explains this failure with an earlier run's.
+            # Measured before this was asked: a checkpointed run that failed on a bad value,
+            # then a resume against a source changed since, showed the **first** run's
+            # ``FieldTypeError`` while the child had printed ``cannot resume`` with both
+            # source hashes immediately before it.
+            failure = None
+            if self._execution.report_was_rewritten():
+                failure = read_failure(output, checkpointing=checkpointing)
             if failure is None:
                 failure = failure_from_stderr(
                     list(run.warnings), run.exit_code, error_type=self._unreported_kind()
@@ -269,6 +295,55 @@ class MainWindow(QMainWindow):
         self._results.clear()
         self._errors.show_failure(
             failure_from_stderr(list(run.stderr_lines), run.exit_code), list(run.stderr_lines)
+        )
+
+    def _remember_run(self, output: Path, *, checkpointing: bool) -> None:
+        """Put this run's output directory into the history, and re-read the list.
+
+        **Noted on every ending, not only on success.** A run that failed or was stopped is
+        the one a user is most likely to come back to, and a history that listed successes
+        only would be a list of the runs nobody needs to resume. The report beside the
+        output is what says which of the two it was, and it is read from there on the next
+        refresh rather than recorded here.
+
+        The config path is remembered alongside, because ``--config`` is required and the
+        report carries only a fingerprint — see
+        :meth:`gigaxml.gui.job_history.JobHistory.note`.
+        """
+        try:
+            config = Path(self._execution.effective_config())
+        except GigaXMLError:
+            # A config that will not load is one of the endings this method is called from,
+            # and there is nothing to remember for it: no run happened, so there is no
+            # report in that directory and the row would be empty.
+            return
+        self._job_history.note(output, checkpointing=checkpointing, config=config)
+        self._history.refresh()
+
+    def _on_history_resume(self, entry: HistoryEntry) -> None:
+        """Carry a history row into the execution panel, and go there.
+
+        **The run is not started.** The panel is filled, the tab is brought forward and the
+        user presses Start. Continuing an earlier run is a decision, and ``test_gui_resume.py``
+        already pins down that this project refuses to make it on their behalf — a button
+        labelled "resume" that began extracting would be the same mistake wearing a
+        different widget.
+
+        The reason a row cannot be carried across is shown in the status line rather than
+        swallowed, because the two reasons a user can act on — a config that is not
+        remembered, and one that is no longer on disk — need different things from them.
+        """
+        problem = self._execution.apply_history_entry(
+            entry, config=self._job_history.config_for(entry.directory)
+        )
+        if problem is not None:
+            self._history.refresh()
+            self._tabs.setCurrentWidget(self._history)
+            self.statusBar().showMessage(problem, 10_000)
+            return
+        self._tabs.setCurrentWidget(self._execute_tab)
+        self.statusBar().showMessage(
+            tr("Press Start to continue the run. Nothing has been extracted yet."), 10_000
         )
 
     def _unreported_kind(self) -> str | None:
@@ -519,6 +594,12 @@ class MainWindow(QMainWindow):
 
     def result_panel(self) -> ResultPanel:
         return self._results
+
+    def history_panel(self) -> HistoryPanel:
+        return self._history
+
+    def job_history(self) -> JobHistory:
+        return self._job_history
 
     def tabs(self) -> QTabWidget:
         return self._tabs

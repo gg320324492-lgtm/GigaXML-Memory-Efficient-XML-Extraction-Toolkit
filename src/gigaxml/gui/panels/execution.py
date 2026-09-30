@@ -45,7 +45,9 @@ from gigaxml.config import ConfigError, load_config, parse_config
 from gigaxml.errors import GigaXMLError
 from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.i18n import tr
+from gigaxml.gui.job_history import HistoryEntry
 from gigaxml.gui.progress import Progress, format_eta, fraction_done
+from gigaxml.gui.run_report import report_path_for
 from gigaxml.gui.settings import FORMATS, ON_ERROR
 
 #: How often the UI thread drains what the reader thread collected. 50 ms is under the
@@ -117,6 +119,12 @@ class ExecutionPanel(QWidget):
         self._user_on_error: str | None = None
         #: The temporary config the last ``effective_config()`` wrote, if it wrote one.
         self._effective_config: Path | None = None
+        #: What the run report looked like when the run in flight was started, or ``None``
+        #: when it had not been written. See :meth:`report_was_rewritten`.
+        self._report_stamp: tuple[int, int] | None = None
+        #: The last progress drawn onto the widgets, and how many have been drawn.
+        self._last_progress: Progress | None = None
+        self._progress_updates = 0
 
         self._build()
 
@@ -511,6 +519,11 @@ class ExecutionPanel(QWidget):
         self._received = []
         self._run_result = None
         self._finished = False
+        self._last_progress = None
+        self._progress_updates = 0
+        # Taken here, after the early returns, because a run that never started has no
+        # report to attribute. See `report_was_rewritten` for what this is for.
+        self._report_stamp = self._report_identity()
         self._bar.setValue(0)
         self._bar.setRange(0, 100)
         self._counts.setText(tr("starting…"))
@@ -563,6 +576,59 @@ class ExecutionPanel(QWidget):
         """
         return self._checkpoint.value() > 0
 
+    def _report_identity(self) -> tuple[int, int] | None:
+        """``(mtime_ns, size)`` of the run report, or ``None`` when there is not one yet.
+
+        Both halves, because either alone is a weak fingerprint: a report rewritten within
+        the same clock tick keeps its size in the common case, and a rewritten report that
+        happens to be the same length would be indistinguishable on mtime alone at a coarse
+        resolution. Together they are what says a file was *touched*, which is the question
+        being asked.
+        """
+        report = report_path_for(self.output_path(), checkpointing=self.is_checkpointing())
+        try:
+            stat = report.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def last_progress(self) -> Progress | None:
+        """The last progress line the window was told, or ``None`` if none has arrived.
+
+        Exposed because "the progress bar moved" is otherwise not checkable: ``_received``
+        is drained and cleared on every pass, and the widgets are reached only by walking
+        Qt's object tree. A bar that jumps from zero to full when the work is already done
+        satisfies every other reading of "it shows progress", so the one that matters --
+        that it moved *during* the run -- needs a value a test can ask for.
+        """
+        return self._last_progress
+
+    def progress_updates(self) -> int:
+        """How many progress lines have been drawn onto the widgets this session.
+
+        Not the number of lines the CLI emitted: only what reached a widget counts, because
+        the gap between the two is exactly where a run would appear to have hung.
+        """
+        return self._progress_updates
+
+    def report_was_rewritten(self) -> bool:
+        """Whether the run that just finished wrote the report sitting beside the output.
+
+        **``True`` is the common case and ``False`` is the one that used to be mishandled.**
+        The CLI writes its summary on the way out, so any run that reached the end replaced
+        whatever was there. But a run refused before it starts — ``validate_resume`` on a
+        source that has changed, a second run over a directory that already holds a
+        checkpoint — exits without writing anything, and what is on disk then belongs to an
+        *earlier* run.
+
+        Reading it anyway is how a window ends up explaining one failure with another's
+        words. Measured, through the panel: a checkpointed run that failed on a bad value,
+        then a resume against a source that had since changed, reported the **first** run's
+        ``FieldTypeError`` — while the child had printed ``cannot resume`` with both source
+        hashes on stderr, in as many words, immediately before.
+        """
+        return self._report_stamp != self._report_identity()
+
     # -- resuming ----------------------------------------------------------
 
     def set_resume(self, resume: bool) -> None:
@@ -603,6 +669,60 @@ class ExecutionPanel(QWidget):
             # here -- pressing Start says what is wrong with the directory.
             return None
         return None if checkpoint.complete else checkpoint
+
+    def apply_history_entry(self, entry: HistoryEntry, *, config: Path | None) -> str | None:
+        """Fill the controls from a row of the history, or say why it cannot be done.
+
+        **Returns ``None`` when the panel is ready, and a sentence when it is not.** The
+        reasons are the ones a user can act on, and none of them is worked around:
+
+        * not a resumable run — this one finished, or never checkpointed, so there is
+          nothing to continue;
+        * no config remembered — ``--config`` is required by the CLI, and the report records
+          a *fingerprint* of the parsed config rather than the path it was read from, so the
+          path has to have been remembered when the run happened. It is not guessed: a
+          config chosen by resemblance is a run that is not the run being continued;
+        * the config file is gone — remembered, and no longer there.
+
+        **Nothing here checks that the source or the config still matches the checkpoint.**
+        That is ``validate_resume``'s job and it is better at it: it hashes both sides and
+        prints what differs. A panel that pre-checked would either duplicate that or make a
+        promise it cannot keep, and the refusal already arrives with its own advice — see
+        ``test_gui_resume.py::test_a_changed_source_is_shown_with_both_values``.
+
+        The part size is recovered from the report's list of parts rather than remembered
+        separately, for the reason :class:`gigaxml.gui.job_history.HistoryEntry` gives.
+        """
+        if not entry.can_resume:
+            return tr("That run did not stop partway, so there is nothing to continue.")
+        if config is None:
+            return tr(
+                "The config that run used is not remembered, and the report records a "
+                "fingerprint rather than a path. Choose a config here to continue it."
+            )
+        if not config.is_file():
+            return tr("The config that run used, {}, is no longer there.").format(config)
+        if entry.source is None:
+            return tr("That report does not say which document it read.")
+
+        output = entry.checkpoint_directory or entry.output
+        if output is None:
+            return tr("That report does not say where its parts are.")
+
+        self._source.setText(str(entry.source))
+        self._config.setText(str(config))
+        self._output.setText(str(output))
+        if entry.checkpoint_every is not None:
+            self._checkpoint.setValue(entry.checkpoint_every)
+        if entry.output_format is not None:
+            index = self._format.findData(entry.output_format)
+            if index >= 0:
+                self._format.setCurrentIndex(index)
+        # Ticked, and then the notice is recomputed rather than assumed: whether the parts on
+        # disk are still intact is the manifest's answer, and the notice is what says so.
+        self._resume.setChecked(True)
+        self._note_resumable()
+        return None
 
     def _note_resumable(self) -> None:
         """Say there is an unfinished run here, and how far it got.
@@ -835,6 +955,10 @@ class ExecutionPanel(QWidget):
             self.finished.emit()
 
     def _show(self, progress: Progress) -> None:
+        # Kept after the widgets are set, so a caller reading these is looking at the same
+        # call that drew the bar. See `progress_updates` for why they exist at all.
+        self._last_progress = progress
+        self._progress_updates += 1
         fraction = fraction_done(progress.records, self._total)
         if fraction is None:
             # No denominator, so no bar. A bar that fills at a guessed speed is a lie

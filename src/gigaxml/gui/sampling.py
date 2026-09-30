@@ -112,14 +112,28 @@ def generate_config_args(
     source: pathlib.Path | str,
     destination: pathlib.Path | str,
     candidate: int,
+    *,
+    infer_types: bool = False,
 ) -> list[str]:
     """The command line that turns a candidate into a runnable config.
 
     ``--candidate`` is 1-based, matching what ``inspect`` prints and what the candidate
     table shows. Used by the structure panel so its example values come from the same
     sampling mechanism the preview uses.
+
+    **``infer_types`` is off by default, which is the CLI's default and not an accident
+    there**: asked from a terminal, ``--generate-config`` is described as "a STARTING POINT,
+    not a conclusion", so every field arrives as ``string`` because ``string`` is lossless
+    and narrowing a number from sampled text can go wrong.
+
+    The field panel turns it on, because the two callers want different things. The
+    structure panel wants *example values*, and a type would not change a single one of
+    them. The field panel wants a field table, and a table where every row says ``string``
+    is a field builder that has not typed anything -- which is how the "类型" step of the
+    workflow came out of the window doing nothing. The choice is the user's, so the panel
+    offers it rather than deciding it here; see ``FieldConfigPanel.set_infer_types``.
     """
-    return [
+    args = [
         "inspect",
         str(source),
         "--generate-config",
@@ -127,6 +141,9 @@ def generate_config_args(
         "--candidate",
         str(candidate),
     ]
+    if infer_types:
+        args.append("--infer-types")
+    return args
 
 
 @dataclass(frozen=True)
