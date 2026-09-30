@@ -1,0 +1,30 @@
+# exit_code=0 stream=stdout
+gigaxml inspect: <TMP>/src.xml
+  input            0.00 MiB
+  elements seen    21
+  max depth        4 (limit 32)
+  distinct paths   12 (limit 10,000)
+
+record candidates (3)
+  1. /catalog/products/product
+     score 1.000  3 occurrences; sibling structure consistency 100.0%; repeat term 1.000 (relative to the most frequent path in this document)
+  2. /catalog/products/product/price   [nested inside #1]
+     score 1.000  3 occurrences; sibling structure consistency 100.0%; repeat term 1.000 (relative to the most frequent path in this document)
+  3. /catalog/orders/order
+     score 0.779  2 occurrences; sibling structure consistency 100.0%; repeat term 0.631 (relative to the most frequent path in this document)
+  candidates marked [nested inside] are repeating structures *within* a higher-ranked candidate, not competing records
+
+paths (12), most frequent first
+       count  depth  kids  path
+           3      3     2  /catalog/products/product
+           3      4     0  /catalog/products/product/name
+           3      4     0  /catalog/products/product/price
+           2      3     2  /catalog/orders/order
+           2      4     0  /catalog/orders/order/product-ref
+           2      4     0  /catalog/orders/order/qty
+           1      1     3  /catalog
+           1      2     2  /catalog/metadata
+           1      3     0  /catalog/metadata/generated
+           1      3     0  /catalog/metadata/records
+           1      2     1  /catalog/orders
+           1      2     1  /catalog/products

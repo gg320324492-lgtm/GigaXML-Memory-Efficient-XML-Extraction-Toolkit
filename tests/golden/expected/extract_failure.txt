@@ -1,0 +1,2 @@
+# exit_code=1 stream=stderr
+error: record_path '/nope/nothing' matched 0 elements in <TMP>/src.xml (resolved chain: ['nope', 'nothing'], mode: root-anchored). The full ancestor chain must match, not just the final segment; a path starting with '/' must match from the document root, and '//' means any ancestors. If the document uses a namespace, pass `namespaces=` (use '' as the key for a default namespace).

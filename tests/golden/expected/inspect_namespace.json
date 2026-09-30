@@ -1,0 +1,382 @@
+# exit_code=0 stream=stdout
+{
+  "source": "<TMP>/ns.xml",
+  "input_mb": 0.001,
+  "elements_seen": 32,
+  "depth": {
+    "seen": 5,
+    "limit": 32,
+    "truncated": false
+  },
+  "path_table": {
+    "tracked": 18,
+    "limit": 10000,
+    "truncated": false,
+    "untracked_occurrences": 0,
+    "untracked_examples": []
+  },
+  "namespaces": {
+    "": "urn:example:catalog"
+  },
+  "shadowed_prefixes": [],
+  "unmapped_namespaces": [],
+  "value_sampling": {
+    "truncated": false
+  },
+  "candidates": [
+    {
+      "path": "/catalog/orders/order",
+      "depth": 3,
+      "score": 0.7,
+      "count": 2,
+      "repeat_score": 0.5,
+      "shape_consistency": 1.0,
+      "attribute_names": [
+        "@id"
+      ],
+      "child_tags": [
+        "product-ref",
+        "qty"
+      ],
+      "namespaces": {
+        "": "urn:example:catalog"
+      },
+      "missing_namespaces": [],
+      "evidence": "2 occurrences; sibling structure consistency 100.0%; repeat term 0.500 (relative to the most frequent path in this document)",
+      "nested_inside": null
+    },
+    {
+      "path": "/catalog/products/product",
+      "depth": 3,
+      "score": 0.7,
+      "count": 2,
+      "repeat_score": 0.5,
+      "shape_consistency": 1.0,
+      "attribute_names": [
+        "@id",
+        "@type"
+      ],
+      "child_tags": [
+        "category",
+        "manufacturer",
+        "name",
+        "price",
+        "tags"
+      ],
+      "namespaces": {
+        "": "urn:example:catalog"
+      },
+      "missing_namespaces": [],
+      "evidence": "2 occurrences; sibling structure consistency 100.0%; repeat term 0.500 (relative to the most frequent path in this document)",
+      "nested_inside": null
+    },
+    {
+      "path": "/catalog/products/product/manufacturer",
+      "depth": 4,
+      "score": 0.7,
+      "count": 2,
+      "repeat_score": 0.5,
+      "shape_consistency": 1.0,
+      "attribute_names": [],
+      "child_tags": [
+        "country",
+        "name"
+      ],
+      "namespaces": {
+        "": "urn:example:catalog"
+      },
+      "missing_namespaces": [],
+      "evidence": "2 occurrences; sibling structure consistency 100.0%; repeat term 0.500 (relative to the most frequent path in this document)",
+      "nested_inside": "/catalog/products/product"
+    },
+    {
+      "path": "/catalog/products/product/price",
+      "depth": 4,
+      "score": 0.7,
+      "count": 2,
+      "repeat_score": 0.5,
+      "shape_consistency": 1.0,
+      "attribute_names": [
+        "@currency"
+      ],
+      "child_tags": [],
+      "namespaces": {
+        "": "urn:example:catalog"
+      },
+      "missing_namespaces": [],
+      "evidence": "2 occurrences; sibling structure consistency 100.0%; repeat term 0.500 (relative to the most frequent path in this document)",
+      "nested_inside": "/catalog/products/product"
+    },
+    {
+      "path": "/catalog/products/product/tags",
+      "depth": 4,
+      "score": 0.7,
+      "count": 2,
+      "repeat_score": 0.5,
+      "shape_consistency": 1.0,
+      "attribute_names": [],
+      "child_tags": [
+        "tag"
+      ],
+      "namespaces": {
+        "": "urn:example:catalog"
+      },
+      "missing_namespaces": [],
+      "evidence": "2 occurrences; sibling structure consistency 100.0%; repeat term 0.500 (relative to the most frequent path in this document)",
+      "nested_inside": "/catalog/products/product"
+    }
+  ],
+  "paths": [
+    {
+      "path": "/catalog/products/product/tags/tag",
+      "depth": 5,
+      "count": 4,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 4,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/orders/order",
+      "depth": 3,
+      "count": 2,
+      "attribute_names": [
+        "@id"
+      ],
+      "child_tags": [
+        "product-ref",
+        "qty"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/orders/order/product-ref",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/orders/order/qty",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product",
+      "depth": 3,
+      "count": 2,
+      "attribute_names": [
+        "@id",
+        "@type"
+      ],
+      "child_tags": [
+        "category",
+        "manufacturer",
+        "name",
+        "price",
+        "tags"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/category",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/manufacturer",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [
+        "country",
+        "name"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/manufacturer/country",
+      "depth": 5,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/manufacturer/name",
+      "depth": 5,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/name",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/price",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [
+        "@currency"
+      ],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products/product/tags",
+      "depth": 4,
+      "count": 2,
+      "attribute_names": [],
+      "child_tags": [
+        "tag"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 2,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog",
+      "depth": 1,
+      "count": 1,
+      "attribute_names": [
+        "@generated-by",
+        "@seed"
+      ],
+      "child_tags": [
+        "metadata",
+        "orders",
+        "products"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 1,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/metadata",
+      "depth": 2,
+      "count": 1,
+      "attribute_names": [],
+      "child_tags": [
+        "generated",
+        "records"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 1,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/metadata/generated",
+      "depth": 3,
+      "count": 1,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 1,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/metadata/records",
+      "depth": 3,
+      "count": 1,
+      "attribute_names": [],
+      "child_tags": [],
+      "has_children": false,
+      "dominant_shape_count": 1,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/orders",
+      "depth": 2,
+      "count": 1,
+      "attribute_names": [],
+      "child_tags": [
+        "order"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 1,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    },
+    {
+      "path": "/catalog/products",
+      "depth": 2,
+      "count": 1,
+      "attribute_names": [],
+      "child_tags": [
+        "product"
+      ],
+      "has_children": true,
+      "dominant_shape_count": 1,
+      "distinct_shapes": 1,
+      "shapes_truncated": false,
+      "shape_consistency": 1.0
+    }
+  ]
+}

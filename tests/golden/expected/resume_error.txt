@@ -1,0 +1,2 @@
+# exit_code=1 stream=stderr
+error: the checkpoint at '<TMP>/parts/checkpoint.json' has format version 99, but this build writes version 1
