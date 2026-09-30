@@ -78,8 +78,11 @@ pip install "gigaxml[gui]"    # and the desktop application (pulls PySide6: 640 
 ```
 
 Parquet output needs the `parquet` extra (`pip install "gigaxml[parquet]"`); CSV and JSONL
-do not. The desktop application is also packaged per platform — an unsigned Windows
-build, an Apple Silicon `.dmg` and an x86_64 AppImage — under
+do not. Reading field types from an XSD needs the `xsd` extra
+(`pip install "gigaxml[xsd]"`), which is also optional — the tool works without it and
+never consults a schema while parsing. The desktop application is also packaged per
+platform — an unsigned Windows build, an Apple Silicon `.dmg` and an x86_64 AppImage —
+under
 [Releases](https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases);
 its release notes say what each build runs on and what the unsigned warnings mean.
 
@@ -133,6 +136,152 @@ gigaxml sample big.xml -c config.yaml -n 20 -o first20.jsonl
 > recordings.** The text is what the tools actually printed and the timings are the
 > measured ones, but the frames are drawn rather than captured — this machine's sandbox
 > does not permit screen capture. Each frame carries the same note.
+
+## The run report
+
+Every run writes a machine-readable summary of itself. It goes to `run-report.json` beside
+`--output` unless you name somewhere else with `--report`, and it is written **on success
+and on failure**, because the exit code tells a shell script whether the data is usable
+while the report tells everything else.
+
+```bash
+gigaxml extract catalog.xml -c config.yaml -o out.csv --report run.json
+```
+
+What is in it is the part worth knowing: `input_identity` (the source's size and sha256),
+`config_hash` (a digest of the *parsed* config, not its bytes, so a comment does not change
+it), `peak_rss_mb`, `elapsed_seconds`, `throughput_records_per_s`, `records`, and
+`output_complete` — which is true only once the finished file is actually in place, so a
+caller can tell a partial output from a complete one without parsing a message.
+
+`status` has three values, and the third is the one that is easy to get wrong:
+
+| | means |
+|---|---|
+| `ok` | finished, and the output is in place |
+| `failed` | stopped on an error — a bad value, an unwritable target, a config that will not load |
+| `interrupted` | stopped by a signal — Ctrl-C, or `kill` on POSIX |
+
+A measurement that could not be taken is `null` rather than zero. Reading a document from
+a pipe leaves `input_identity: null` with an `input_identity_error` beside it saying why,
+because a stream has no length to stat and no content to hash, and a `0.00` there would
+claim the document was empty.
+
+**What "interrupted" covers, and what it cannot.** A stop signal arrives as an exception
+the ordinary error path already handles, so the report is written on the way out.
+`SIGINT` — Ctrl-C — is covered on every platform. `SIGTERM` is covered on POSIX. **On
+Windows `TerminateProcess` is not, and cannot be**: the task manager, and anything else
+that kills without a signal, leaves the process no code to run, so no handler in any
+language would fire. A stopped run then leaves its parts and its manifest and no report.
+The failure path in the middle is not a limitation so much as a reminder that a report is
+written by a process that gets to finish writing it.
+
+## Reading from a pipe
+
+`-` as the source means **stdin**, in all three commands:
+
+```bash
+curl -s https://example.org/dump.xml.gz | gunzip | gigaxml extract - -c config.yaml -o out.csv
+cat catalog.xml | gigaxml inspect -
+```
+
+A stream is parsed exactly as a file is, at the same bounded memory — the reader does not
+know or care which it has. What a stream cannot do is be verified, so the two options that
+work by hashing the source are refused with an explanation rather than silently
+misbehaving:
+
+```
+$ gigaxml extract - --checkpoint-every 1000 ...
+error: --checkpoint-every cannot be used with standard input: a checkpoint records the
+source's sha256 so a resume can check it, and a stream cannot be read twice to compute
+one. Save the document to a file, or drop the flag.
+```
+
+## Types from an XSD
+
+If the document has a schema, the config can point at it and the declared types win:
+
+```yaml
+schema: catalog.xsd
+record: /catalog/product
+fields:
+  id:    {path: '@id'}
+  name:  {path: name}
+  price: {path: price}          # xs:decimal in the schema
+```
+
+```bash
+pip install "gigaxml[xsd]"      # pulls xmlschema; the extra is optional
+```
+
+The same document, same records, with and without the schema — and the difference is
+exactly the field the schema says is money:
+
+```
+# without the schema, `price` is text:      9.99, 19.5
+# with it, `xs:decimal` keeps the value:    9.99, 19.50
+```
+
+**A schema changes types, not the parse.** The streaming reader never consults it, and the
+package works with `xmlschema` absent — there is a test that hides the module and imports
+the whole product to keep that true. It is applied once, when the config is loaded, and
+what it produces is a config with the types filled in; that config is also what the run
+report's `config_hash` covers, so a run whose schema changed has a different fingerprint
+from one that did not.
+
+A schema that will not compile gives you the compiler's own answer — tag, position and
+path — rather than a traceback:
+
+```
+error: 'catalog.xsd' is not a usable XSD: Unexpected child with tag 'xs:sequence' at
+position 2: ... Path: /xs:schema/xs:element/xs:complexType/xs:sequence/...
+```
+
+## The desktop application
+
+```bash
+pip install "gigaxml[gui]"     # PySide6; see Install for the installed size
+gigaxml-gui
+```
+
+Eight steps, in the order they are done, each one usable without touching the command line:
+open a document, **Analyse** it for record candidates, build the field list from a
+candidate, **Preview** a sample, retype any field, **Export**, watch it run, and continue a
+run that stopped. Prebuilt binaries are under
+[Releases](https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases).
+
+**The window never parses your document.** It starts the CLI as a child process and reads
+what the CLI prints, so opening the application does not undo the memory claim — which is
+the whole point of having one. That is enforced rather than promised:
+`tests/integration/test_gui_no_parsing.py` walks the AST of every module under
+`src/gigaxml/gui/` and fails if a parser is reachable from one, checking the tree rather
+than the text so that a docstring explaining the rule does not trip it. The same file
+carries the mutation that must fail, and a second test asserts the window still reaches
+`subprocess.Popen` — "never parses" is otherwise satisfied by a window that never does
+anything.
+
+**Job History and Resume Manager** are the window's view of the run reports: past runs with
+their source, row count, time, peak, output and outcome, newest first, and a button that
+carries a stopped run into the Execute tab. The numbers are read out of the reports rather
+than kept by the window, so a run started in a terminal shows up in the list too. Pressing
+Resume fills the panel and stops there — the run is started by pressing Start, because
+continuing somebody's earlier work is a decision and this project does not make it on
+their behalf.
+
+## Examples
+
+[`examples/`](examples/) has three documents that were not made for this tool, each runnable
+by copying the commands out of its README:
+
+* **[Wikipedia](examples/wikipedia/)** — the full Simple English article dump, 1.6 GB.
+  560,605 articles, peak about 36 MiB. Run it to see the memory claim on a document
+  nobody designed for this tool.
+* **[ERP](examples/erp/)** — a generated item master and order log in one file, with a
+  worked example of money as `decimal` against what `float` does to the same values. The
+  row counts are exact because `--seed` fixes the data.
+* **[PubMed](examples/pubmed/)** — one day of the baseline export. Chosen because two of
+  what it does with that document are **limits**, and both are written down there: a date
+  the tool will not reassemble, and repeated children that do not become columns.
 
 ## Benchmarks
 
@@ -264,8 +413,10 @@ large sizes; for analysis of documents that fit, it is.**
 - No full XPath 3.1 — XPath is evaluated only inside a single record subtree.
 - No arbitrary byte-offset seek/resume — XML byte offsets are not a safe parse boundary.
 - No AI/ML structure inference — confidence values are deterministic statistics.
-- No real customer data — everything runs on synthetic, reproducible datasets.
-- No fabricated benchmarks — every performance claim comes from a runnable script.
+- No customer data — the datasets here are generated, or public dumps of Wikipedia and
+  PubMed that anyone may fetch. Nothing that is not already published is used.
+- No fabricated benchmarks — every performance claim comes from a runnable script, and the
+  three in `examples/` come with the number to check them against.
 
 ## Known limitations
 
@@ -290,7 +441,24 @@ large sizes; for analysis of documents that fit, it is.**
   concatenated text, so `<tags><tag>a</tag><tag>b</tag></tags>` becomes `ab`. Nested
   paths (`manufacturer/name`) have to be written by hand, as the generated comments say.
 - **Types are inferred from a sample**, and `decimal` is never inferred. If a field is
-  money, set `type: decimal` yourself — `float` cannot represent 49.90 exactly.
+  money, set `type: decimal` yourself — `float` cannot represent 49.90 exactly. An XSD
+  will do it for you if the document has one, and it can declare `xs:decimal` where a
+  sample cannot tell 49.90 from 49.9.
+- **`date` is a date, not a date-time.** It is `datetime.date.fromisoformat`, so
+  `2026-05-18` converts and `2026-05-18T12:42:53Z` does not — there is no type that spans
+  both, and a field carrying a timestamp is carried across as text. A document that stores
+  a date as three elements (`2026`, `01`, `28`) comes out as three columns: assembling them
+  is a decision about what the data means, and the padding is a choice (`01` versus `Jan`)
+  the document does not settle. `examples/pubmed/` has this in full.
+- **Records are rows, so a record's repeating children are not columns.** Several `<Author>`
+  under one `<PubmedArticle>` is not something this tool flattens, and it does not invent a
+  column for it. The way to reach them is to make the child the record — a field path is
+  relative to the record and can walk back outward — and `gigaxml inspect` is what shows
+  the candidates for that decision. `examples/pubmed/` works it through.
+- **There is no join.** Two tables extracted from one document are two files, and
+  relating them is the reader's. `examples/erp/` shows a three-line join in ordinary
+  Python, including the count of orders that matched nothing, which is the number worth
+  checking.
 - **Parsing limits are not configurable.** Entities are never expanded, the network is
   never touched, and no DTD is loaded; documents nested deeper than 256 levels, carrying a
   single text node over about 10 MB, or amplified by entities are refused rather than
