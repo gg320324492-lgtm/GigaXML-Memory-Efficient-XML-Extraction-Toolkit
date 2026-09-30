@@ -282,7 +282,14 @@ def require_intact_parts(
 #: separators and no traversal. Every other spelling -- ``../``, a drive letter, an
 #: absolute path, a plain other filename -- is rejected rather than joined onto the
 #: parts directory, because a manifest chooses that name and a manifest is not ours.
-PART_NAME_PATTERN: Final = re.compile(r"^part-\d{5}\.(?:csv|jsonl|parquet)$")
+#:
+#: **Five digits or more**, because ``part_name`` pads to five and does not cap there:
+#: ``f"part-{index:05d}"`` gives ``part-100000.csv`` at the hundred-thousandth part, and a
+#: reader that only took five would refuse a file this tool had just written. Exactly five
+#: would be the same bug facing the other way -- ``part-0000.csv`` is a name no run
+#: produces, so the width is a floor and not a ceiling. See
+#: ``tests/security/test_checkpoint_manifest.py``, which asserts both ends of that.
+PART_NAME_PATTERN: Final = re.compile(r"^part-\d{5,}\.(?:csv|jsonl|parquet)$")
 
 #: A sha256 as :meth:`hashlib.sha256().hexdigest` writes one: 64 **lowercase** hex
 #: digits. The case is part of the check rather than folded away, because the value
@@ -385,7 +392,8 @@ def _check_parts(raw: dict[str, object], target: Path) -> tuple[PartRecord, ...]
             raise _untrusted(
                 target,
                 f"'parts[{index}].name' must be a part filename of the form "
-                f"part-00000.csv, part-00000.jsonl or part-00000.parquet, got {name!r}",
+                f"part-00000.csv -- 'part-' then at least five digits then .csv, "
+                f".jsonl or .parquet -- got {name!r}",
             )
         rows = _integer(part, "rows", target)
         records.append(PartRecord(name=name, rows=rows))

@@ -25,9 +25,11 @@ import pytest
 
 from gigaxml.checkpoint import (
     CHECKPOINT_VERSION,
+    PART_NAME_PATTERN,
     Checkpoint,
     PartRecord,
     config_identity,
+    part_name,
     read_checkpoint,
     source_identity,
     write_checkpoint,
@@ -107,19 +109,51 @@ def test_a_manifest_this_tool_wrote_reads_back_exactly(tmp_path: Path) -> None:
 def test_a_part_name_this_tool_would_produce_is_accepted(tmp_path: Path) -> None:
     """Every index and extension ``part_name`` can emit still reads back.
 
-    The pattern allows ``part-NNNNN`` for a five-digit index, so all of them, plus the
-    three formats a part can be written in. A check that only allowed the first index
-    would pass the round trip above and fail a run with more than one part.
+    The indexes run past the padding: ``part_name`` pads to five but does not stop
+    there, so ``part-100000`` and beyond are names a long run writes for real. Reading
+    the manifest back through the reader is what makes this end-to-end -- a pattern that
+    agreed with itself but not with the writer would pass a regex-only test and fail a
+    resumed run.
     """
     for name in (
         "part-00000.csv",
         "part-00001.jsonl",
         "part-12345.parquet",
         "part-99999.parquet",
+        "part-100000.csv",
+        "part-1000000.parquet",
     ):
         path = write_manifest(tmp_path, parts=[{"name": name, "rows": 1}])
 
         assert read_checkpoint(path).parts[0].name == name
+
+
+@pytest.mark.parametrize("extension", ["csv", "jsonl", "parquet"])
+def test_every_name_part_name_generates_passes_the_pattern_that_checks_it(
+    extension: str,
+) -> None:
+    """The reader must accept what the writer produces -- checked against the generator.
+
+    **This is the invariant, and it is the test M2 did not have.** A pattern written
+    from a glance at ``f"part-{index:05d}"`` reads as "five digits", but ``05`` is a
+    *minimum* width: the hundred-thousandth part is ``part-100000`` and a reader
+    insisting on five would refuse a file this tool had just written. Asserting against
+    :func:`part_name` itself rather than against a list of literal strings is what
+    makes that class of mistake impossible to reintroduce -- a literal list only says
+    what someone remembered to type.
+
+    The other end of the same rope: the floor still holds. ``part-0000.csv`` is below
+    what the generator emits at any index, and the pattern must refuse it -- see the
+    traversal cases below, which are unchanged.
+    """
+    for index in (0, 1, 99999, 100000, 1000000, 10000000):
+        name = part_name(index, extension)
+
+        assert PART_NAME_PATTERN.fullmatch(name), (
+            f"part_name({index}, {extension!r}) produced {name!r}, which "
+            f"read_checkpoint would refuse as untrustworthy -- the reader would reject "
+            f"a manifest this tool had just written"
+        )
 
 
 def test_zero_counts_and_an_incomplete_run_are_accepted(tmp_path: Path) -> None:
@@ -271,7 +305,6 @@ def test_a_part_entry_of_the_wrong_shape_is_refused(tmp_path: Path) -> None:
         "/etc/hosts",
         "C:\\Windows\\win.ini",
         "part-0000.csv",
-        "part-000000.csv",
         "part-00000.parqet",
         "part-00000.csv.bak",
         "part-00000",
@@ -288,6 +321,12 @@ def test_a_part_name_that_is_not_a_part_filename_is_refused(tmp_path: Path, bad_
     Every spelling above would otherwise be a way out of the directory: separators, a
     drive, an absolute path, or simply a file that is not a part. The check happens
     while the manifest is read, so no path is ever built from the rejected value.
+
+    ★ **Widening the digit count changes nothing here.** ``part-000000.csv`` was in this
+    list until it turned out to be a name ``part_name`` emits for real; what makes the
+    rest refuse-worthy is the *shape* -- separators, an absolute path, an unknown
+    extension, a missing one -- and the shape is not what was loosened. ``part-0000.csv``
+    stays: four digits is below anything the generator ever writes.
     """
     path = write_manifest(tmp_path, parts=[{"name": bad_name, "rows": 5}])
 

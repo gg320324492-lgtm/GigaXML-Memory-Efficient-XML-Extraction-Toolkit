@@ -130,7 +130,7 @@ DEFUSE = "always"  # 不解析 XML 实体
 | `complete` | 恰好是 JSON 布尔（`"false"`、`1`、`0` 全拒） |
 | `config` / `source.sha256` | 64 位**小写**十六进制（与 `hexdigest()` 实际写入一致） |
 | `source` | 对象，且 `path` / `size` / `sha256` 三项齐全 |
-| `parts[].name` | `part-NNNNN.(csv\|jsonl\|parquet)` —— 即 `part_name()` 唯一会生成的形状；`../`、盘符、绝对路径、其他一切文件名全拒 |
+| `parts[].name` | `part-` + **至少五位**数字 + `.(csv\|jsonl\|parquet)` —— 即 `part_name()` 会生成的形状（`f"part-{index:05d}"` 的 `05` 是**最小**宽度，不是上限：第 10 万个 part 起是 6 位，**产品必须收得下自己写出的名字**）；`../`、盘符、绝对路径、其他一切文件名全拒 |
 
 ★ **part 名在 manifest 被读取时就校验**，所以一个可疑名字不会被拼进路径、
 更不会被打开。**这是读面**：写入侧的名字始终由 `part_name(index, extension)`
