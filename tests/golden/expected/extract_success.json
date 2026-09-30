@@ -1,0 +1,13 @@
+# exit_code=0 stream=stdout
+{
+  "source": "<TMP>/src.xml",
+  "output": "<TMP>/out.csv",
+  "format": "csv",
+  "record_path": "/catalog/products/product",
+  "fields": [
+    "product_id",
+    "name",
+    "price"
+  ],
+  "rows": 3
+}

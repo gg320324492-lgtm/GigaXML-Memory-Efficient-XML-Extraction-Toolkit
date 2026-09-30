@@ -1,0 +1,16 @@
+# The golden expectations are records of bytes, not source files.
+#
+# Each file under tests/golden/expected/ holds exactly what the tool produced: a
+# sample artefact is CRLF because that is what the csv module writes on every
+# platform, and a recorded stream is LF because that is what the normalisation
+# produces. Both are the point of the comparison.
+#
+# Git's line-ending conversion cannot tell those apart from an ordinary text file.
+# With core.autocrlf on, checking out turns the LF streams into CRLF and a fresh
+# clone on another machine reports every stream case as a mismatch; storing a
+# sample artefact turns its CRLF into LF, and a fresh clone on Linux compares LF
+# against the CRLF the tool actually wrote. Neither failure has anything to do
+# with the tool.
+#
+# So these files are stored and checked out byte for byte, on every platform.
+tests/golden/expected/** -text
