@@ -433,11 +433,24 @@ ZH: dict[str, str] = {
         "这次运行被中断，没有写下报告，因此无从得知：{}"
     ),
     "This run was stopped, so it wrote no report: there is no count, no time and no "
-    "peak to show. Its parts are in {}. To continue it, point the Execute panel at "
-    "that directory \u2014 it reads the checkpoint and tells you whether it can.": (
-        "这次运行被中断，因此没有写下报告：没有记录数、没有耗时、没有峰值可显示。"
-        "它的分片在 {}。要续跑它，请把执行面板指向那个目录 —— "
-        "那里会读取 checkpoint 并告诉你能不能续。"
+    "peak to show. Its parts are in {}. Its checkpoint says the source was fully "
+    "consumed, so there is nothing to continue.": (
+        "这次运行被中断，没有写下报告：没有记录数、没有耗时、没有峰值可显示。"
+        "它的分片在 {}。它的 checkpoint 说源文件已全部读完，所以没有可续跑的东西。"
+    ),
+    "This run was stopped and wrote no report, so there is no count, no time and no "
+    "peak to show. Its checkpoint says it did not finish, so it can be continued — the "
+    "tool will check that the source and the config still match before it writes "
+    "anything.": (
+        "这次运行被中断，没有写下报告，因此没有记录数、没有耗时、没有峰值可显示。"
+        "它的 checkpoint 说源文件没有读完，所以可以续跑 —— "
+        "工具会在写入任何东西之前先核对源文件和配置是否还对得上。"
+    ),
+    "(read from the checkpoint — this run wrote no report)": (
+        "（读自 checkpoint —— 这次运行没有写报告）"
+    ),
+    "Nothing says whether the source was fully consumed.": (
+        "没有任何地方说明源文件是否已全部读完。"
     ),
     "This run did not finish. Continuing it re-reads the source from the beginning.": (
         "这次运行没有完成。续跑会从头重新读取源文件。"

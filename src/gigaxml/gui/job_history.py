@@ -33,11 +33,16 @@ testing without a display, and a test that needs a window is a test that will no
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from gigaxml.checkpoint import CHECKPOINT_FILENAME
+from gigaxml.checkpoint import (
+    CHECKPOINT_FILENAME,
+    Checkpoint,
+    CheckpointError,
+    read_checkpoint,
+)
 from gigaxml.run import DEFAULT_RUN_REPORT_FILENAME
 
 __all__ = [
@@ -112,8 +117,16 @@ class HistoryEntry:
     checkpoint_every: int | None = None
     #: How far the run got, cumulative across resumes.
     records_consumed: int | None = None
-    #: Whether the run consumed the whole source.
+    #: Whether the run consumed the whole source, and **which file says so**.
+    #:
+    #: ``"report"`` -- the run reached its end and wrote a report, which says it did not
+    #: finish. ``"manifest"`` -- the run was stopped and wrote no report, so only the
+    #: checkpoint knows. ``None`` -- neither file says, which is the case where nothing can
+    #: be claimed. The distinction is kept because the two mean different things to a user:
+    #: a run that *failed* partway and a run that was *stopped* partway both leave a
+    #: checkpoint saying ``complete: false``, and only one of them had anything to say.
     complete: bool | None = None
+    complete_source: str | None = None
 
     #: ``False`` when the file exists but could not be read as a report. Everything else is
     #: ``None`` in that case, and :attr:`unreadable_reason` says what happened.
@@ -145,14 +158,17 @@ class HistoryEntry:
 
     @property
     def can_resume(self) -> bool:
-        """Whether the CLI would accept ``--resume`` for this run.
+        """Whether this run stopped partway, and so may be continued.
 
-        **Only the report is asked, never the manifest.** ``complete`` here is the flag the
-        report carries, and it is written from the same decision the CLI makes; whether the
-        parts on disk are still intact is the CLI's business, checked by
-        :func:`gigaxml.checkpoint.validate_resume`, and a history list that pre-judged it
-        would be a second implementation of that check. So this can say "the run did not
-        finish"; it must not say "resuming this will work".
+        **Asks the report when there is one and the checkpoint when there is not** — see
+        :attr:`complete_source`. Both are the same question asked of whichever file exists,
+        and neither asks the other.
+
+        **It does not promise the resume will work, and it must not.** Whether the parts on
+        disk are still intact is ``validate_resume``'s business, checked by hashing both
+        sides, and a history list that pre-judged it would be a second implementation of
+        that check. So this can say "the run did not finish"; the run itself gets to say
+        whether the source and the config still match, in as many words as it takes.
         """
         return self.checkpoint_directory is not None and self.complete is False
 
@@ -292,13 +308,14 @@ def read_report(report_path: Path | str, *, directory: Path | str | None = None)
         checkpoint_every=_largest_part_rows(block),
         records_consumed=_count(block, "records_consumed"),
         complete=block.get("complete") if isinstance(block.get("complete"), bool) else None,
+        complete_source="report" if isinstance(block.get("complete"), bool) else None,
     )
 
 
 def interrupted_run(directory: Path | str) -> HistoryEntry:
     """A run that was stopped, and so left no report behind.
 
-    **Why this row exists, and why it says almost nothing.** Measured, on a 4 GiB document
+    **Why this row exists, and why it reads one more file.** Measured, on a 4 GiB document
     with parts of a thousand records, stopping the child at 4 s and at 6 s: 66 and 193 parts
     were on disk, the manifest said ``complete: false`` and named 65,000 and 192,000 records
     consumed, and ``run-report.json`` was **absent both times**. The reason is in the CLI's
@@ -307,25 +324,82 @@ def interrupted_run(directory: Path | str) -> HistoryEntry:
     runs that were interrupted -- which are exactly the runs somebody opens a resume manager
     for.
 
-    The row is here so that the gap is **visible** rather than silent, and it is marked
-    ``has_report=False`` so nothing downstream mistakes it for a report it failed to parse.
+    **The manifest is read for one decision and one flag, and nothing else.** What the plan
+    forbids is the GUI parsing the checkpoint format to *show data*: to add up parts for a
+    row count, to work out how many records were consumed, to hash anything. None of that
+    happens here. What this does is answer one question -- *may this be continued* -- and
+    the manifest is its only authority; there is no report to ask. The execution panel has
+    been reading the same file with the same reader since Phase 8A
+    (:meth:`ExecutionPanel.unfinished_run_here`), so this is an existing path rather than a
+    new kind of access.
 
-    **It carries no numbers, and the reason is the rule this module is built on.** How far
-    the run got is in the manifest, and reading the manifest is what the plan forbids here.
-    Every field stays ``None``: a row that said ``0 rows`` for a run that committed 65,000 of
-    them would be a lie of exactly the kind this module exists to avoid. What the user is
-    pointed at instead is the execution panel, which is where this project already reads the
-    manifest — ``ExecutionPanel.unfinished_run_here`` — and which therefore already knows
-    whether the run can be continued.
+    **Read through :func:`gigaxml.checkpoint.read_checkpoint`, and read with it:**
+
+    * ``complete`` -- the one field the decision turns on;
+    * the **part size**, as the largest part the manifest lists, because ``--resume`` needs
+      ``--checkpoint-every`` and a run with no report has no other place to say what it was.
+
+    Both come from the project's own reader, which checks the format version and the
+    required keys. Parsing the JSON here would be a second answer to what a valid
+    checkpoint is, and it would not notice a version it does not understand.
+
+    **What is still not shown.** ``records_consumed`` is right there in the manifest and is
+    deliberately left alone: it is a count to *display*, and displaying counts from the
+    checkpoint is exactly what the rule draws the line at. The row says a run was stopped
+    and can be continued, and the execution panel -- which has always shown that number --
+    shows how far it got.
     """
-    return HistoryEntry(
-        report_path=Path(directory) / DEFAULT_RUN_REPORT_FILENAME,
-        directory=Path(directory),
-        checkpoint_directory=Path(directory),
+    path = Path(directory)
+    manifest = path / CHECKPOINT_FILENAME
+    entry = HistoryEntry(
+        report_path=path / DEFAULT_RUN_REPORT_FILENAME,
+        directory=path,
+        checkpoint_directory=path,
         readable=False,
         has_report=False,
         unreadable_reason="the run was stopped before it wrote a report",
     )
+    try:
+        checkpoint = read_checkpoint(manifest)
+    except CheckpointError as exc:
+        # A manifest that cannot be read is a run that cannot be described. Said rather
+        # than swallowed: the row is still here, it just cannot promise a resume.
+        reason = f"{entry.unreadable_reason}, and its checkpoint could not be read: {exc}"
+        return replace(entry, unreadable_reason=reason)
+    return replace(
+        entry,
+        # The path, handed on unchanged. **Not checked against anything** -- the CLI's
+        # `validate_resume` compares this source's size and hash against the ones the
+        # manifest recorded and refuses if they differ, and a pre-check here would either
+        # duplicate that or make a promise the refusal is there to keep. All this needs to
+        # do is put the argument back the way the panel had it.
+        source=_recorded_path(checkpoint),
+        complete=checkpoint.complete,
+        complete_source="manifest",
+        checkpoint_every=_part_size(checkpoint),
+    )
+
+
+def _recorded_path(checkpoint: Checkpoint) -> Path | None:
+    """The source path a checkpoint recorded, or ``None`` if it recorded none.
+
+    Read, not verified. The manifest stores the path beside a size and a hash precisely so
+    that a later run can check all three, and checking is ``validate_resume``'s job; what
+    is wanted here is the string to put on the command line.
+    """
+    recorded = checkpoint.source.get("path")
+    return Path(recorded) if isinstance(recorded, str) and recorded else None
+
+
+def _part_size(checkpoint: Checkpoint) -> int | None:
+    """The part size, as the largest part a manifest lists.
+
+    A part is committed when it is full, so only the last one can be short and the largest
+    is the size exactly. ``None`` when the manifest lists no parts, which is a run stopped
+    before it committed any -- there is nothing to size a continuation to.
+    """
+    sizes = [part.rows for part in checkpoint.parts]
+    return max(sizes) if sizes else None
 
 
 def scan(directories: list[Path | str] | tuple[Path | str, ...]) -> list[HistoryEntry]:

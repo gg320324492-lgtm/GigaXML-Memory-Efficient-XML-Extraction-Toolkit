@@ -652,10 +652,10 @@ def test_a_config_that_is_gone_is_reported_rather_than_substituted(
 # --- what a stopped run looks like, given that it writes no report -----------
 
 
-def test_a_run_that_was_stopped_is_listed_and_says_it_wrote_no_report(
+def test_a_run_that_was_stopped_is_listed_and_can_be_continued(
     tmp_path: pathlib.Path,
 ) -> None:
-    """**The gap this feature ran into, made into a row rather than a silence.**
+    """**The gap this feature ran into, closed the way the plan allows it to be closed.**
 
     A stopped process never reaches the line that writes the summary -- measured on a 4 GiB
     document, killing the child at 4 s left 66 parts and a manifest saying
@@ -666,42 +666,149 @@ def test_a_run_that_was_stopped_is_listed_and_says_it_wrote_no_report(
     test is how the history *reads* a report-less directory; the CLI's behaviour under a
     kill is measured above and quoted where it matters.
 
-    What is asserted is the discipline rather than the wording: the row exists, it is marked
-    as having no report, and **no number is invented for it.** ``0 rows`` for a run that
-    committed 65,000 of them is the lie this module was written not to tell.
+    **What may be read from the checkpoint, and what may not.** The verdict -- may this be
+    continued -- comes from ``complete``, and the source path comes along because
+    ``--source`` is required and this is the only place it was written down. Both are read
+    through the project's own :func:`gigaxml.checkpoint.read_checkpoint`. What is **not**
+    read is the run's data: ``records_consumed`` is 65,000 right there in this manifest and
+    the row still shows no count, because displaying a number from the checkpoint is the
+    thing the rule draws the line at.
+    """
+    from gigaxml.checkpoint import CHECKPOINT_FILENAME, Checkpoint, PartRecord, write_checkpoint
+    from gigaxml.gui.job_history import scan
+
+    document = tmp_path / "big.xml"
+    document.write_text("<catalog/>", encoding="utf-8")
+
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    write_checkpoint(
+        parts / CHECKPOINT_FILENAME,
+        Checkpoint(
+            source={"path": str(document), "size": 11, "sha256": "a" * 64},
+            config="b" * 64,
+            records_consumed=65_000,
+            rejected=0,
+            parts=(
+                PartRecord(name="part-00000.parquet", rows=1000),
+                PartRecord(name="part-00001.parquet", rows=1000),
+            ),
+            complete=False,
+        ),
+    )
+
+    entries = scan([parts])
+    assert len(entries) == 1, "a run that was stopped was dropped from the list entirely"
+    entry = entries[0]
+    assert entry.has_report is False, "no report was written, so none may be claimed"
+    assert entry.readable is False
+
+    # The verdict, and where it came from -- which is not the same sentence as a row whose
+    # report said it, and the field is what keeps them apart.
+    assert entry.complete is False
+    assert entry.complete_source == "manifest"
+    assert entry.can_resume is True
+
+    # The argument the CLI needs, handed back unchanged rather than checked.
+    assert entry.source == document
+    # And the part size, because `--resume` cannot be passed without `--checkpoint-every`.
+    assert entry.checkpoint_every == 1000
+
+    # **And no data.** The row invents no number for a run that wrote no report.
+    assert entry.rows is None and entry.peak_rss_mb is None and entry.elapsed_seconds is None
+    assert entry.records_consumed is None, (
+        "records_consumed is display data and must not be read out of the checkpoint"
+    )
+    assert entry.unreadable_reason
+    assert "stopped" in entry.unreadable_reason
+
+
+def test_a_stopped_run_whose_checkpoint_cannot_be_read_is_not_offered(
+    tmp_path: pathlib.Path,
+) -> None:
+    """**One field needed a real decision, and this is the case where there is none.**
+
+    A manifest that is missing keys, is not JSON, or is a format this build does not
+    understand leaves ``complete`` unset, and ``can_resume`` is then false. The row stays —
+    a directory with a checkpoint in it did have a run — but it cannot promise a
+    continuation, and it says why rather than offering a button that leads nowhere.
     """
     from gigaxml.checkpoint import CHECKPOINT_FILENAME
     from gigaxml.gui.job_history import scan
 
     parts = tmp_path / "parts"
     parts.mkdir()
-    (parts / CHECKPOINT_FILENAME).write_text(
-        json.dumps({"version": 1, "complete": False, "parts": [], "records_consumed": 65_000}),
-        encoding="utf-8",
-    )
+    (parts / CHECKPOINT_FILENAME).write_text("{ not a checkpoint", encoding="utf-8")
 
-    entries = scan([parts])
-    assert len(entries) == 1, "a run that was stopped was dropped from the list entirely"
-    entry = entries[0]
+    entry = scan([parts])[0]
     assert entry.has_report is False
-    assert entry.readable is False
-    assert entry.rows is None and entry.peak_rss_mb is None and entry.elapsed_seconds is None
-    assert entry.complete is None, "completeness must come from the report, and there is none"
-    assert entry.can_resume is False, "there is no report saying this run can be resumed"
+    assert entry.complete is None
+    assert entry.complete_source is None
+    assert entry.can_resume is False
     assert entry.unreadable_reason
-    assert "stopped" in entry.unreadable_reason
-    assert "wrote a report" in entry.unreadable_reason
+    assert "could not be read" in entry.unreadable_reason, entry.unreadable_reason
 
 
-def test_a_stopped_run_is_pointed_at_the_panel_that_can_continue_it(
+def test_a_stopped_run_is_continuable_from_the_history_itself(
     window: MainWindow, tmp_path: pathlib.Path
 ) -> None:
-    """**The row is a dead end with a signpost, not a dead end.**
+    """**The row is no longer a dead end, and it says which file made it possible.**
 
-    The execution panel already reads the manifest -- ``ExecutionPanel.unfinished_run_here``
-    is how a stopped run has always been found in this project -- so that is where a user is
-    sent, and the row says so rather than offering a Resume button it cannot honour.
+    With an unreadable checkpoint there is nothing to offer, so the Resume button stays
+    disabled; that case is the next test, and the data-layer one is
+    :func:`test_a_stopped_run_whose_checkpoint_cannot_be_read_is_not_offered`.
     """
+    from gigaxml.checkpoint import CHECKPOINT_FILENAME, Checkpoint, PartRecord, write_checkpoint
+
+    document = tmp_path / "big.xml"
+    document.write_text("<catalog/>", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG, encoding="utf-8")
+
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    write_checkpoint(
+        parts / CHECKPOINT_FILENAME,
+        Checkpoint(
+            source={"path": str(document), "size": 11, "sha256": "a" * 64},
+            config="b" * 64,
+            records_consumed=2,
+            rejected=0,
+            parts=(PartRecord(name="part-00000.csv", rows=2),),
+            complete=False,
+        ),
+    )
+    window.job_history().note(parts, checkpointing=True, config=config)
+
+    panel = window.history_panel()
+    panel.refresh()
+    assert panel.row_count() == 1
+    assert panel.cell(0, 5) == tr("stopped — no report"), "it is still a run that wrote no report"
+
+    panel._table.selectRow(0)
+    assert panel.is_resume_enabled() is True, (
+        "the checkpoint says this run did not finish, so the row must offer to continue it"
+    )
+    detail = panel.detail_text()
+    assert "no report" in detail
+    assert "checkpoint" in detail, f"the row does not say where the verdict came from: {detail}"
+    # The part size is here because `--resume` cannot be passed without `--checkpoint-every`.
+    assert "2,000" in detail or "2 records" in detail or "1,000" in detail, detail
+
+    # And pressing it fills the execution panel -- still without starting anything.
+    panel._on_resume()
+    execution = window.execution_panel()
+    assert execution._source.text() == str(document)
+    assert execution._output.text() == str(parts)
+    assert execution._checkpoint.value() == 2
+    assert execution.is_resuming() is True
+    assert execution.is_running() is False, "the button started a run"
+
+
+def test_a_stopped_run_with_a_broken_checkpoint_offers_no_resume(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """A manifest that cannot be read leaves nothing to decide on, so nothing is offered."""
     from gigaxml.checkpoint import CHECKPOINT_FILENAME
 
     parts = tmp_path / "parts"
@@ -711,14 +818,11 @@ def test_a_stopped_run_is_pointed_at_the_panel_that_can_continue_it(
 
     panel = window.history_panel()
     panel.refresh()
-    assert panel.row_count() == 1
-    assert panel.cell(0, 5) == tr("stopped — no report")
+    assert panel.row_count() == 1, "the directory still had a run in it"
     panel._table.selectRow(0)
 
-    assert panel.is_resume_enabled() is False, "there is no report to say this can be resumed"
-    detail = panel.detail_text()
-    assert "no report" in detail
-    assert str(parts) in detail, f"the row does not say where its parts are: {detail}"
+    assert panel.is_resume_enabled() is False, "nothing knows whether this run can be continued"
+    assert "could not be read" in panel.detail_text(), panel.detail_text()
 
 
 def test_an_empty_directory_is_still_no_row(tmp_path: pathlib.Path) -> None:

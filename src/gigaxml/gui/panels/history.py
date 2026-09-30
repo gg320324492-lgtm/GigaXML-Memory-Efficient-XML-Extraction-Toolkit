@@ -302,17 +302,23 @@ class HistoryPanel(QWidget):
 def _unreadable_headline(entry: HistoryEntry) -> str:
     """The one line above the table for a row with no usable report.
 
-    **The two cases need different sentences because they need different things from the
-    user.** A report that will not parse is a file to look at; a run that wrote no report
-    was stopped, and the only thing this panel can usefully say is where its parts are and
-    that continuing it is done from the execution panel — which is the place that already
-    reads the manifest.
+    **A stopped run gets the sentence about continuing, not just the one about being
+    unreadable** — the checkpoint has said whether it can be continued, so there is now a
+    button to press and the headline should say so rather than sending the user to a panel
+    that would tell them the same thing in one more click.
     """
     if not entry.has_report:
+        if entry.can_resume:
+            return tr(
+                "This run was stopped and wrote no report, so there is no count, no time and "
+                "no peak to show. Its checkpoint says it did not finish, so it can be "
+                "continued — the tool will check that the source and the config still match "
+                "before it writes anything."
+            )
         return tr(
             "This run was stopped, so it wrote no report: there is no count, no time and no "
-            "peak to show. Its parts are in {}. To continue it, point the Execute panel at "
-            "that directory — it reads the checkpoint and tells you whether it can."
+            "peak to show. Its parts are in {}. Its checkpoint says the source was fully "
+            "consumed, so there is nothing to continue."
         ).format(entry.directory)
     return entry.unreadable_reason or tr("report unreadable")
 
@@ -320,32 +326,33 @@ def _unreadable_headline(entry: HistoryEntry) -> str:
 def _detail_lines(entry: HistoryEntry) -> str:
     """Everything the row does not have a column for, one label per line.
 
-    **The unreadable case is the whole of it.** A report that could not be read has no
-    fields, and the reason is the only thing worth saying, so it is said in full and the
-    rest of the panel stays out of the way rather than filling columns with blanks that look
-    like measurements.
+    **A row with no report still gets its checkpoint block.** There are no run facts to
+    show -- no rows, no time, no peak -- but there are two things a user needs before
+    pressing Resume: that it can be continued at all, and how big its parts were, since
+    ``--resume`` cannot be passed without ``--checkpoint-every``. Both come from the
+    checkpoint, and saying so on this row is what keeps it distinct from a row whose report
+    said the same things.
     """
+    lines: list[str] = []
     if not entry.readable:
         sentence = tr("This report could not be read, so nothing about the run can be shown: {}")
         if not entry.has_report:
             sentence = tr("This run was stopped and wrote no report, so nothing is known: {}")
-        reason = entry.unreadable_reason or tr("the reason was not recorded")
-        return sentence.format(reason) + "\n" + tr("Directory: {}").format(entry.directory)
-    lines = [tr("Output: {}").format(entry.output or tr("not recorded"))]
-    lines.append(tr("Format: {}").format(entry.output_format or tr("not recorded")))
-    lines.append(tr("Record path: {}").format(entry.record_path or tr("not recorded")))
-    if entry.rejected:
-        # First among the numbers, for the reason the results panel gives: a run that
-        # skipped records still reports success and this count is the only sign of it.
-        lines.append(tr("Rejected: {}").format(count_of(entry.rejected, "record")))
-    if entry.error_type:
-        lines.append(tr("Failed with: {}").format(entry.error_type))
+        lines.append(sentence.format(entry.unreadable_reason or tr("the reason was not recorded")))
+        lines.append(tr("Directory: {}").format(entry.directory))
+    else:
+        lines.append(tr("Output: {}").format(entry.output or tr("not recorded")))
+        lines.append(tr("Format: {}").format(entry.output_format or tr("not recorded")))
+        lines.append(tr("Record path: {}").format(entry.record_path or tr("not recorded")))
+        if entry.rejected:
+            # First among the numbers, for the reason the results panel gives: a run that
+            # skipped records still reports success and this count is the only sign of it.
+            lines.append(tr("Rejected: {}").format(count_of(entry.rejected, "record")))
+        if entry.error_type:
+            lines.append(tr("Failed with: {}").format(entry.error_type))
+
     if entry.checkpoint_directory is not None:
         lines.append(tr("Parts directory: {}").format(entry.checkpoint_directory))
-        if entry.records_consumed is not None:
-            lines.append(
-                tr("Records consumed: {}").format(count_of(entry.records_consumed, "record"))
-            )
         if entry.checkpoint_every is not None:
             lines.append(tr("Part size: {}").format(count_of(entry.checkpoint_every, "record")))
         if entry.complete is not None:
@@ -354,10 +361,18 @@ def _detail_lines(entry: HistoryEntry) -> str:
                     tr("yes") if entry.complete else tr("no")
                 )
             )
+            if entry.complete_source == "manifest":
+                # Naming the file is the point. The same sentence in a row whose report said
+                # so would be a different claim, and a user comparing the two rows has no
+                # way to tell which is which.
+                lines.append(tr("(read from the checkpoint — this run wrote no report)"))
+        elif entry.complete_source is None:
+            lines.append(tr("Nothing says whether the source was fully consumed."))
     if entry.config_hash:
         # The hash, not a path: that is what the report records, and it is what the CLI
         # compares against when it decides whether a resume is the same run. The path the
         # window remembers for it lives in the execution panel.
         lines.append(tr("Config fingerprint: {}").format(entry.config_hash[:16]))
-    lines.append(tr("Report: {}").format(entry.report_path))
+    if entry.readable:
+        lines.append(tr("Report: {}").format(entry.report_path))
     return "\n".join(lines)
