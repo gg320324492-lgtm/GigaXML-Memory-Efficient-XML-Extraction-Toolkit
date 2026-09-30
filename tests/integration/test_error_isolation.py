@@ -283,6 +283,10 @@ def test_the_report_lands_on_both_paths_with_every_field(
         "input_identity",
         "output_identity",
         "throughput_records_per_s",
+        # The report's own format version, added to the format itself. See the comment
+        # above: this is a contract change being recorded, which is why the key is added
+        # here rather than the assertion loosened into a subset check.
+        "schema_version",
     }
     # A run that aborted never produced its output, so the report carries an extra key
     # saying exactly that. Asserted per path rather than folded into the set above,
