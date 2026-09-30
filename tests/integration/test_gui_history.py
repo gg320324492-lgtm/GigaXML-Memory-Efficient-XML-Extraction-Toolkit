@@ -915,3 +915,119 @@ def test_forgetting_a_directory_stops_it_being_scanned(
     assert panel.row_count() == 0
     assert window.job_history().directories() == ()
     assert window.job_history().config_for(tmp_path) is None
+
+
+# --- a run the CLI itself stopped, and the report it left -------------------
+
+
+def test_a_run_the_cli_stopped_is_shown_as_interrupted_and_can_be_continued(
+    window: MainWindow, tmp_path: pathlib.Path
+) -> None:
+    """**The row a real ``SIGINT`` produces, end to end.**
+
+    The report is made by stopping an actual run rather than by writing one out here,
+    because the thing being tested is that this panel understands a report the **CLI**
+    writes -- the shape of that file, and whether its ``status`` is one of the ones here
+    knows, are the CLI's decisions. A report typed out by this test would agree with
+    whatever this panel already expects, which is the agreement that proves nothing.
+
+    It is the case the last change created. Before it, a stopped run wrote no report at
+    all and this panel inferred the outcome from the checkpoint; now the CLI writes one
+    saying ``"interrupted"``, and a panel that only knew ``ok`` and ``failed`` would have
+    shown a stopped run as "unknown" -- which reads as a conclusion rather than as a gap.
+    """
+    import os
+    import signal
+    import subprocess
+    import time
+
+    # Shaped to match CONFIG above, which records /catalog/products/product: a record path
+    # that matches nothing fails the run before it commits a part, and a test that stopped
+    # one would be stopping a run that was never going to extract anything.
+    document = tmp_path / "big.xml"
+    with document.open("w", encoding="utf-8") as handle:
+        handle.write("<catalog><products>")
+        for number in range(20_000):
+            handle.write(f'<product id="{number}"><name>Widget</name></product>')
+        handle.write("</products></catalog>")
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG, encoding="utf-8")
+    parts = tmp_path / "parts"
+
+    # Same child the CLI tests use: on Windows a new process group ignores Ctrl-C until
+    # the child asks for it back.
+    opener = (
+        "import ctypes, sys;"
+        "ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False);"
+        "from gigaxml.cli import main;"
+        "raise SystemExit(main(sys.argv[1:]))"
+    )
+    kwargs = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        command = [sys.executable, "-c", opener]
+    else:
+        command = [sys.executable, "-m", "gigaxml.cli"]
+    proc = subprocess.Popen(
+        [
+            *command,
+            "extract",
+            str(document),
+            "-c",
+            str(config),
+            "-o",
+            str(parts),
+            "--format",
+            "csv",
+            "--checkpoint-every",
+            "10",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **kwargs,
+    )
+    from gigaxml.checkpoint import CHECKPOINT_FILENAME
+
+    manifest = parts / CHECKPOINT_FILENAME
+    deadline = time.monotonic() + 120
+    while not manifest.is_file() and time.monotonic() < deadline and proc.poll() is None:
+        time.sleep(0.02)
+    assert manifest.is_file(), "the run never committed a part, so there was nothing to stop"
+
+    if sys.platform == "win32":
+        proc.send_signal(signal.CTRL_C_EVENT)
+    else:
+        os.kill(proc.pid, signal.SIGINT)
+    _out, _err = proc.communicate(timeout=60)
+    assert proc.returncode != 0
+
+    window.job_history().note(parts, checkpointing=True, config=config)
+    panel = window.history_panel()
+    panel.refresh()
+    entries = panel.entries()
+    assert len(entries) == 1, f"the stopped run was not listed: {entries}"
+    entry = entries[0]
+
+    # **The status, and it is not "unknown".**
+    assert entry.status == "interrupted", entry.status
+    assert entry.error_type == "RunInterruptedError", entry.error_type
+    assert panel.cell(0, 5) == tr("interrupted"), panel.cell(0, 5)
+
+    # A run with a report is a run the report can be asked about, so the manifest is no
+    # longer the only authority -- which is what the whole narrowing was for.
+    assert entry.has_report is True
+    assert entry.readable is True
+    assert entry.complete_source == "report"
+    assert entry.can_resume is True, "a checkpointed run that was stopped can be continued"
+    assert entry.checkpoint_every == 10
+
+    panel._table.selectRow(0)
+    assert panel.is_resume_enabled() is True
+    panel._on_resume()
+    execution = window.execution_panel()
+    assert execution._source.text() == str(document)
+    assert execution._output.text() == str(parts)
+    assert execution._checkpoint.value() == 10
+    assert execution.is_resuming() is True
+    assert execution.is_running() is False, "the button started a run"

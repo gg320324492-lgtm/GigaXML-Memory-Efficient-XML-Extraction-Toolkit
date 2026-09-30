@@ -452,6 +452,26 @@ ZH: dict[str, str] = {
     "Nothing says whether the source was fully consumed.": (
         "没有任何地方说明源文件是否已全部读完。"
     ),
+    "The run was stopped": "这次运行被中断",
+    "interrupted": "已中断",
+    "A stop is not a failure and nothing is wrong with the document, the config "
+    "or the output — the report says so rather than claiming the run failed, "
+    "and it records how far it had got. The parts it committed are on disk, and "
+    "if it was writing in parts it can be continued from where it left off; if "
+    "it was writing a single file, the half-written one is in the .tmp beside "
+    "the target and the target still holds whatever it held before. Nothing is "
+    "lost either way, which is why this is worth telling apart from the cases "
+    "above.": (
+        "中断不是失败，文档、配置、输出都没有问题 —— 报告这样说，而不是声称运行失败，"
+        "它记录了运行到了哪里。它已提交的分片就在磁盘上；"
+        "如果它是按分片写的，可以从停下的地方续下去；"
+        "如果它是单文件写的，半写的那个在目标旁边的 .tmp 里，"
+        "而目标仍然存着它原来存的内容。两种情况都没有丢失，"
+        "这也正是它值得与上面那些情形区分开来说的原因。"
+    ),
+    "this run is listed here; Resume fills the panel, Start does the work": (
+        "这次运行列在这里：「续跑」只是填好面板，真正干活的是「开始」。"
+    ),
     "This run did not finish. Continuing it re-reads the source from the beginning.": (
         "这次运行没有完成。续跑会从头重新读取源文件。"
     ),

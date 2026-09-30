@@ -99,12 +99,20 @@ def format_when(entry: HistoryEntry) -> str:
 def format_status(entry: HistoryEntry) -> str:
     """The one word a row's state is read from, for the status column.
 
-    Four states, and the two that mean "we cannot tell" are worded differently from the two
-    that report a fact. **The two that cannot tell are told apart**, because they are
-    different problems with different fixes: a report that will not parse is a file to
-    look at, while a run that wrote no report was interrupted, and the tool has nothing to
-    show for it because a stopped process never reaches the line that would have written
-    one. See :func:`gigaxml.gui.job_history.interrupted_run` for the measurement.
+    **Four states now, and the fourth was added because the CLI began writing it.** A run
+    that was *stopped* used to leave no report at all, and the history inferred it from the
+    checkpoint instead; since the CLI writes a report saying ``"interrupted"``, that row has
+    a report of its own and a status of its own, and a panel that only knew ``ok`` and
+    ``failed`` would have shown it as "unknown" — a stopped run labelled as an unrecognised
+    one, which is worse than showing nothing because it looks like a conclusion.
+
+    The two that cannot tell are still worded differently from the two that report a fact.
+    A report that will not parse is a file to look at; a run that wrote no report was
+    interrupted, and the tool has nothing to show for it because a process given no chance
+    to return never reached the line that would have written one — see
+    :func:`gigaxml.gui.job_history.interrupted_run` for the measurement, and note that a
+    run stopped by a *signal* now does write a report, while one killed without one still
+    does not.
     """
     if not entry.has_report:
         return tr("stopped — no report")
@@ -112,6 +120,8 @@ def format_status(entry: HistoryEntry) -> str:
         return tr("report unreadable")
     if entry.status == "ok":
         return tr("finished")
+    if entry.status == "interrupted":
+        return tr("interrupted")
     if entry.status == "failed":
         return tr("failed")
     return tr("unknown")
@@ -125,6 +135,7 @@ def is_warning_text(text: str) -> bool:
     """
     return text in (
         tr("failed"),
+        tr("interrupted"),
         tr("report unreadable"),
         tr("stopped — no report"),
         tr("unknown"),

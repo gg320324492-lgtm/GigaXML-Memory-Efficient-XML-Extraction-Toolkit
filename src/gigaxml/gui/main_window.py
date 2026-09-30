@@ -39,6 +39,7 @@ from gigaxml.gui.error_advice import (
     KIND_CHECK_CONFIG,
     KIND_CHECKPOINT,
     KIND_FREE_TARGET,
+    KIND_INTERRUPTED,
     KIND_NAMESPACES,
     KIND_QUARANTINE,
 )
@@ -412,6 +413,19 @@ class MainWindow(QMainWindow):
             directory = self._execution.output_path()
             QApplication.clipboard().setText(str(directory))
             self.statusBar().showMessage(tr("copied {}").format(directory), 5000)
+            return
+        if kind == KIND_INTERRUPTED:
+            # Go where the run can be picked up, and re-read first: the report that named
+            # it may have been written by a terminal rather than by this window, and a
+            # history that is a moment stale would not show the row the advice is about.
+            # The button does not start anything -- the Resume button on that row fills the
+            # execution panel, and the user still presses Start.
+            self._history.refresh()
+            self._tabs.setCurrentWidget(self._history)
+            self.statusBar().showMessage(
+                tr("this run is listed here; Resume fills the panel, Start does the work"),
+                8000,
+            )
 
     def _on_document_changed(self, path: str) -> None:
         self._structure.set_document(path)

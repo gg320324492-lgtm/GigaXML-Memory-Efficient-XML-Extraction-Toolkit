@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from gigaxml.checkpoint import CheckpointError
-from gigaxml.errors import FieldPathError, WriterError
+from gigaxml.errors import FieldPathError, RunInterruptedError, WriterError
 from gigaxml.gui.i18n import tr
 from gigaxml.run import QUARANTINABLE
 
@@ -21,6 +21,7 @@ __all__ = [
     "KIND_CHECKPOINT",
     "KIND_CHECK_CONFIG",
     "KIND_FREE_TARGET",
+    "KIND_INTERRUPTED",
     "KIND_NAMESPACES",
     "KIND_QUARANTINE",
     "Advice",
@@ -37,6 +38,8 @@ KIND_NAMESPACES = "namespaces"
 KIND_CHECK_CONFIG = "check-config"
 #: A checkpoint that belongs to a different source or config.
 KIND_CHECKPOINT = "checkpoint"
+#: A run that was stopped by a signal rather than having gone wrong.
+KIND_INTERRUPTED = "interrupted"
 
 #: The error types that mean "this record is bad" rather than "this run is broken".
 #:
@@ -90,6 +93,21 @@ def advice_for(error_type: str | None) -> Advice:
                 "continuing would mix two of them. The other refusal is that there is no "
                 "checkpoint in that directory to resume from at all. Either way nothing was "
                 "written, so nothing is lost by stopping to look."
+            ),
+        )
+    if error_type == RunInterruptedError.__name__:
+        return Advice(
+            kind=KIND_INTERRUPTED,
+            headline=tr("The run was stopped"),
+            detail=tr(
+                "A stop is not a failure and nothing is wrong with the document, the config "
+                "or the output — the report says so rather than claiming the run failed, "
+                "and it records how far it had got. The parts it committed are on disk, and "
+                "if it was writing in parts it can be continued from where it left off; if "
+                "it was writing a single file, the half-written one is in the .tmp beside "
+                "the target and the target still holds whatever it held before. Nothing is "
+                "lost either way, which is why this is worth telling apart from the cases "
+                "above."
             ),
         )
     if error_type == FieldPathError.__name__:
