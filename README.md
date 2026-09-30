@@ -1,7 +1,7 @@
 # GigaXML
 
-A production-oriented CLI toolkit for profiling, validating and extracting structured data
-from multi-gigabyte XML files with bounded memory usage.
+Extract structured data from multi-gigabyte XML files with bounded memory — as a command
+line and as a desktop application.
 
 **If your extraction task is fixed and small, write the twenty lines of `lxml` yourself —
 that is the right call, and the [comparison](#gigaxml-vs-alternatives) says so with

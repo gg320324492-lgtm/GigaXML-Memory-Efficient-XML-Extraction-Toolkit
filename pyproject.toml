@@ -5,18 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gigaxml"
 version = "1.2.0"
-description = "A production-oriented CLI toolkit for profiling, validating and extracting structured data from multi-gigabyte XML files with bounded memory usage."
+description = "Extract structured data from multi-gigabyte XML files with bounded memory, as a command line tool and a desktop application."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["xml", "streaming", "etl", "iterparse", "large-files", "cli", "memory-efficient"]
+keywords = ["xml", "streaming", "etl", "iterparse", "large-files", "cli", "gui", "memory-efficient", "parquet", "csv", "jsonl"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
+  "Environment :: X11 Applications :: Qt",
   "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -77,6 +80,10 @@ gigaxml-gui = "gigaxml.gui.app:main"
 
 [project.urls]
 Homepage = "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit"
+Source = "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit"
+Issues = "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/issues"
+Changelog = "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases"
+Benchmarks = "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/blob/main/benchmarks/compare/REPORT.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
