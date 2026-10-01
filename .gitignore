@@ -23,6 +23,14 @@ coverage.xml
 .coverage
 htmlcov/
 
+# Hypothesis writes here on every run: its failing-example database, a constants cache
+# and a copy of the unicode tables. It also writes a .gitignore of its own, so the
+# directory would stay invisible until that file was deleted -- which is exactly the
+# failure M12 reported: "it is not in git status" was true and "it was never written
+# into the repository" was not. Naming it here means the guarantee does not rest on a
+# third-party library hiding itself.
+.hypothesis/
+
 # ---- Editors / OS ----
 .idea/
 .vscode/
