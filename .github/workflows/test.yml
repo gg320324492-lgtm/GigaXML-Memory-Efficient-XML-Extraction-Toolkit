@@ -58,6 +58,22 @@ jobs:
         # runs only on ubuntu today, which is exactly the "safe by coincidence" shape that
         # is not a contract: the day a Windows leg joins the matrix, the block must still
         # mean one thing.
+        #
+        # ★ M14: the day has come, and the resolution is that this step is *genuinely*
+        # Linux-only rather than merely Linux-only so far. `apt-get` names a package
+        # manager; there is no Windows or macOS step that could perform the same install,
+        # because on those platforms PySide6's wheel carries the Qt shared objects and the
+        # platform plugins (verified locally: `qoffscreen.dll` and `qwindows.dll` sit in
+        # the Windows wheel's plugins/platforms). So the condition below is not a way of
+        # making a failure go away -- it is the step's precondition, stated. The same
+        # `if: runner.os == 'Linux'` shape is already used by package.yml for its own
+        # manylinux build, so this is the repository's precedent rather than a new idea.
+        #
+        # And `tools/ci_selfcheck.py shape` refuses any `if:` on a step that runs tests,
+        # which is what keeps this from becoming the general escape hatch: a condition is
+        # allowed where the thing being done is platform-specific, and forbidden where it
+        # could hide a platform-specific test result.
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
@@ -68,6 +84,18 @@ jobs:
         run: |
           ruff check .
           ruff format --check .
+
+      - name: Prove this runner is the platform this job claims
+        # ★ M14 criterion B. A matrix row is a claim. This reads the job's `runs-on` out
+        # of this file and fails unless the interpreter answering it is that platform, so
+        # a leg pointed at the wrong image says so here instead of reporting green while
+        # testing something else. It also prints the three machine facts the junit report
+        # cannot see -- whether the filesystem folds case, whether symlinks and hard links
+        # can be created, which Qt platform plugins the wheel shipped -- because on a
+        # runner those are the things that decide whether a platform-specific test can run
+        # at all, and they are not the same as on the machine that wrote the test.
+        shell: bash
+        run: python tools/ci_selfcheck.py platform --job test
 
       - name: Unit, integration and security tests
         # The performance tests are excluded: they measure memory and throughput, take
@@ -86,6 +114,11 @@ jobs:
         # third: it arrived in M12 and is the only suite that generates its own inputs,
         # so the directory being absent would leave the parsers checked by hand-written
         # cases alone and nothing would say so.
+        #
+        # ★ M14 adds `--junit-xml` and nothing else to the command itself. The exit code
+        # was already the gate; what the file adds is the number, which no exit code
+        # carries, and which is the only way to tell "the suite ran" from "the suite
+        # quietly stopped running something".
         env:
           # A CI runner has no display. The desktop tests build real widgets
           # and drive the real CLI; only the windowing system is substituted,
@@ -93,7 +126,189 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         shell: bash
         run: |
-          pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 tests/unit tests/integration tests/golden tests/security tests/property
+          pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 --junit-xml=ci-report.xml tests/unit tests/integration tests/golden tests/security tests/property
+
+      - name: Check the run was real
+        # ★ M14 criterion B, and the reason it is a separate step with `always()`: a
+        # report that only prints when the tests passed diagnoses nothing. The floors
+        # here are measured, not chosen for comfort -- 1779 test cases on this
+        # repository's Windows checkout, 0 skipped, so 1700 leaves about 4% of headroom
+        # and a ceiling of 0 skips on that platform is a real claim: the whole suite runs
+        # there, including the seven tests that exist only to skip themselves elsewhere.
+        #
+        # 40 is the ceiling for this platform and it is the one number here that is NOT
+        # measured: roughly a dozen of the suite's skips are the platform guards in
+        # test_interrupt_report.py, test_gui_results.py, test_gui_errors.py and
+        # test_gui_resume.py, which skip on every non-Windows machine by design. It is
+        # deliberately loose -- it exists to catch a suite that stopped running, not to
+        # police individual skips -- and this run of CI prints the exact count and every
+        # reason, which is what turns the estimate into a measurement.
+        if: always()
+        shell: bash
+        run: python tools/ci_selfcheck.py report ci-report.xml --min-tests 1700 --max-skips 40
+
+  # ★ M14: the platform legs. Three facts decided what is in them, and each was measured
+  # rather than assumed (docs/STAGE3-M14-REPORT.md).
+  #
+  # 1. They run the *whole* suite, the same five directories as ubuntu, with no `--ignore`
+  #    and no marker. A narrower "core" was considered and rejected: `tools/ci_selfcheck.py
+  #    shape` forbids `--ignore` in any pytest command precisely because a selection that
+  #    quietly narrows is the one failure mode nobody downstream can detect, and a
+  #    hand-maintained list of 30 file paths is that failure waiting to happen.
+  # 2. They run one Python version (3.13), not three. The interpreter axis is already
+  #    covered by the ubuntu matrix; what these legs add is the platform axis, and
+  #    multiplying the two axes means every red is ambiguous between "wrong interpreter"
+  #    and "wrong platform" -- and macOS runners are expensive enough that paying for the
+  #    ambiguity twice is a poor trade.
+  # 3. They carry no coverage gate. Coverage is a whole-tree claim and exactly one job may
+  #    assert it (also enforced by `shape`); the per-platform line counts differ anyway,
+  #    because `# pragma: no cover - Windows only` and run.py's three-branch peak-memory
+  #    reader mean each platform executes a different set of lines.
+  #
+  # ★ macOS is `macos-15`, not `macos-latest`, for the reason package.yml records at its
+  # own matrix: `macos-13` sat in a matrix for nine months past its retirement and a
+  # retired label queues forever with no error message. `macos-15` is the arm64 image the
+  # packaging job already builds on, so the test leg and the shipped binary run on the
+  # same Mac architecture.
+  test-windows:
+    name: test (windows-latest, 3.13)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        # ★ No Qt system-library step, and the absence is the point rather than an
+        # oversight: `apt-get` names a Linux package manager, and on Windows there is
+        # nothing to install. PySide6's win_amd64 wheel carries the Qt DLLs and the
+        # platform plugins -- confirmed locally, where `plugins/platforms/` holds both
+        # `qwindows.dll` and `qoffscreen.dll`, and confirmed with pip's own resolver,
+        # which selects `pyside6-6.11.2-cp310-abi3-win_amd64.whl` for CPython 3.13.
+        # The probe step below asserts the offscreen plugin is present, so if a future
+        # PySide6 changes the layout this goes red here instead of turning every GUI test
+        # into a collection error.
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,xsd]"
+
+      - name: Lint and format check
+        shell: bash
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Prove this runner is the platform this job claims
+        shell: bash
+        run: python tools/ci_selfcheck.py platform --job test-windows
+
+      - name: Unit, integration and security tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: bash
+        run: |
+          pytest -q --junit-xml=ci-report.xml tests/unit tests/integration tests/golden tests/security tests/property
+
+      - name: Check the run was real
+        # ★ `--max-skips 0`, which is the strongest claim in this file and the reason this
+        # leg is worth its minutes. On a Windows checkout the entire suite runs: 1779
+        # cases, none skipped. That includes the seven tests whose bodies are Windows-only
+        # (the Ctrl-C stop, TerminateProcess, the exclusive-handle lock) and the three
+        # filesystem tests that need a symlink, a hard link and case folding -- every one
+        # of which skips or is impossible on the linux leg. A ceiling of zero means a
+        # runner that cannot do one of those things fails loudly, with the probe above
+        # naming the missing capability, rather than reporting green over a suite that
+        # quietly stopped testing the platform it exists for.
+        if: always()
+        shell: bash
+        run: python tools/ci_selfcheck.py report ci-report.xml --min-tests 1700 --max-skips 0
+
+  test-macos:
+    name: test (macos-15, 3.13)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        # Same reasoning as the Windows leg: there is no Homebrew package to install,
+        # because PySide6's macOS wheel is `macosx_12_0_universal2` and carries the
+        # plugins. The resolver's answer is the evidence, and it also bounds the platform:
+        # pip has no PySide6 6.6+ wheel below macOS 12, so `macos-11` could never have
+        # installed the gui extra. `macos-15` is above that floor by three releases.
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,xsd]"
+
+      - name: Lint and format check
+        shell: bash
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Prove this runner is the platform this job claims
+        shell: bash
+        run: python tools/ci_selfcheck.py platform --job test-macos
+
+      - name: Unit, integration and security tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: bash
+        run: |
+          pytest -q --junit-xml=ci-report.xml tests/unit tests/integration tests/golden tests/security tests/property
+
+      - name: Check the run was real
+        # ★ The same 1700 floor, and a skip ceiling of 40 for the same reason as ubuntu:
+        # this platform skips the Windows-only arms by design. What this leg adds is not
+        # coverage of *different* branches -- an AST sweep of the whole test tree found 12
+        # `sys.platform` branches, and macOS takes the same arm as linux for all 12 -- but
+        # the guarantee that none of them differs on Apple's filesystem, which is
+        # case-insensitive by default, has no `/proc`, and puts `TMPDIR` behind the
+        # `/var` -> `/private/var` symlink. That is the half of the platform axis that
+        # ubuntu cannot speak for.
+        if: always()
+        shell: bash
+        run: python tools/ci_selfcheck.py report ci-report.xml --min-tests 1700 --max-skips 40
+
+  ci-shape:
+    # ★ M14 criterion B, static half. It needs no runner, so it runs on the one platform
+    # that is cheap, and it checks the *file* rather than this run: every job's matrix
+    # expansion, no `continue-on-error`, no `if:` on a step that runs tests, no `--ignore`
+    # in a pytest command, one shared list of test directories, exactly one coverage gate,
+    # and `performance-baseline` still a single ubuntu job.
+    #
+    # The point of putting it in CI rather than only in a reviewer's head is that the
+    # properties are about edits nobody thinks are test edits. Renaming a job does not feel
+    # like changing what is checked, and it is.
+    name: the workflow's own claims
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        # `.[dev]` only: this job reads YAML and asserts facts about it. It needs no Qt,
+        # no lxml, and nothing gigaxml imports -- a check that installs the product to
+        # read a config file is a check with more ways to fail than it has claims.
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . --no-deps
+          pip install pyyaml
+
+      - name: Print the expanded job list
+        shell: bash
+        run: python tools/ci_selfcheck.py shape --verbose
 
   performance-baseline:
     # The one performance signal in CI, and the loose version of the A11 decision
