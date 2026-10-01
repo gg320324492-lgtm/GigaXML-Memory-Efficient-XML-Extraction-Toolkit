@@ -4,6 +4,12 @@ The scripts behind every performance number in the README and in the benchmark r
 They are committed on purpose: a number nobody else can re-run is not evidence, and
 "reproducible measurement harness" is the claim this project is making.
 
+**How a number here is traced back to the run that produced it** — the identity block,
+the raw per-run values, the two thresholds, and how the memory measurement is enforced —
+is in [`BENCHMARK-METHODOLOGY.md`](../BENCHMARK-METHODOLOGY.md) at the repository root.
+What was measured at each released version, **including the four versions nobody
+measured**, is in [`history/`](history/).
+
 ## Datasets
 
 Generated, never committed — a 4 GB file does not belong in a repository:
