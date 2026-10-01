@@ -173,12 +173,19 @@ def _windows_peak_working_set_mb() -> float | None:  # pragma: no cover - Window
 
 #: Rejections written between explicit flushes.
 #:
-#: **Why not flush every line.** Flushing after each write makes every rejection
-#: durable, and it was measured before choosing: on 1,164,800 rejections it cost
-#: **+17.29%** (20.599s against 17.563s, best of three, alternating between the two
-#: variants). That is over the 10% the design allows for durability, so the log
-#: flushes every :data:`_REJECTION_FLUSH_LINES` lines instead, which bounds what a
+#: **Why not flush every line.** Flushing after each write would hand every rejection to
+#: the operating system before the run ended, and it was measured before choosing: on
+#: 1,164,800 rejections it cost **+17.29%** (20.599s against 17.563s, best of three,
+#: alternating between the two variants). That is over the 10% the design allows for it, so
+#: the log flushes every :data:`_REJECTION_FLUSH_LINES` lines instead, which bounds what a
 #: crash can lose to 255 lines out of a million.
+#:
+#: ★ **"Flushed" is not "durable", and the difference is layer 3 of
+#: ``OUTPUT-DURABILITY.md``.** :meth:`flush` hands bytes to the operating system and asks
+#: nothing of the device, so a power cut can still lose what a flush already promised. That
+#: boundary is not this module's to close; what it *is* this module's to guarantee is that
+#: the count never overstates what the operating system has, which is what the next
+#: paragraph is about.
 #:
 #: The counter follows the flush, not the write -- see :meth:`RejectionLog.count` --
 #: so the number in the run summary is always the number of lines actually in the
@@ -218,12 +225,16 @@ class RejectionLog:
 
     Use as a context manager, or call :meth:`close`.
 
-    **Durability.** Rejections are buffered and flushed every
+    **★ What "flushed" means here.** Rejections are buffered and flushed every
     :data:`_REJECTION_FLUSH_LINES` lines (or :data:`_REJECTION_FLUSH_BYTES` bytes).
     A crash therefore loses at most the last few hundred lines rather than all of
     them, and :attr:`count` follows the flush rather than the write, so it always
     agrees with what is actually in the file. Flushing every line would be exact but
     costs 17% of the throughput, which was measured rather than assumed.
+    ★ **"In the file" means as far as the operating system is concerned.** A power cut can
+    still take what a flush already counted; see layer 3 of ``OUTPUT-DURABILITY.md``. What
+    this class guarantees is the weaker and still useful thing -- **the count never claims
+    a line the operating system does not have.**
 
     Args:
         path: where to write. The file is created lazily, on the first rejection.
@@ -270,11 +281,14 @@ class RejectionLog:
 
     @property
     def count(self) -> int:
-        """How many rejections are **on disk**, including any appended ones.
+        """How many rejections the operating system has been given, including appended ones.
 
         Deliberately not "how many times :meth:`reject` was called": after a crash the
         two differ, and the number a caller can act on is the one that matches the
         file. :meth:`flush` makes them equal on demand, and :meth:`close` always does.
+        ★ "The operating system has been given" is the honest phrasing and not a fussy
+        one -- "on disk" would promise the device, which is layer 3 of
+        ``OUTPUT-DURABILITY.md`` and is not this class's to promise.
         """
         return self._durable
 
@@ -326,7 +340,13 @@ class RejectionLog:
         return entry
 
     def flush(self) -> None:
-        """Make everything written so far durable, and count it as such."""
+        """Hand everything written so far to the operating system, and count it as such.
+
+        ★ **This is not durability.** ``flush`` does not ask the device for anything, so a
+        power cut can still lose bytes this method has already counted. Layer 3 of
+        ``OUTPUT-DURABILITY.md`` is where that boundary is written down; what this method
+        does promise is that :attr:`count` stops overstating the moment it returns.
+        """
         if self._handle is None:
             return
         self._handle.flush()
@@ -583,8 +603,9 @@ def consume_records(
             )
 
     if rejections is not None:
-        # The loop is over, so make the log durable and let the count mean what it
-        # says. Without this a short run could report fewer rejections than it made.
+        # The loop is over, so hand the log to the operating system and let the count
+        # mean what it says. Without this a short run could report fewer rejections than
+        # it made. (Not durability -- see RejectionLog.flush.)
         rejections.flush()
     rejected = 0 if rejections is None else rejections.count
     written_path = None if rejections is None else rejections.written_path
