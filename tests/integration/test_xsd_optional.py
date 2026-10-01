@@ -288,23 +288,47 @@ def test_the_schema_key_is_optional_and_typed() -> None:
         parse_config({"record": "/a", "fields": {"x": {"path": "x"}}, "schema": 7})
 
 
-def test_a_schema_key_does_not_change_the_config_hash_without_the_extra() -> None:
-    """Two configs that extract identically report the same hash.
+def test_a_config_without_a_schema_hashes_the_same_as_it_always_did(tmp_path: Path) -> None:
+    """Adding ``schema:`` support did not move the hash of a config that names none.
 
-    ``config_identity`` hashes the parsed config and is what a resume checks, so if the
-    schema leaked into that hash, pointing a config at a schema would silently refuse
-    every resume of an existing run for no reason. The hash is computed without the
-    optional layer here, which is also the state a plain install is in.
+    **This test used to assert the opposite**, and the change is the point: it required
+    that a config *with* ``schema:`` hash the same as one without, on the reasoning that
+    a schema changes types rather than the extraction. That reasoning was wrong in one
+    direction -- a schema is exactly how the types are decided, so a run against a
+    different schema is a different run -- and it was wrong in the other: the value it
+    used, ``"irrelevant.xsd"``, does not exist, so it was asserting that a broken
+    reference and no reference are the same thing.
+
+    What survives is the half that was right: the vast majority of configs have no
+    schema, and their identity must not have moved, or every checkpoint written before
+    schemas were part of the hash would refuse to resume. That is asserted here and, in
+    full, by the round trip in ``tests/integration/test_checkpoint_corruption.py``.
+
+    The hash is still computed without the optional layer present, which is the state a
+    plain install is in.
     """
     from gigaxml.checkpoint import config_identity
 
     base = parse_config({"record": "/a", "fields": {"x": {"path": "x"}}})
-    same = parse_config(
-        {"record": "/a", "fields": {"x": {"path": "x"}}, "schema": "irrelevant.xsd"}
+
+    # The literal digest this config produced before the schema became part of the
+    # identity. Pinned rather than recomputed: "it equals itself" would pass for any
+    # implementation, including one that had just changed every checkpoint's hash.
+    assert config_identity(base) == (
+        "fea071380d9b74c1619a3c12bd978872cfe7c5e258523eec4fbc4ebb11b3185e"
     )
-    assert config_identity(base) == config_identity(same), (
-        "a schema path must not invalidate a resume: it changes types, not the extraction"
+    # And naming a schema, when one is readable, is a different run -- the property that
+    # replaced the assertion this test used to make.
+    schema = tmp_path / "s.xsd"
+    schema.write_text(
+        '<?xml version="1.0"?><xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+        '<xs:element name="x" type="xs:string"/></xs:schema>',
+        encoding="utf-8",
     )
+    with_schema = parse_config(
+        {"record": "/a", "fields": {"x": {"path": "x"}}, "schema": str(schema)}
+    )
+    assert config_identity(with_schema) != config_identity(base)
 
 
 # --- What happens when the extra is absent, from the inside --------------------

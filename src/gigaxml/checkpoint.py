@@ -153,16 +153,75 @@ def source_identity(source: str | Path) -> dict[str, object]:
     return {"path": str(path), "size": size, "sha256": digest.hexdigest()}
 
 
+def schema_identity(schema_path: str | Path) -> str:
+    """The content hash of an XSD -- what makes it *this* schema rather than another.
+
+    **Content only, deliberately not the path.** A schema decides how every field is
+    typed, so changing its contents changes what a run produces and must change the run
+    identity. Where the file happens to sit does not: the same declarations in
+    ``catalog.xsd`` and ``schema/catalog.xsd`` type the fields identically, and a run
+    resumed after somebody reorganised a directory is the same run. Including the path
+    would make "moved the file" indistinguishable from "changed the file" -- the same
+    mistake, one size smaller, that leaving the schema out of the identity altogether
+    made one size larger.
+
+    This is why the fingerprint into :func:`config_identity` is a digest rather than a
+    :func:`source_identity` result. A source's identity carries its path because a
+    resume has to recognise *the file the user named*; a schema is recognised by what it
+    declares.
+
+    Raises:
+        CheckpointError: the file cannot be read.
+    """
+    identity = source_identity(schema_path)
+    return str(identity["sha256"])
+
+
+def _schema_fingerprint(config: ExtractionConfig) -> object:
+    """What the run identity should record about the config's schema, or ``None``.
+
+    **A schema that cannot be read does not raise here.** This function is called while
+    building a hash that must be computable for every config; a missing or unreadable
+    XSD is a run that will fail later, with a message about the schema, and turning it
+    into a crash inside an identity is neither clearer nor earlier. What it must not do
+    is *silently* pretend there was no schema: falling back to ``None`` would make a
+    config naming an unreadable file hash identically to one naming no file at all, and
+    a resume would then compare them as the same run.
+
+    The failure is recorded as its own value instead -- a marker naming the file and the
+    reason, so two different unreadable schemas do not hash alike either.
+    """
+    if not config.schema:
+        return None
+    try:
+        return schema_identity(config.schema)
+    except (CheckpointError, OSError) as exc:
+        return {"unreadable": str(config.schema), "reason": str(exc)}
+
+
 def config_identity(config: ExtractionConfig) -> str:
     """A hash of the *parsed* config, stable across cosmetic edits.
 
     Built from what the run actually depends on -- the record path, the namespace map,
-    the error policy and each field's path and type, in config order -- rather than
-    from the config file's bytes. Hashing the file would make "somebody added a
-    comment" look like "the extraction changed", which is exactly the wrong way to be
-    wrong: it would refuse a resume that is perfectly safe.
+    the error policy, each field's path and type, and the schema whose declarations
+    override those types -- rather than from the config file's bytes. Hashing the file
+    would make "somebody added a comment" look like "the extraction changed", which is
+    exactly the wrong way to be wrong: it would refuse a resume that is perfectly safe.
+
+    **The schema is keyed on its content, not its path.** It decides how every field is
+    typed, so two runs against different schemas are different runs; but the same schema
+    under a different name is the same run, which is why the identity carries a digest
+    and not the location. :func:`source_identity` makes the same choice for the same
+    reason, and a second opinion about what "the same file" means would be a second
+    thing to keep in step.
+
+    **The schema key is added only when there is one.** A config without a schema
+    produces the identical payload it did before schemas were part of this hash, so
+    every checkpoint written by an earlier version of this tool -- none of which named a
+    schema in its identity -- still resumes. Adding an unconditional ``"schema": None``
+    would have changed every one of those hashes to fix a defect none of them had.
     """
-    payload = {
+    payload: dict[str, object] = {
         "record_path": config.record_path,
         "namespaces": dict(sorted(config.namespaces.items())),
         "on_error": config.on_error.value,
@@ -176,6 +235,9 @@ def config_identity(config: ExtractionConfig) -> str:
             for field in config.fields
         ],
     }
+    fingerprint = _schema_fingerprint(config)
+    if fingerprint is not None:
+        payload["schema"] = fingerprint
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -535,6 +597,27 @@ def validate_resume(
         problems.append(
             f"  config:\n    checkpoint: {checkpoint.config}\n    now:        {current_config}"
         )
+        # A schema that changed is the least obvious reason for this mismatch: the
+        # config file is byte-identical, the command line is the same, and the only
+        # edit was to a document the config merely *points at*. Naming it is the
+        # difference between "the config changed, go and diff two YAML files that are
+        # the same" and knowing where to look.
+        #
+        # Only the current schema can be named. The manifest stores a single config
+        # digest and not the schema's, so what the previous run used is not recoverable
+        # from the checkpoint -- the message says what the schema is *now* and that it
+        # is part of the identity, which is what a reader needs in order to suspect it.
+        if config.schema:
+            fingerprint = _schema_fingerprint(config)
+            problems.append(
+                f"  the schema this config names is part of that identity:\n"
+                f"    {str(config.schema)!r}\n"
+                f"    {json.dumps(fingerprint, sort_keys=True)}\n"
+                f"    Changing the schema's contents changes the run identity, even "
+                f"though the path and the config file are unchanged. The checkpoint "
+                f"does not record the schema it used, so the previous value cannot be "
+                f"shown here."
+            )
 
     if problems:
         raise CheckpointError(
