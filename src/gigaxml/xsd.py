@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Final
 from urllib.parse import unquote, urlsplit
 
 from gigaxml.config import ExtractionConfig
-from gigaxml.errors import GigaXMLError
+from gigaxml.errors import GigaXMLError, SchemaError, SecurityError
 from gigaxml.fields import FieldConfig, FieldType
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -147,7 +147,7 @@ _POLICY_NOTE: Final = (
 _DRIVE_PREFIX: Final = re.compile(r"^/[A-Za-z]:")
 
 
-def _refuse_by_policy(target: pathlib.Path, reason: object) -> GigaXMLError:
+def _refuse_by_policy(target: pathlib.Path, reason: object) -> SecurityError:
     """The error for a resource the schema policy refused.
 
     Deliberately *not* the same sentence as "not a usable XSD". A schema that is
@@ -155,7 +155,7 @@ def _refuse_by_policy(target: pathlib.Path, reason: object) -> GigaXMLError:
     fixes -- the first wants editing, the second wants knowing that the policy is what
     refused it -- and one message for both leaves a user unable to tell which they have.
     """
-    return GigaXMLError(
+    return SecurityError(
         f"the XSD file {str(target)!r} was refused by the schema security policy: "
         f"{reason}. {_POLICY_NOTE}"
     )
@@ -287,7 +287,7 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     xmlschema = require_schema()
     target = pathlib.Path(schema_path)
     if not target.is_file():
-        raise GigaXMLError(f"the XSD file {str(target)!r} does not exist")
+        raise SchemaError(f"the XSD file {str(target)!r} does not exist")
     # Imported here, after require_schema(), so a machine without the extra never
     # reaches it, and because these two live under xmlschema.exceptions rather than
     # on the module's top level -- reaching them from a module-level import would be
@@ -304,7 +304,7 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     except (XMLResourceBlocked, XMLResourceForbidden) as exc:
         raise _refuse_by_policy(target, exc) from exc
     except Exception as exc:  # xmlschema raises a family of its own
-        raise GigaXMLError(f"{str(target)!r} is not a usable XSD: {exc}") from exc
+        raise SchemaError(f"{str(target)!r} is not a usable XSD: {exc}") from exc
 
 
 def _local(name: str) -> str:
@@ -374,7 +374,7 @@ def record_field_types(schema_path: str | pathlib.Path, record_path: str) -> dic
     schema = _open_schema(schema_path)
     segments = [s for s in (_local(x) for x in record_path.replace("//", "/").split("/")) if s]
     if not segments:
-        raise GigaXMLError(f"the record path {record_path!r} names no element")
+        raise SchemaError(f"the record path {record_path!r} names no element")
 
     try:
         element = schema.get_element(segments[0])
@@ -382,7 +382,7 @@ def record_field_types(schema_path: str | pathlib.Path, record_path: str) -> dic
         element = None
     if element is None:
         declared = ", ".join(sorted(_local(e) for e in schema.elements))  # type: ignore[attr-defined]
-        raise GigaXMLError(
+        raise SchemaError(
             f"the schema {str(schema_path)!r} declares no top-level element named "
             f"{segments[0]!r}; it has: {declared or '(none)'}"
         )
@@ -393,7 +393,7 @@ def record_field_types(schema_path: str | pathlib.Path, record_path: str) -> dic
             children = ", ".join(
                 sorted(_local(c.name) for c in _child_elements(element))  # type: ignore[attr-defined]
             )
-            raise GigaXMLError(
+            raise SchemaError(
                 f"the schema {str(schema_path)!r} has no element {segment!r} inside "
                 f"{_local(element.name)!r}; it has: {children or '(none)'}"  # type: ignore[attr-defined]
             )
@@ -496,9 +496,9 @@ def validate_document(
     schema = _open_schema(schema_path)
     target = pathlib.Path(document_path)
     if not target.is_file():
-        raise GigaXMLError(f"the document {str(target)!r} does not exist")
+        raise SchemaError(f"the document {str(target)!r} does not exist")
     try:
         errors = list(schema.iter_errors(str(target)))  # type: ignore[attr-defined]
     except Exception as exc:  # xmlschema raises a family of its own
-        raise GigaXMLError(f"{str(target)!r} could not be validated: {exc}") from exc
+        raise SchemaError(f"{str(target)!r} could not be validated: {exc}") from exc
     return [f"{'.'.join(str(part) for part in error.path)}: {error.reason}" for error in errors]

@@ -25,9 +25,12 @@ __all__ = [
     "FieldTypeError",
     "GigaXMLError",
     "InspectionError",
+    "InternalError",
     "MissingRequiredFieldError",
     "RecordPathError",
     "RunInterruptedError",
+    "SchemaError",
+    "SecurityError",
     "WriterError",
 ]
 
@@ -148,6 +151,52 @@ class WriterError(GigaXMLError, ValueError):
 
     Descending from :class:`GigaXMLError` keeps the promise that one ``except``
     clause can cover everything the library raises deliberately.
+    """
+
+
+class SecurityError(GigaXMLError, ValueError):
+    """A resource was refused by one of this project's own security policies.
+
+    Raised where the tool declines to do something dangerous rather than failing to do
+    it: a schema reaching outside its directory, an output about to overwrite the
+    document being read. The distinction the class carries is *who decided*. An
+    ``OSError`` means the environment said no; this means gigaxml said no, and the
+    reason is a rule rather than a fault.
+
+    **A ``GigaXMLError`` like every other deliberate refusal**, so the existing
+    ``except GigaXMLError`` keeps catching it and the exit code does not move. The
+    subtype exists so a caller can tell "the policy stopped this" from "the input was
+    wrong" without reading the message -- and so ``ERRORS.md`` can give the two
+    different advice.
+    """
+
+
+class SchemaError(GigaXMLError, ValueError):
+    """An XSD could not be used: missing, unparseable, or not describing the record.
+
+    Covers the schema layer's own failures -- a file that does not exist, one the
+    compiler rejects, a record path the schema does not declare, and the schema extra
+    not being installed at all. Everything here is about *the schema*, as opposed to
+    :class:`SecurityError`, which is about a resource the schema asked for and was
+    refused.
+    """
+
+
+class InternalError(GigaXMLError):
+    """gigaxml failed in a way its own code did not expect.
+
+    **This is the one class here that means "our bug, not your input".** Every other
+    error in this module says something about the caller's document, config, output or
+    environment; this one says the assumptions inside the tool were wrong.
+
+    **Deliberately not a ``ValueError``**, following :class:`RunInterruptedError`: no
+    value was handed over that could have been rejected, so the promise this module
+    makes about ``except ValueError`` would be false here.
+
+    **Nothing raises this today.** It exists so that the boundary is nameable -- see
+    :func:`gigaxml.cli.main`, which decides whether an unexpected exception is reported
+    as one. A class that is never raised is not dead code when its job is to be the
+    thing a future ``except`` names.
     """
 
 

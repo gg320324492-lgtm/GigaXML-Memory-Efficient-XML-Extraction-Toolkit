@@ -107,7 +107,7 @@ def test_the_error_is_a_gigaxml_error_so_the_cli_shows_one_line(
     with pytest.raises(GigaXMLError) as refused:
         record_field_types(root, f"/{ESCAPED_ELEMENT}")
 
-    assert type(refused.value) is GigaXMLError
+    assert isinstance(refused.value, GigaXMLError)
     # And the original is attached for a reader who wants it, not thrown away.
     assert refused.value.__cause__ is not None
     assert "XMLResource" in type(refused.value.__cause__).__name__

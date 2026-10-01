@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import platform
 import signal
 import sys
 import time
+import traceback
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from itertools import chain, islice
@@ -32,7 +34,12 @@ from gigaxml.checkpoint import (
     write_checkpoint,
 )
 from gigaxml.config import ExtractionConfig, load_config
-from gigaxml.errors import CheckpointError, GigaXMLError, RunInterruptedError
+from gigaxml.errors import (
+    CheckpointError,
+    GigaXMLError,
+    RunInterruptedError,
+    SecurityError,
+)
 from gigaxml.generate import generate_dataset
 from gigaxml.inspect import (
     DEFAULT_MAX_DEPTH,
@@ -528,7 +535,7 @@ def _reject_same_file(
     """
     if not _same_file(first, second):
         return
-    raise GigaXMLError(
+    raise SecurityError(
         f"refusing to write {first_label} to {str(first)!r}: it is the same file as "
         f"{second_label} {str(second)!r}. One would overwrite the other, and the source "
         f"would be destroyed before anything could detect it. Pass a different path, or "
@@ -1514,32 +1521,111 @@ def _status_for(error: BaseException | None) -> str:
     return "failed"
 
 
+#: Exit code for a run that finished.
+EXIT_OK: Final = 0
+
+#: Exit code for a bad input, config, command or environment. **Unchanged since the
+#: first release**: this is the code every existing script checks, and widening what it
+#: means would be the breaking change -- not adding new codes beside it.
+EXIT_ERROR: Final = 1
+
+#: Exit code argparse gives for a malformed command line. Not ours to set, but named
+#: here so the table in ``ERRORS.md`` and this module say the same thing.
+EXIT_USAGE: Final = 2
+
+#: Exit code for a run that was stopped by a signal. Distinguished from
+#: :data:`EXIT_ERROR` because the two want opposite reactions from a script: an error
+#: means "do not run this again", while an interrupted run means "this was going fine,
+#: pick it up".
+EXIT_INTERRUPTED: Final = 3
+
+#: Exit code for a failure inside gigaxml. Reserved rather than used: see
+#: :func:`_report_unexpected`.
+EXIT_INTERNAL: Final = 4
+
+#: The environment variable that turns a hidden traceback into a visible one.
+DEBUG_ENV_VAR: Final = "GIGAXML_DEBUG"
+
+
+def _debug_tracebacks_enabled() -> bool:
+    """Whether an unexpected failure should print the full traceback.
+
+    An environment variable rather than a flag, because this is a thing a developer
+    sets once on a machine where they are about to file a bug -- not something to offer
+    a user at the moment the tool has just failed.
+    """
+    return os.environ.get(DEBUG_ENV_VAR, "").strip().lower() in ("1", "true", "yes")
+
+
+def _report_unexpected(exc: BaseException) -> int:
+    """Say what happened for an exception the code did not expect, and return a code.
+
+    **The default is one line and no traceback, which is a deliberate choice about who
+    the output is for.** Someone who hits a bug in gigaxml needs to know it is not their
+    fault and that nothing in their input needs fixing. A wall of Python frames says the
+    opposite, and it is the thing they would paste into a report without being able to
+    read it.
+
+    So the traceback is available but hidden. Hidden, not absent: a tool whose failures
+    cannot be diagnosed is worse than one that prints too much.
+    """
+    if _debug_tracebacks_enabled():
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+    print(
+        f"error: gigaxml failed unexpectedly: {type(exc).__name__}: {exc}\n"
+        f"  This is a bug in gigaxml, not a problem with your input. Re-run with "
+        f"{DEBUG_ENV_VAR}=1 for the full traceback.",
+        file=sys.stderr,
+    )
+    return EXIT_INTERNAL
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point for the ``gigaxml`` console script."""
+    """Entry point for the ``gigaxml`` console script.
+
+    The exit code is part of the command's contract -- see ``ERRORS.md``. It separates
+    the things a script reacts to differently: retrying after a signal, giving up on a
+    bad config, and reporting a bug in the tool are three different responses, and one
+    code for all of them would force a script to parse stderr to tell them apart.
+    """
     args = build_parser().parse_args(argv)
     handler: Callable[[argparse.Namespace], int] = args.handler
     restore_signals = _install_interrupt_handlers()
     try:
         try:
             return handler(args)
+        except RunInterruptedError as exc:
+            # **Before GigaXMLError, and the order is the whole point.**
+            # RunInterruptedError descends from GigaXMLError and ``except`` matches in
+            # order, so this clause placed below would never be reached -- the run would
+            # exit 1 and a caller could not tell "stopped" from "failed", which is the
+            # confusion this code exists to remove. The report is still written on the
+            # way past; only the code that comes back changes.
+            print(f"interrupted: {exc}", file=sys.stderr)
+            return EXIT_INTERRUPTED
         except GigaXMLError as exc:
             # Every deliberate error descends from GigaXMLError, so this turns a bad
             # config, a wrong path or a missing optional dependency into one readable
-            # line instead of a traceback. A run that was stopped arrives here too, and
-            # says so in the same shape.
+            # line instead of a traceback.
             print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_ERROR
         except OSError as exc:
             # A missing input file, an unwritable output directory, a bad gzip stream.
             # These are environmental rather than library errors, but a command-line
             # tool should still say what went wrong on one line.
             print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_ERROR
         except etree.XMLSyntaxError as exc:
             # Malformed XML. Neither a GigaXMLError nor an OSError, but it is the most
             # likely thing to go wrong with an unknown file, and a traceback helps nobody.
             print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_ERROR
+        except Exception as exc:
+            # Catching broadly is the point of this clause: everything above names an
+            # exception the code expects, so what reaches here is by definition one it
+            # did not. Re-raising would put a traceback in front of a user who cannot
+            # act on it.
+            return _report_unexpected(exc)
     finally:
         # The CLI is a library function as well as a command, and a caller in this
         # process keeps its own signal behaviour. See `_install_interrupt_handlers`.
