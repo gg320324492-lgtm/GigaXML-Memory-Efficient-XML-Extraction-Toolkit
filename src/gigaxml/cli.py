@@ -441,6 +441,101 @@ def _reject_stdin_if_unsupported(args: argparse.Namespace, source: str) -> None:
         )
 
 
+def _same_file(first: str | Path, second: str | Path) -> bool:
+    """Do these two paths name the same file on disk?
+
+    **Resolved first, and compared with ``samefile`` where both exist.** A string
+    comparison would miss every spelling that reaches the same file by another route:
+    ``./a.xml`` beside ``a.xml``, ``sub/../a.xml``, an absolute path where a relative
+    one was given, a symlink, a hard link, or ``A.XML`` on a case-insensitive
+    filesystem. The user does not have to mean to overwrite their input -- typing the
+    path a second way is enough.
+
+    Two checks rather than one, because they answer different questions and each has a
+    case the other misses:
+
+    * ``samefile`` asks the filesystem, which is the only authority on inodes. It is
+      what catches a hard link, which no amount of path arithmetic can see.
+    * ``resolve()`` asks what the path *means*, and works when one or both names do not
+      exist yet -- ``samefile`` raises then, and an output file that does not exist is
+      the ordinary case, not an error.
+
+    Both are guarded: a path that cannot be stat'ed is not evidence of a conflict, and
+    a check that crashed on a missing file would break every normal run.
+    """
+    first_path = Path(first)
+    second_path = Path(second)
+    try:
+        if first_path.exists() and second_path.exists() and first_path.samefile(second_path):
+            return True
+    except OSError:  # pragma: no cover - a path that cannot be stat'ed proves nothing
+        pass
+    try:
+        return first_path.resolve() == second_path.resolve()
+    except OSError:  # pragma: no cover - resolve() is documented to be tolerant
+        return False
+
+
+def _reject_output_that_is_the_input(args: argparse.Namespace, source: str) -> None:
+    """Refuse to write over the document being read.
+
+    **The worst failure this tool can have, and the quietest.** The source is the one
+    copy of the data the user has; an output that lands on it destroys it, and the run
+    reports success while doing so. There is no warning to catch afterwards, because
+    nothing goes wrong from the program's point of view -- it wrote the file it was
+    asked to write.
+
+    What made this reachable is that the format check is not a guard: it refuses an
+    ``.xml`` output because it cannot *infer* a format from the suffix, and a user who
+    passes ``--format csv`` explicitly gets past it and straight into the overwrite. A
+    protection that disappears when the user is more specific is not a protection.
+
+    Checked here, before any writer is created and before anything is opened -- a
+    refusal that arrives after a ``.tmp`` was written has already touched the disk. The
+    file's bytes are asserted unchanged by the tests, because "we refuse" and "we
+    refuse before doing anything" are different claims.
+
+    ``--report`` is checked too, and it is the same defect rather than a neighbour of
+    one: it is a path the user names, written after the run, and pointing it at the
+    input overwrites the input just as surely. Two further collisions are refused with
+    it -- a report landing on the output, and on a checkpoint's directory -- because in
+    those the two artefacts overwrite *each other*, and which of them survives would
+    depend on the order the run happens to finish in.
+
+    Raises:
+        GigaXMLError: two of the paths this run will write name the same file.
+    """
+    # The output-versus-input check is skipped for a stream, which has no path to
+    # collide with. The report checks are not: a report can still land on the output
+    # when the document is being read from a pipe, and that collision has nothing to
+    # do with where the input came from.
+    if not _is_stdin(source):
+        _reject_same_file(args.output, source, "--output", "the input document")
+    if getattr(args, "report", None) is not None:
+        if not _is_stdin(source):
+            _reject_same_file(args.report, source, "--report", "the input document")
+        _reject_same_file(args.report, args.output, "--report", "--output")
+
+
+def _reject_same_file(
+    first: str | Path, second: str | Path, first_label: str, second_label: str
+) -> None:
+    """Refuse when two paths a run will write to name the same file.
+
+    The message names both paths and both roles. A reader who typed one of them twice
+    needs to see *which* one to change, and "the output conflicts with the input" does
+    not say that -- the option names do.
+    """
+    if not _same_file(first, second):
+        return
+    raise GigaXMLError(
+        f"refusing to write {first_label} to {str(first)!r}: it is the same file as "
+        f"{second_label} {str(second)!r}. One would overwrite the other, and the source "
+        f"would be destroyed before anything could detect it. Pass a different path, or "
+        f"rename the file first if you meant to replace it."
+    )
+
+
 def _handle_extract(args: argparse.Namespace) -> int:
     """Handle ``gigaxml extract``."""
     config = load_config(args.config)
@@ -462,6 +557,7 @@ def _handle_extract(args: argparse.Namespace) -> int:
     progress = _progress_reporter(args)
 
     _reject_stdin_if_unsupported(args, args.source)
+    _reject_output_that_is_the_input(args, args.source)
     if args.resume and args.checkpoint_every is None:
         raise CheckpointError(
             "--resume needs --checkpoint-every too: the part size is a parameter of "
@@ -573,6 +669,7 @@ def _handle_sample(args: argparse.Namespace) -> int:
         )
 
     config = load_config(args.config)
+    _reject_output_that_is_the_input(args, args.source)
     _warn_on_format_mismatch(args.output, args.format)
     _warn_on_batch_size(args.batch_size)
 
