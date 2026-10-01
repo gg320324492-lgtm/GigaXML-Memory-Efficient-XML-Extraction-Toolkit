@@ -26,13 +26,29 @@ data). A string is exact for every value, needs no guess, and round-trips throug
 ``import gigaxml.writers`` and the CSV/JSONL paths keep working with only the two
 required dependencies installed.
 
-**Output is written atomically.** Every writer opens ``<target>.tmp`` in the target's
-own directory and only renames it into place once the last batch is flushed. The
-guarantee that buys is worth stating plainly: **the file at the target path is either
-complete or the previous complete version -- never a truncated one.** Before this, a
-run killed halfway through left a file indistinguishable from a finished one, and a
-*failed* re-run destroyed the previous run's output on its way to producing nothing.
-A half-written output is worse than no output, because nothing about it says so.
+**Output is written atomically** -- and the word has a boundary, stated in full in
+``OUTPUT-DURABILITY.md`` at the repository root, which is where the reader who means
+something stronger by "atomic" will find out they are wrong. Every writer opens
+``<target>.tmp`` in the target's own directory and only renames it onto the target once
+the last batch is flushed, which buys two layers and stops short of a third.
+
+* **A run that fails publishes nothing.** The target keeps the previous file -- and on a
+  first run, where there was none, **it is left with no file at all**. There is no state
+  in which the target exists but came from a run that did not finish. Before this, a run
+  killed halfway through left a file indistinguishable from a finished one, and a *failed*
+  re-run destroyed the previous run's output on its way to producing nothing. A
+  half-written output is worse than no output, because nothing about it says so.
+* **The target is never a mixture.** It is the previous complete file or the new complete
+  one, for a reader that opens it at any moment, including mid-publish.
+* **★ Losing power is not promised.** Nothing here is fsynced, so the bytes may still be
+  in the operating system's cache when the power goes. That is a different failure from a
+  half-written file -- the file was never half-written -- and it is the reason the boundary
+  is written down instead of left for the reader to assume.
+
+**★ None of that says the output is *right*.** A config whose field paths do not match
+the document produces a complete, well-formed, empty file. Completeness is a property of
+the file's shape; correctness is what the run report's ``output_complete`` field and its
+``status`` report, and neither is implied by the publish being atomic.
 
 Two consequences worth knowing:
 

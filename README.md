@@ -29,7 +29,9 @@ Each of these is a behaviour, not an adjective — the last section of
   edit to a YAML file — and `gigaxml inspect <file>` proposes a starting config for any
   document you point it at, without knowing its structure in advance.
 - **Three output formats are the same flag.** CSV, JSONL and Parquet share the writer,
-  the batching and the atomic move; switching is `--format`, not new code.
+  the batching and the atomic move — switching is `--format`, not new code. What "atomic"
+  does and does not cover is written down in
+  [`OUTPUT-DURABILITY.md`](OUTPUT-DURABILITY.md).
 - **A desktop application for people who do not use terminals** — the same engine behind
   a window (`pip install "gigaxml[gui]"`), with structure analysis, field building,
   preview, batch runs and a progress bar that provably moves.
@@ -373,6 +375,14 @@ resumes from its last committed part after verifying the source and config are
 unchanged; switching fields is a YAML edit instead of a code edit; switching output to
 JSONL or Parquet is a flag; and every output lands atomically — a failed or cancelled
 run never leaves a half-written file where a reader would find it.
+
+★ **"Atomically" is defined, not assumed.** The two guarantees above are about a *process*
+dying: a failed run publishes nothing, and the target is never a mixture. **Surviving a
+power cut is not promised** — nothing is fsynced, so the bytes may still be in the
+operating system's cache when the power goes. That is a different failure from a
+half-written file, and
+[`OUTPUT-DURABILITY.md`](OUTPUT-DURABILITY.md) says which one you are getting, layer by
+layer.
 
 ### vs `xmltodict`
 
