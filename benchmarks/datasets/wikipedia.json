@@ -1,6 +1,6 @@
 {
   "url": "https://dumps.wikimedia.org/simplewiki/latest/simplewiki-latest-pages-articles.xml.bz2",
-  "fetched_at": "2026-09-27T18:44:41+00:00",
+  "fetched_at": "2026-10-01T19:03:30+00:00",
   "sha256_bz2": "6832fd106ae0e4734a349d6351709fc219ccebad5850234214a57e653f7812f8",
   "sha256_xml": "2575aba62792ac2c1a907ac5196c0e3681b4d6cd5d1ba58c1c1a06df13629c64",
   "bytes_bz2": 356186307,
