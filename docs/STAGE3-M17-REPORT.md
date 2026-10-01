@@ -379,7 +379,7 @@ OK: within the 60% throughput floor and the memory ceiling                rc=0
 | 判据 E：同工作跨平台吞吐 | 本机 **43,070** vs runner **19,312** rec/s（**2.23×**） |
 | 判据 E：参考值来自 3.2× 快的机器 | **rc=1**，未改动的代码变红 |
 | `history/` 条目 | **5 个**，1 条记录 / 4 条"无记录"，无记录条目里**零个数字** |
-| 提交 | **5 个**，每次独立确认 `git log` 前进，attribution **全 0**（本报告为第 6 个） |
+| 提交 | 每次独立确认 `git log` 真的前进，attribution **全 0**；总数与 SHA 见 `git log 1c90960..HEAD`（本报告的提交在列，报告自身在写完时又追加过，所以这里不写死数字） |
 | 领先 origin/main 且 **未 push** | **34** |
 | `data/` | 跑完全树后 **531 MB**（见 §9-4） |
 | 清理 | `.scratch/m17/` 已删（含一次真实 clone、8.5 MB） |
