@@ -62,6 +62,7 @@ from gigaxml.gui.run_report import (
     read_failure,
     read_outcome,
 )
+from gigaxml.gui.run_state import RunState
 from gigaxml.gui.saved_configs import ConfigLibrary
 from gigaxml.gui.settings import Settings, SettingsStore
 
@@ -225,31 +226,50 @@ class MainWindow(QMainWindow):
     def _on_run_finished(self) -> None:
         """Say what happened: it finished, it was stopped, or it failed.
 
-        **The child's own exit status is what decides, and it is asked first.** The report
-        beside the output belongs to whichever run last reached its end, and a run that is
-        stopped never overwrites it -- so for a stopped run the report is an *earlier* run's
-        answer. Reading it would report a success, or a failure of the wrong kind, for a run
-        that never got that far. Measured: a successful run to ``out.csv`` followed by a
-        killed run to the same path leaves the first run's report saying ``rows: 2``.
+        **The child's own state is what decides, and it is asked first.** The report beside
+        the output belongs to whichever run last reached its end, and a run that is stopped
+        never overwrites it -- so for a stopped run the report is an *earlier* run's answer.
+        Reading it would report a success, or a failure of the wrong kind, for a run that
+        never got that far. Measured: a successful run to ``out.csv`` followed by a killed
+        run to the same path leaves the first run's report saying ``rows: 2``.
 
         The report is then used for what it is good at -- the kind of a failure, and the
         numbers of a success -- and the disk for the one thing no report can say: that the
         run stopped partway and left work behind.
+
+        ★ **Criterion E lands here, and it is the one branch that is new.** A run a signal
+        ended used to arrive with ``killed=False``, ``ok=False`` and a non-empty stderr, so
+        it fell through to the failure branch and was shown **in the error panel** -- the
+        same red treatment as a config that will not load. That contradicted the CLI's own
+        reasoning, which gives an interrupted run a separate exit code precisely because
+        the two "want opposite reactions from a script": an error means do not run this
+        again, an interrupted run means this was going fine, pick it up. It now goes where a
+        stopped run goes, with the headline saying a signal ended it rather than the user
+        stopping it, so the two are visibly different and neither is dressed as an error.
         """
         run = self._execution.run_result()
         if run is None:
             return
+        state = self._execution.state
         output = self._execution.output_path()
         checkpointing = self._execution.is_checkpointing()
         self._remember_run(output, checkpointing=checkpointing)
         left = left_behind(output, checkpointing=checkpointing)
 
-        if run.killed:
+        if state is RunState.CANCELLED:
             self._errors.clear()
             self._results.show_unfinished(left)
             return
 
-        if run.ok:
+        if state is RunState.INTERRUPTED:
+            # ★ Not a failure, so the error panel is cleared rather than filled. The
+            # details are not thrown away: they are in the report this run did write,
+            # which the history panel reads, and the results panel says what is on disk.
+            self._errors.clear()
+            self._results.show_unfinished(left, interrupted=True)
+            return
+
+        if state is RunState.FINISHED:
             self._errors.clear()
             self._results.show_summary(read_outcome(output, checkpointing=checkpointing))
             return

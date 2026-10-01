@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 from gigaxml.gui.batch_queue import BatchQueue
 from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.i18n import tr
+from gigaxml.gui.run_state import RunState, state_of
 from gigaxml.gui.settings import FORMATS
 
 __all__ = ["PUMP_INTERVAL_MS", "BatchPanel"]
@@ -81,7 +82,6 @@ class BatchPanel(QWidget):
         self._queue = BatchQueue()
         self._process: CliProcess | None = None
         self._outcome: RunResult | None = None
-        self._finished_flag = False
 
         layout = QVBoxLayout(self)
 
@@ -202,6 +202,19 @@ class BatchPanel(QWidget):
         """
         job = self._queue.next_job()
         if job is None:
+            # ★ **``next_job()`` returns ``None`` for two different reasons, and M9 made
+            # the difference matter.** It returns ``None`` when there is nothing left to do
+            # *and* when a job is already in flight, because it hands out at most one at a
+            # time. The old code treated both as "the batch is over": it stopped the pump
+            # and dropped the child reference either way. That was invisible while the panel
+            # held a ``_finished`` flag -- the flag was what the pump asked, so losing the
+            # reference cost nothing -- and it is a real defect once the child is the
+            # authority: calling this while a job is working now erases the run the panel
+            # has not settled yet, and the queue stays stuck on that job forever. So the two
+            # are separated, and the in-flight case does nothing at all: that run's own
+            # :meth:`_drain` comes back here for the job after it.
+            if self._queue.running is not None:
+                return
             self._pump.stop()
             self._start.setEnabled(True)
             self._cancel.setEnabled(False)
@@ -215,35 +228,57 @@ class BatchPanel(QWidget):
         # nothing to do with the documents.
         job.output.mkdir(parents=True, exist_ok=True)
         self._outcome = None
-        self._finished_flag = False
         self._refresh()
         process = CliProcess(
             self.build_args(job.source, job.output),
-            on_finished=self._note_finished,  # reader thread: set a flag only
+            on_finished=self._note_finished,  # reader thread: record the result only
         )
         self._process = process
         process.start()
         self._pump.start()
 
     def _note_finished(self, run: RunResult) -> None:
-        """Runs on the reader thread. Records the outcome and touches nothing else."""
+        """Runs on the reader thread. Records the outcome and touches nothing else.
+
+        **No flag, and this panel is the one that needed it least.** A batch job's
+        ``_finished_flag`` was a one-shot latch: cleared on the way through
+        :meth:`_drain` so the pump would not settle the same job twice. There is no latch
+        to keep now, because :meth:`_drain` always ends by handing over -- to the next job
+        or, with the queue empty, to nothing at all -- and a panel holding no child reports
+        ``IDLE``. The one-shot property falls out of the state rather than being maintained
+        beside it.
+        """
         self._outcome = run
-        self._finished_flag = True
+
+    @property
+    def state(self) -> RunState:
+        """Where the job in hand is, as one value.
+
+        Read from the child rather than kept here -- see
+        :meth:`gigaxml.gui.panels.execution.ExecutionPanel.state` for why.
+        """
+        return state_of(self._process)
 
     def _drain(self) -> None:
         """On the UI thread: if the child has finished, record it and move on."""
-        if not self._finished_flag:
+        state = self.state
+        if not state.is_terminal:
             return
-        self._finished_flag = False
         job = self._queue.running
         outcome = self._outcome
         if job is not None:
-            ok = outcome is not None and outcome.exit_code == 0
-            detail = (
-                ""
-                if ok
-                else (tr("exit {}").format(outcome.exit_code) if outcome else tr("no result"))
-            )
+            # ★ Read off the state rather than off ``exit_code == 0``, which changes one
+            # edge case on purpose: a job that finished in the same instant the user
+            # pressed Cancel used to be filed as **ok**, because its exit code said 0 and
+            # the code never asked whether anybody had asked it to stop. Recorded as a
+            # success it would promise output the user had told the tool to abandon.
+            ok = state is RunState.FINISHED
+            if ok or outcome is None:
+                detail = "" if ok else tr("no result")
+            elif state is RunState.INTERRUPTED:
+                detail = tr("interrupted")
+            else:
+                detail = tr("exit {}").format(outcome.exit_code)
             self._queue.note_finished(job, ok=ok, detail=detail)
         self._refresh()
         self._start_next()

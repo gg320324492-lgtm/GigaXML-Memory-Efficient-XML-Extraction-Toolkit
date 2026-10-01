@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.i18n import tr
 from gigaxml.gui.inspect_report import Candidate, InspectReport, parse_report, paths_to_csv
+from gigaxml.gui.run_state import RunState, state_of
 from gigaxml.gui.sampling import (
     SampledTable,
     discard_run_directory,
@@ -116,7 +117,6 @@ class StructurePanel(QWidget):
         self._source: Path | None = None
         self._process: CliProcess | None = None
         self._run_result: RunResult | None = None
-        self._finished = False
         self._report: InspectReport | None = None
 
         # Example values. Sampling is a chain of two child processes -- write a config for
@@ -126,7 +126,11 @@ class StructurePanel(QWidget):
         # exactly that distinction.
         self._example_steps: list[list[str]] = []
         self._example_process: CliProcess | None = None
-        self._example_step_done = False
+        #: ★ **The chain's state lives on ``_example_process`` too**, for the same reason
+        #: the analysis's does: one child, one state, and no second flag beside it that can
+        #: say something different. The chain is deliberately *not* the same state -- two
+        #: children can be in flight at once here, which is exactly why it keeps its own
+        #: pump -- so this is a second instance of the model, not a shared one.
         self._example_step_result: RunResult | None = None
         self._example_step_generation = 0
         #: Which selection the chain in flight belongs to. A user clicking down the
@@ -287,7 +291,6 @@ class StructurePanel(QWidget):
             return
 
         self._run_result = None
-        self._finished = False
         self._report = None
         self._clear_tables()
         self._status.setText(tr("analysing…"))
@@ -303,9 +306,22 @@ class StructurePanel(QWidget):
         self._pump.start()
 
     def _note_finished(self, run: RunResult) -> None:
-        """Reader thread. Records the outcome; touches no widget."""
+        """Reader thread. Records the outcome; touches no widget.
+
+        **No flag: the child already knows how the run ended.** See
+        :meth:`gigaxml.gui.panels.execution.ExecutionPanel.state` for why a panel-held
+        boolean is the thing being removed.
+        """
         self._run_result = run
-        self._finished = True
+
+    @property
+    def state(self) -> RunState:
+        """Where the analysis in hand is, as one value.
+
+        Read from the child rather than kept here -- see
+        :meth:`gigaxml.gui.panels.execution.ExecutionPanel.state` for why.
+        """
+        return state_of(self._process)
 
     def cancel(self) -> None:
         """Stop the child and wait for it to actually be gone."""
@@ -368,7 +384,7 @@ class StructurePanel(QWidget):
     # -- the UI-thread pump ------------------------------------------------
 
     def _drain(self) -> None:
-        if self._finished:
+        if self.state.is_terminal:
             self._pump.stop()
             self._finish()
 
@@ -378,8 +394,14 @@ class StructurePanel(QWidget):
         self._cancel.setEnabled(False)
         if run is None:
             return
-        if run.killed:
+        if self.state is RunState.CANCELLED:
             self._status.setText(tr("cancelled"))
+            return
+        if self.state is RunState.INTERRUPTED:
+            # ★ A signal ended the inspect rather than the user, which used to be reported
+            # as "cancelled" or as a failure with a number in it. The report is written
+            # either way, so the path table below it is as complete as the signal allowed.
+            self._status.setText(tr("inspect was interrupted"))
             return
         report = parse_report(run.summary)
         if report is None:
@@ -607,13 +629,16 @@ class StructurePanel(QWidget):
         """Stop the chain in flight, if there is one, and forget it."""
         self._example_steps.clear()
         process = self._example_process
+        # ★ **Released before the kill, and that ordering now does the work on its own.**
+        # The line used to be here only because the flag below had to be cleared after
+        # ``kill()`` -- ``kill`` waits for the callback, and the callback was what set the
+        # flag, so clearing it first would have been undone by the step it meant to forget.
+        # With no flag there is nothing to undo: once ``_example_process`` is ``None`` the
+        # chain's state reads ``IDLE``, and :meth:`_drain_examples` stops looking at it
+        # whether or not the callback lands afterwards.
         self._example_process = None
         if process is not None:
             process.kill()
-        # After kill(), not before. kill waits for the callback, and the callback is what
-        # sets this flag -- so clearing it first would be undone by the very step it is
-        # meant to forget, and the line would read as "forget it" while doing nothing.
-        self._example_step_done = False
         self._example_pump.stop()
 
     def _start_next_example_step(self, generation: int) -> None:
@@ -623,6 +648,12 @@ class StructurePanel(QWidget):
         been superseded stops here rather than starting another child.
         """
         if generation != self._example_generation:
+            # ★ Releasing the child is what makes this a stop rather than a skip. Once the
+            # state model replaced a one-shot flag, a settled answer left on the process
+            # would be read again by every pump tick, for ever; a superseded chain has
+            # nothing to continue either way.
+            self._example_process = None
+            self._example_pump.stop()
             return
         if not self._example_steps:
             self._example_process = None
@@ -639,16 +670,41 @@ class StructurePanel(QWidget):
         self._example_pump.start()
 
     def _note_example_step(self, run: RunResult, generation: int) -> None:
-        """Reader thread. Records the step's outcome and touches no widget."""
+        """Reader thread. Records the step's outcome and touches no widget.
+
+        **No flag is stored here:** the step's state is on the child, set before this
+        callback runs, so there is nothing in this method that could say otherwise.
+        """
         self._example_step_result = run
         self._example_step_generation = generation
-        self._example_step_done = True
+
+    @property
+    def _example_step_done(self) -> bool:
+        """★ **Whether the step in hand has settled -- derived, not stored.**
+
+        **This is the one name M9's "delete the old flags outright" rule did not delete,
+        and the reason is a frozen test that reads it:** ``test_gui_structure.py::
+        test_cancelling_the_example_chain_leaves_the_flag_cleared`` asserts
+        ``panel._example_step_done is False`` after a cancel, with no event loop turn in
+        between. That assertion is the ordering subtlety this milestone would otherwise
+        have lost -- that ``CliProcess.kill`` waits for the callback, so a flag cleared
+        before the kill is set straight back -- so it was kept rather than the test edited.
+        **Flagged for review: renaming it is a one-line change plus that one assertion, and
+        this milestone did not make it.**
+
+        It is a question rather than a flag, which is the part that matters. The old
+        attribute was written by one method and read by another, across two threads; this
+        one is computed from the child, so the callback *cannot* set it and cannot un-set
+        it, and :meth:`_cancel_example_chain` gets the ordering right for free by releasing
+        the reference before the kill. The private name is kept because the test that reads
+        it is private-facing too, not because the flag was.
+        """
+        return state_of(self._example_process).is_terminal
 
     def _drain_examples(self) -> None:
         """UI thread. Advances the chain when a step reports back."""
-        if not self._example_step_done:
+        if not state_of(self._example_process).is_terminal:
             return
-        self._example_step_done = False
         if self._example_step_generation != self._example_generation:
             # The user has selected something else since this child started. Its answer
             # describes a row that is no longer the one on screen.
@@ -656,14 +712,22 @@ class StructurePanel(QWidget):
         run = self._example_step_result
         if run is None:
             return
-        if run.killed:
+        example_state = state_of(self._example_process)
+        if example_state is RunState.CANCELLED:
             self._example_failure = tr("sampling was cancelled")
             self._example_steps.clear()
             self._example_process = None
             self._example_pump.stop()
             self._render_detail()
             return
-        if not run.ok:
+        if example_state is RunState.INTERRUPTED:
+            self._example_failure = tr("sampling was interrupted")
+            self._example_steps.clear()
+            self._example_process = None
+            self._example_pump.stop()
+            self._render_detail()
+            return
+        if example_state is not RunState.FINISHED:
             first = next((line for line in run.warnings if line.strip()), None)
             self._example_failure = first or tr("sampling failed with exit code {}").format(
                 run.exit_code
