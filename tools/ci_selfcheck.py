@@ -1,4 +1,5 @@
-"""Prove that the Windows and macOS legs of CI are really running tests.
+"""Prove that the Windows and macOS legs of CI are really running tests, and that the
+release chain is pinned to code nobody can change underneath it.
 
 ★ **What this is for.** A matrix row is a claim, not a fact. ``runs-on: windows-latest``
 on a job whose pytest step has been narrowed to one file still types green, and the only
@@ -34,6 +35,19 @@ Three subcommands, and each answers a different way the claim could be false:
     fails in both directions on purpose: it catches a Windows leg that skips its way to
     green, and it catches a platform guard that stopped guarding.
 
+``pins`` [--verify-remote]
+    Static, plus optionally the network. M15's half. Two third-party actions sit on the
+    release chain with the rights to publish, and both are referenced by a *moving* ref --
+    one by a tag, one by a branch, which is worse because a branch can be force-pushed with
+    no history and no notice. ``pins`` reads every ``uses`` out of every workflow and
+    requires that anything not under GitHub's own ``actions/`` namespace is pinned to a
+    40-character commit SHA *and* carries a comment naming the release that SHA came from.
+    The comment is a YAML comment, so the parser cannot see it and this tool reads it off
+    the line as well. With ``--verify-remote`` it then asks each remote, with
+    ``git ls-remote``, whether that release really is that commit -- which is what turns a
+    label from a comment into a fact. A network failure is reported as the check failing
+    to run, exit 2, and never as a defect in the workflow.
+
 None of this replaces pytest's exit code, and none of it makes a failure quieter. It adds
 the two things an exit code cannot say: *how much* ran, and *on what*.
 """
@@ -45,7 +59,9 @@ import locale
 import os
 import pathlib
 import platform
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -102,6 +118,17 @@ TEST_DIRECTORIES = (
 
 class SelfCheckError(Exception):
     """A claim the workflow makes, which the machine does not support."""
+
+
+class RemoteUnreachableError(Exception):
+    """The version could not be resolved, because the network was not there.
+
+    ★ Deliberately not a ``SelfCheckError``. The two mean opposite things and the log has
+    to keep them apart: "this workflow is wrong" is a defect to fix, "this check could not
+    reach github.com" is infrastructure, and a guard that reports the second in the voice
+    of the first trains people to ignore it. It exits 2, which is the code this tool has
+    always used for "could not run" -- never 1.
+    """
 
 
 # --- workflow reading -------------------------------------------------------------
@@ -655,6 +682,179 @@ def check_report(report: pathlib.Path, min_tests: int, max_skips: int) -> None:
         raise SelfCheckError("\n  - ".join(["", *problems]))
 
 
+# --- pins -------------------------------------------------------------------------
+
+#: ``actions/*`` is GitHub's own namespace. Criterion C leaves those on tags: they are
+#: reviewed in the same repository as the workflow, published by the same vendor, and
+#: pinned by the runner image owner. Everything else is a third party whose tag someone
+#: else can move, and the rule below is scoped to them by *owner*, not by a list of two
+#: names -- a list would have to be edited every time a release step is added, and the
+#: moment it is forgotten is the moment the guard stops guarding the thing it was written
+#: for.
+FIRST_PARTY_OWNER = "actions"
+
+SHA_REF = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def trailing_comments(text: str) -> dict[str, str]:
+    """``uses:`` value -> the comment written beside it, read from the raw text.
+
+    ★ YAML drops comments, so a parsed workflow cannot see the version number that a pin is
+    required to carry -- and the version number is the entire point of the pin. The
+    comment therefore has to be read off the line, which means this tool has two views of
+    every file and has to be careful they agree: ``check_pins`` requires that every
+    ``uses`` the parser found also appears on a line of its own. A ``uses`` written in a
+    form this cannot see on one line is reported, not skipped -- a value the version check
+    cannot reach is a value the version check cannot vouch for.
+    """
+    found: dict[str, str] = {}
+    pattern = re.compile(r"\A\s*(?:-\s+)?uses:\s*(\S+)\s*(?:#\s*(.*?))?\s*\Z")
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match:
+            found.setdefault(match.group(1), (match.group(2) or "").strip())
+    return found
+
+
+def parsed_uses(workflow: dict[str, Any]) -> list[str]:
+    """Every ``uses`` in the workflow, from the parsed structure rather than the text."""
+    values: list[str] = []
+    for job in (workflow.get("jobs") or {}).values():
+        for step in steps_of(job):
+            value = step.get("uses")
+            if isinstance(value, str):
+                values.append(value)
+    return values
+
+
+def split_use(value: str) -> tuple[str, str]:
+    """``owner/repo/path@ref`` -> (``owner/repo``, ``ref``)."""
+    slug, _, ref = value.rpartition("@")
+    if not slug or not ref:
+        raise SelfCheckError(
+            f"\n  - {value!r} is not a usable action reference: expected owner/repo@ref"
+        )
+    return slug, ref
+
+
+def remote_shas(slug: str, version: str) -> dict[str, str]:
+    """The SHAs a remote actually gives for ``version``, as a tag or as a branch.
+
+    Read with ``git ls-remote`` rather than from the GitHub API because this is the same
+    command a person would run to check by hand, and the point of the check is that its
+    answer can be reproduced without trusting anything this tool does.
+    """
+    completed = subprocess.run(
+        [
+            "git",
+            "ls-remote",
+            f"https://github.com/{slug}",
+            f"refs/tags/{version}",
+            f"refs/tags/{version}^{{}}",
+            f"refs/heads/{version}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        raise RemoteUnreachableError(
+            f"git ls-remote https://github.com/{slug} failed with "
+            f"{completed.returncode}: {completed.stderr.strip()[:200]}"
+        )
+    shas: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if sha and name:
+            shas[name] = sha
+    return shas
+
+
+def check_pins(verify_remote: bool) -> None:
+    """Every third-party action pinned to an immutable SHA, and labelled with the release
+    that SHA came from."""
+    problems: list[str] = []
+    rows: list[tuple[str, str, str, str]] = []
+    first_party: set[str] = set()
+
+    for filename in sorted(WORKFLOW_DIR.glob("*.yml")):
+        text = filename.read_text(encoding="utf-8")
+        workflow = yaml.safe_load(text)
+        comments = trailing_comments(text)
+
+        for value in parsed_uses(workflow):
+            slug, ref = split_use(value)
+            owner = slug.split("/")[0]
+            comment = comments.get(value)
+            if comment is None:
+                problems.append(
+                    f"{filename.name}: {value} is on one line nowhere in the file, so the "
+                    f"version comment beside it cannot be read. Write the uses on its own "
+                    f"line with the version after a '#'."
+                )
+                continue
+            if owner == FIRST_PARTY_OWNER:
+                first_party.add(slug)
+                continue
+            if not SHA_REF.match(ref):
+                problems.append(
+                    f"{filename.name}: {value} names a MOVING ref. A tag or a branch can be "
+                    f"repointed by whoever owns it, so what runs today is not what runs "
+                    f"tomorrow. Pin the commit SHA and write the version beside it."
+                )
+                continue
+            if not comment:
+                problems.append(
+                    f"{filename.name}: {slug} is pinned to {ref[:12]} with no version "
+                    f"comment. A bare SHA is unreadable three months from now, which is "
+                    f"the same as not saying which release was reviewed."
+                )
+                continue
+
+            matched = ""
+            if verify_remote:
+                remote = remote_shas(slug, comment)
+                tag_object = remote.get(f"refs/tags/{comment}")
+                peeled = remote.get(f"refs/tags/{comment}^{{}}")
+                head = remote.get(f"refs/heads/{comment}")
+                if not remote:
+                    problems.append(
+                        f"{filename.name}: {slug} is pinned to {ref[:12]} and commented "
+                        f"{comment!r}, but {comment!r} is not a tag or a branch on that "
+                        f"repository. The version comment is a claim; this one is false."
+                    )
+                    continue
+                if ref in {tag_object, peeled, head}:
+                    which = "annotated tag" if ref == tag_object and peeled else "release"
+                    matched = f"{comment} ({which})"
+                else:
+                    problems.append(
+                        f"{filename.name}: {slug} is pinned to {ref[:12]}, but its comment "
+                        f"says {comment!r} and that release is "
+                        f"{'the tag object ' + tag_object[:12] if tag_object else ''}"
+                        f"{'and the commit ' + peeled[:12] if peeled else ''}"
+                        f"{'and the branch head ' + head[:12] if head else ''}. "
+                        f"One of those two numbers is wrong."
+                    )
+                    continue
+            rows.append((slug, ref, comment, matched or "not verified"))
+
+    print(f"{'third-party action':<40}{'pinned to':<14}{'version':<14}resolved to")
+    print("-" * 96)
+    for slug, ref, comment, matched in rows:
+        print(f"{slug:<40}{ref[:12]:<14}{comment:<14}{matched}")
+    print(
+        f"\n{len(rows)} third-party action(s) pinned; "
+        f"{len(first_party)} first-party action(s) left on tags: "
+        f"{', '.join(sorted(first_party))}"
+    )
+    if not verify_remote:
+        print("(run with --verify-remote to resolve each version comment against its remote)")
+
+    if problems:
+        raise SelfCheckError("\n  - ".join(["", *problems]))
+
+
 # --- entry point -----------------------------------------------------------------
 
 
@@ -674,6 +874,15 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("report", type=pathlib.Path, help="path to the junit xml")
     rep.add_argument("--min-tests", type=int, required=True)
     rep.add_argument("--max-skips", type=int, required=True)
+
+    pins = sub.add_parser(
+        "pins", help="every third-party action pinned to an immutable SHA, version-labelled"
+    )
+    pins.add_argument(
+        "--verify-remote",
+        action="store_true",
+        help="resolve each version comment against github with git ls-remote",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -709,6 +918,16 @@ def main(argv: list[str] | None = None) -> int:
             check_report(args.report, args.min_tests, args.max_skips)
             print("report: the run was real, and it ran the platform-specific tests.")
             return 0
+        if args.command == "pins":
+            print("=" * 96)
+            print("the release chain's third-party actions")
+            print("=" * 96)
+            check_pins(args.verify_remote)
+            print(
+                "pins: every third-party action is pinned to a commit SHA and labelled "
+                "with the release it came from."
+            )
+            return 0
     except SelfCheckError as exc:
         # ★ stdout is flushed first, and that is not tidiness. Without it the verdict --
         # the one line a reader came for -- is written to stderr ahead of the report it is
@@ -718,6 +937,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nSELF-CHECK FAILED\n{exc}", file=sys.stderr)
         sys.stderr.flush()
         return 1
+    except RemoteUnreachableError as exc:
+        sys.stdout.flush()
+        print(
+            f"\nPINS COULD NOT BE VERIFIED\n{exc}\n"
+            f"This is not a claim about the workflow. It is the check that could not run.",
+            file=sys.stderr,
+        )
+        sys.stderr.flush()
+        return 2
     except (OSError, ET.ParseError, yaml.YAMLError) as exc:
         sys.stdout.flush()
         print(f"\nSELF-CHECK COULD NOT RUN\n{type(exc).__name__}: {exc}", file=sys.stderr)
