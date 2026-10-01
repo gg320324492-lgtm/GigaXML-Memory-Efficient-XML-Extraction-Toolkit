@@ -255,31 +255,57 @@ def test_a_known_defect_a_part_name_can_reach_a_file_outside_the_parts_directory
         read_checkpoint(manifest)
 
 
-# --- defect 3: the schema is not part of what a run is ------------------------
+# --- defect 3: the schema was not part of what a run is ------------------------
 #
-# config_identity hashes what the run depends on -- record path, namespaces, error
-# policy, fields -- and does not include the XSD, which decides how those fields are
-# typed. So two runs that would produce different data can share one identity.
+# config_identity hashed what the run depended on -- record path, namespaces, error
+# policy, fields -- and did not include the XSD, which decides how those fields are
+# typed. So two runs that would produce different data shared one identity.
 #
-# ★ STILL OPEN. Owned by M4, not M2. This test must keep asserting equality until that
-# milestone lands; a change here belongs to a change in config_identity, not to any work
-# on manifest parsing.
+# **Repaired in M4.** The test now asserts the opposite, as the M0 docstring said it
+# would have to: the two identities must differ. It keeps its name because
+# ``test_a_known_defect_...`` records where each assertion came from, and the body below
+# says what used to happen -- a test rewritten without that history reads as though the
+# property had always held.
 
 
-def test_a_known_defect_the_xsd_is_absent_from_the_run_identity() -> None:
-    """Two different schemas hash identically, so a resume cannot notice the change.
+def test_a_known_defect_the_xsd_is_absent_from_the_run_identity(tmp_path: Path) -> None:
+    """Two schemas of different content no longer share an identity.
 
-    Changing an XSD's contents changes how every field is typed and therefore what the
-    extraction writes, while leaving the run identity untouched. ``validate_resume``
-    compares that identity and nothing else about the schema, so ``--resume`` proceeds
-    and appends rows of a different shape to parts written under the old one.
+    **What it used to do**: an XSD's contents decide how every field is typed and
+    therefore what the extraction writes, yet the run identity did not mention the
+    schema at all. Changing the schema in place left the identity untouched,
+    ``validate_resume`` compared that identity and nothing else about the schema, and
+    ``--resume`` appended rows of a different shape to parts written under the old one.
 
-    **When M4 repairs this, assert the opposite**: that the two hashes differ. A test
-    that asserts equality is a test that has to be deleted, so it is written here to be
-    found and changed rather than quietly removed.
+    **Now**: the schema's content hash is part of the identity, so the two configs below
+    are two runs and a resume between them is refused. The files are written here rather
+    than named, because the assertion is about their *contents* -- two paths that do not
+    exist could not tell a content-keyed identity from a path-keyed one.
+
+    Note also what is deliberately not asserted: the same schema under a different name
+    still produces the same identity, which is the property that keeps an identity about
+    what a run *is* rather than where its files sit.
     """
+    source = tmp_path / "catalog.xsd"
     base = {"record": "/catalog/products/product", "fields": {"name": {"path": "name"}}}
-    with_schema_a = parse_config({**base, "schema": "catalog-a.xsd"})
-    with_schema_b = parse_config({**base, "schema": "catalog-b.xsd"})
 
-    assert config_identity(with_schema_a) == config_identity(with_schema_b)
+    # Each identity is taken while its own content is on disk. The path is the same both
+    # times, which is the point: computing both after the second write would compare an
+    # identity against itself and pass for the wrong reason.
+    source.write_text(_XSD_DECLARING_STRING, encoding="utf-8")
+    with_string_schema = config_identity(parse_config({**base, "schema": str(source)}))
+
+    source.write_text(_XSD_DECLARING_DECIMAL, encoding="utf-8")
+    with_decimal_schema = config_identity(parse_config({**base, "schema": str(source)}))
+
+    assert with_string_schema != with_decimal_schema
+
+
+#: Two schemas that declare the same element with different types. Both valid, and the
+#: same length, so the identity can only be told apart by the bytes -- a size difference
+#: would let a fingerprint that hashed only the length pass this.
+_XSD_HEAD = (
+    '<?xml version="1.0" encoding="UTF-8"?><xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+)
+_XSD_DECLARING_STRING = f'{_XSD_HEAD}<xs:element name="name" type="xs:string"/></xs:schema>'
+_XSD_DECLARING_DECIMAL = f'{_XSD_HEAD}<xs:element name="name" type="xs:decimal"/></xs:schema>'

@@ -1043,6 +1043,34 @@ def _identity_or_reason(
         return None, f"{label} could not be identified: {exc}"
 
 
+def _schema_report_identity(
+    config: ExtractionConfig,
+) -> tuple[dict[str, object] | None, str | None]:
+    """The schema a run used, for the report, or ``None`` and why there is none.
+
+    Three outcomes, and the middle one is the reason this is not inlined:
+
+    * no ``schema:`` in the config → ``(None, None)``: the report omits the key entirely,
+      because a run without a schema has nothing to say about one;
+    * the schema is readable → ``({"path": ..., "sha256": ...}, None)``: both, because the
+      path is what a reader can go and look at while the digest is what actually decided
+      the types;
+    * the schema cannot be read → ``(None, "…")``: no identity, and a sentence saying so.
+
+    The path appears here and not in :func:`gigaxml.checkpoint.config_identity` on
+    purpose. The identity must be blind to location -- the same schema moved is the same
+    run -- but a report is read by a person, and a digest alone tells them nothing about
+    which file to open. This is a record of what happened, not a comparison.
+    """
+    if not config.schema:
+        return None, None
+    try:
+        identity = source_identity(config.schema)
+    except (CheckpointError, OSError) as exc:
+        return None, f"the schema {str(config.schema)!r} could not be identified: {exc}"
+    return identity, None
+
+
 #: The shape of a run report, as opposed to the version of the tool that wrote it
 #: (``tool_version``). Every report carries it so a consumer can tell which fields to
 #: expect without guessing from ``tool_version`` -- a patch release and a format change
@@ -1173,6 +1201,15 @@ def _environment_fields(
         "input_identity": input_identity,
         "output_identity": output_identity,
     }
+    # The schema is part of what this run *was*, so the report says which one it used.
+    # A config naming no schema omits the key entirely rather than writing null: a null
+    # would read as "there was a schema and it could not be identified", which is the
+    # same confusion the identity fields avoid by pairing a null with a reason.
+    schema_identity, schema_error = _schema_report_identity(config)
+    if schema_identity is not None:
+        block["schema_identity"] = schema_identity
+    if schema_error is not None:
+        block["schema_identity_error"] = schema_error
     # Throughput over the elapsed time of the whole run, and only when it is defined:
     # a run that took under a millisecond has no rate worth writing, and 0.0 there
     # would read as "infinitely slow".

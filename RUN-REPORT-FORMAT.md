@@ -58,15 +58,25 @@ identified", which is the only honest shape for it.
 | `input_identity_error` | the input could not be hashed (missing file, reading stdin) |
 | `output_identity_error` | the output could not be hashed — a failed run, or a checkpoint directory whose parts directory is not a file |
 | `checkpoint` | the run used `--checkpoint-every` |
+| `schema_identity` | the config names a `schema:` that could be read — `{path, size, sha256}` |
+| `schema_identity_error` | the config names a `schema:` that could **not** be read |
+
+The schema is part of what a run *was*: it decides how every field is typed, and it
+takes part in the run identity a `--resume` checks. `schema_identity` records both the
+path — so a reader knows which file to open — and its content hash, which is the part
+that actually decided the typing. A config with no `schema:` omits both keys rather
+than writing `null`, because a `null` would read as "there was a schema and it could
+not be identified".
 
 Field counts as actually measured, all carrying `schema_version`:
 
 | Scenario | Fields |
 |---|---|
-| successful `extract` or `sample` | 24 |
+| successful `extract` or `sample`, no schema | 24 |
 | failed run (`output_identity_error` present) | 25 |
 | successful `--checkpoint-every` run | 26 |
 | missing input (`input_identity_error` present) | 26 |
+| a run whose config names a readable schema | +1 (`schema_identity`) |
 
 ## Unknown keys
 
@@ -93,7 +103,20 @@ here. It is your consumer code that should decide.
 **No migration mechanism exists.** Version 1 is the first version; there is no older
 report to convert and no tool that converts one.
 
-What has changed so far is *addition*: fields have been added to this format during the
-project's history, and none has been removed or repurposed. That is an observation
-about the past, **not a promise about the future** — a future change that breaks
-compatibility would raise `schema_version`, and that is exactly why the field exists.
+**One change did break checkpoints, and it is not in this file.** When a config's
+`schema:` became part of the run identity, every checkpoint written before that changed
+its `config_hash`. A checkpoint made by an earlier build therefore cannot be resumed by
+this one: the hash it recorded no longer matches, and `--resume` refuses it. This
+affects **only runs that used `--checkpoint-every`**. A config naming no schema hashes
+exactly as it always did, so every checkpoint from a run without an XSD still resumes —
+that is asserted against pinned digests, not assumed.
+
+There is no tool that rewrites an old manifest to the new hash, and no attempt is made
+to guess. The refusal says so and names the checkpoint. Re-running without `--resume`
+starts a fresh checkpointed run.
+
+What has changed so far is otherwise *addition*: fields have been added to this format
+during the project's history, and none has been removed or repurposed. That is an
+observation about the past, **not a promise about the future** — a future change that
+breaks compatibility would raise `schema_version`, and that is exactly why the field
+exists.
