@@ -287,8 +287,11 @@ def main() -> int:
             f"Re-record it with --update from the same job that runs this check, or add "
             f"the block by hand recording honestly that the older fields are unrecoverable."
         )
+    # The first whitespace-delimited token, not a slice: a recovered commit reads
+    # "234150e -- RECOVERED, not recorded..." and `[:12]` of that is "234150e -- R".
+    commit_label = str(reference["identity"]["git_commit"]).split()[0]
     print(
-        f"recorded at   {reference['identity']['git_commit'][:12]} "
+        f"recorded at   {commit_label} "
         f"on {reference['identity']['os']} (schema {reference['schema_version']})"
     )
 
