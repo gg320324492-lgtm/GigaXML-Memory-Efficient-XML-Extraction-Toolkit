@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "recorded": false,
+  "version": "1.2.1",
+  "released": "2026-10-01T01:31:25+08:00",
+  "released_as": "92d6154",
+  "why_there_is_no_record": "Same evidence as 1.2.0.json: the newest benchmark result in this repository is from 2026-09-29, and no results file has been committed since. 1.2.1 shipped on 2026-10-01 with nothing re-measured.",
+  "no_numbers_were_fabricated_here": "Deliberately empty of numbers. This is the current version, which makes it the entry most likely to be wanted and the one where an invented figure would do the most damage.",
+  "what_would_close_this": "This is the version M20 will measure at, when 2.0 is cut. perf_baseline.py and run_comparison.py now write schema_version, an identity block, the generated dataset's seed and digest, and every individual run's raw values, so that record will be complete rather than reconstructed."
+}

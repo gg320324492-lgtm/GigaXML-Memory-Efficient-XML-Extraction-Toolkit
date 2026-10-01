@@ -1,4 +1,22 @@
 {
+  "schema_version": 2,
+  "identity": {
+    "schema_version": 2,
+    "git_commit": "234150e -- RECOVERED, not recorded. This baseline is re-recorded from the CI job rather than from a terminal, and 234150e is the last commit that touched the file ('fix: the two things the first CI run caught', 2026-09-29 23:27 local). That the recording happened in the job is the file's own note, not an inference: a reference taken from a desktop asserted a 42,246 rec/s floor on a runner that sustains 19,312 and turned the guard red on unchanged code.",
+    "gigaxml": "not recorded -- the baseline predates the identity block",
+    "python": "3.13.x (as recorded in measured_on; the exact patch was never written down)",
+    "lxml": "not recorded",
+    "os": "Linux (as recorded in measured_on.system)",
+    "cpu": "not recorded",
+    "machine": "not recorded",
+    "memory_total_gb": "not recorded",
+    "config_sha256": "80d3f4508bea0fc608b68dd1ee890fa5584ef6741e8002711035f664bac35182 -- RECOVERED by extracting the CONFIG literal from benchmarks/perf_baseline.py at 234150e and hashing its 253 bytes. Cross-checked: the literal at HEAD is byte-identical, and the modified script's own --update wrote the same digest independently. The config is a string in the source, not a file, so there is no working-tree/blob split and no line-ending exposure.",
+    "config_sha256_source": "the CONFIG literal in benchmarks/perf_baseline.py",
+    "dataset_sha256": "NOT RECORDED, and unrecoverable: the document is generated into a temporary directory that is deleted when the run ends, and before this milestone the seed was left to gigaxml generate's unstated default. The generate call now passes --seed explicitly and records the digest, so the next --update closes this.",
+    "memory_method": "self-read in the child, via gigaxml.run.peak_rss_mb() -- decidable from the code rather than asserted: the PROBE runs inside the child process and calls the product's own peak counter there, so the parent never reads the child's memory. That distinction is worth 800 MiB on this machine: a parent reading a live child returns a frozen ~4.1 MiB where the child's self-read returned 817.9 MiB for the same process, measured 2026-10-02.",
+    "summary_recomputable": "NO -- and this is the file's most serious defect. It records repeats: 5 and a median, but NOT the five individual values, so there is nothing to recompute from. benchmarks/perf_baseline.py at both 1d1b767 and 234150e computed 'rates' and 'peaks' and wrote them into this file's shape, so the values existed at recording time and were not kept. The five runs are unrecoverable. Until the next --update in the CI job, this number cannot be recomputed, cannot be traced to a run, and cannot be checked by anything in this repository.",
+    "provenance_of_these_numbers": "HAND-AUTHORED, measured by comparing the file's key set against the script that claims to write it. The script writes rates, peaks and measured_on.machine; this file has none of the three. The file has measured_on.runner and measured_on.note; the script writes neither, at 1d1b767 or at 234150e or today. Nothing else in the repository writes this path. So the file was not produced by --update. That does NOT establish that no run ever happened -- a person may have run the script, read the numbers it printed, and typed them in with a note explaining the desktop-versus-runner incident. What it establishes is the narrower and sufficient claim: no run in this repository produced this file, so its 19,312 rec/s and 24.4 MiB have no artefact behind them. The note and the runner field are a careful, correct account of where the numbers came from, and they are still an account rather than a measurement."
+  },
   "records": 29090,
   "records_per_s": 19312.0,
   "peak_rss_mb": 24.4,

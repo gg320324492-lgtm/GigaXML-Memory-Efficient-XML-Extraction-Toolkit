@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "recorded": false,
+  "version": "0.9.0",
+  "released": "2026-09-27T04:55:06+08:00",
+  "released_as": "d173047",
+  "why_there_is_no_record": "No benchmark result existed yet. The first one in this repository is benchmarks/compare/results.json, created by 51609be on 2026-09-28T04:02:28+08:00 -- a day later. The three scripts in benchmarks/ (bench_extraction.py, bench_inspect.py, bench_resident.py) print tables and do not commit their output.",
+  "no_numbers_were_fabricated_here": "This entry is deliberately empty of numbers. A version with no measurement gets a file saying so, not a file with an estimate in it: an invented 0.9.0 figure would be indistinguishable from a measured one to anyone reading it in three months, which is the exact failure benchmarks/provenance.py exists to prevent.",
+  "what_would_close_this": "Nothing. A measurement that was not taken cannot be recovered, and this milestone does not reconstruct it. Future versions get a record because perf_baseline.py and run_comparison.py now write an identity block on every run."
+}

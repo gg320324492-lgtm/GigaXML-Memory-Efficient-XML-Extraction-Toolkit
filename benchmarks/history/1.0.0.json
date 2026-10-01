@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "recorded": false,
+  "version": "1.0.0",
+  "released": "2026-09-28T00:02:52+08:00",
+  "released_as": "609aa24",
+  "why_there_is_no_record": "No benchmark result existed yet. The first one in this repository is benchmarks/compare/results.json, created by 51609be on 2026-09-28T04:02:28+08:00 -- four hours after this tag. Nothing in benchmarks/ committed its output at 1.0.0.",
+  "no_numbers_were_fabricated_here": "Deliberately empty of numbers, for the reason 0.9.0.json gives. A version with no measurement gets a file saying so.",
+  "closest_thing_that_exists": "benchmarks/compare/REPORT.md describes the comparison, but it was written after 1.1.0 and describes the sweep in benchmarks/history/1.1.0.json, not this release. It is not evidence about 1.0.0 and is not cited as such."
+}

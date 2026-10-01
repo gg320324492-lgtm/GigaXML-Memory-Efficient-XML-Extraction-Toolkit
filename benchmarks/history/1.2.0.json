@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "recorded": false,
+  "version": "1.2.0",
+  "released": "2026-09-30T19:22:11+08:00",
+  "released_as": "6a3b41d",
+  "why_there_is_no_record": "Measured, not assumed. The last commit to touch any benchmark result before this tag is 092e669 (benchmarks/compare/results.json) at 2026-09-29T19:04:18+08:00 and 234150e (benchmarks/perf-baseline.json) at 2026-09-29T23:27:24+08:00. This tag is 2026-09-30T19:22:11+08:00 -- a day and twenty minutes after the newest of them. Nothing was re-measured between 1.1.0 and this release, so this version shipped with the numbers of a tree six commits older and without anyone recording that fact at the time.",
+  "no_numbers_were_fabricated_here": "This is the entry the milestone's criterion C is about. 1.2.0 is a real released version, so a file shaped like a measurement would have been easy to write and impossible to distinguish from a real one later. It says there is no record, and the dates above are the evidence for that claim rather than an assurance.",
+  "what_would_close_this": "Running benchmarks/perf_baseline.py --update and benchmarks/compare/run_comparison.py at this tag would produce records, and until somebody does, 1.2.0's performance is unknown rather than equal to 1.1.0's. Assuming the two match would be a guess dressed as a history."
+}
