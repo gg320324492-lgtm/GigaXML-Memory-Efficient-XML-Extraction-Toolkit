@@ -1,5 +1,19 @@
 # exit_code=0 stream=stdout
 {
+  "field_kinds": {
+    "path": "fact",
+    "depth": "fact",
+    "count": "fact",
+    "attribute_names": "fact",
+    "child_tags": "fact",
+    "namespaces": "fact",
+    "missing_namespaces": "fact",
+    "nested_inside": "fact",
+    "evidence": "fact",
+    "score": "inference",
+    "repeat_score": "inference",
+    "shape_consistency": "inference"
+  },
   "source": "<TMP>/ns.xml",
   "input_mb": 0.001,
   "elements_seen": 32,
