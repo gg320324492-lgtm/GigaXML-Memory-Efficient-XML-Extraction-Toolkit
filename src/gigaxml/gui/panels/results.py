@@ -81,6 +81,11 @@ class ResultPanel(QWidget):
         self._outcome: RunOutcome | None = None
         self._left: LeftBehind | None = None
         self._unfinished = False
+        #: ★ Which of the two stopped-nesses this is: the user asked, or something else
+        #: did. Kept beside ``_unfinished`` rather than folded into it, because both are
+        #: the same answer to "did it finish?" and different answers to "what happened?" --
+        #: and the second question is the one a person looking at the window has.
+        self._interrupted = False
 
         layout = QVBoxLayout(self)
 
@@ -117,6 +122,7 @@ class ResultPanel(QWidget):
         self._outcome = outcome
         self._left = None
         self._unfinished = False
+        self._interrupted = False
         if outcome is None:
             self._headline.setText(tr("finished"))
             self._detail.setText(tr("the tool wrote no summary for this run"))
@@ -131,8 +137,17 @@ class ResultPanel(QWidget):
         self._headline.setStyleSheet("")
         self.setVisible(True)
 
-    def show_unfinished(self, left: LeftBehind | None) -> None:
+    def show_unfinished(self, left: LeftBehind | None, *, interrupted: bool = False) -> None:
         """A run that was stopped. ``left`` is what it left, if it left anything.
+
+        **``interrupted`` is what separates the two ways a run stops.** Both leave the same
+        thing on disk -- a partial output, no complete file, and (for a hard stop) no
+        report -- so the shape of what is left cannot tell them apart, and the headline is
+        what says which happened: the user stopped this one, or something else did. The
+        difference is not cosmetic. A user who pressed Cancel knows they did; telling them
+        the run was interrupted invites them to wonder what interrupted it. And the CLI
+        draws the same line deliberately, giving a signal-ended run its own exit code
+        because the two "want opposite reactions from a script".
 
         The size is reported and the row count is not, except where a manifest recorded it:
         a half-written file's length says how far it got, and any count read out of it would
@@ -142,7 +157,12 @@ class ResultPanel(QWidget):
         self._outcome = None
         self._left = left
         self._unfinished = True
-        self._headline.setText(tr("this run did not finish"))
+        self._interrupted = interrupted
+        self._headline.setText(
+            tr("this run was interrupted by a signal")
+            if interrupted
+            else tr("this run did not finish")
+        )
         self._headline.setStyleSheet(_WARNING_COLOUR)
         if left is None:
             self._detail.setText(
@@ -167,6 +187,7 @@ class ResultPanel(QWidget):
         self._outcome = None
         self._left = None
         self._unfinished = False
+        self._interrupted = False
         self._headline.setText("")
         self._headline.setStyleSheet("")
         self._detail.setText("")
@@ -184,6 +205,15 @@ class ResultPanel(QWidget):
 
     def is_unfinished(self) -> bool:
         return self._unfinished
+
+    def is_interrupted(self) -> bool:
+        """Whether this is the stopped-by-something-else case rather than the user's own.
+
+        Exposed for the same reason :meth:`headline_text` is: the distinction has to be
+        assertable without walking Qt's object tree, and M9's criterion E is about the two
+        being different rather than merely differently worded.
+        """
+        return self._unfinished and self._interrupted
 
     def headline_text(self) -> str:
         return self._headline.text()

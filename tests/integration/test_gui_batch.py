@@ -17,6 +17,7 @@ pytest.importorskip("PySide6")
 
 from gigaxml.gui.cli_process import RunResult
 from gigaxml.gui.panels.batch import BatchPanel
+from gigaxml.gui.run_state import RunState, RunStateMachine
 from gigaxml.gui.settings import FORMATS
 
 
@@ -26,6 +27,15 @@ class _FakeProcess:
     Reporting success immediately is the point. The real class calls back from a reader
     thread, and what this test is after is scheduling -- when the next job gets its
     process -- not extraction.
+
+    **M9 added :attr:`state`, and it is a contract rather than a convenience.** The panel
+    asks its child where the run is instead of holding a ``_finished`` flag beside it, so a
+    stand-in that does not answer is not a simpler stand-in -- it is an incomplete one, and
+    the first version of this class raised ``AttributeError`` from the panel's own
+    ``_drain``. It drives the project's real :class:`~gigaxml.gui.run_state.RunStateMachine`
+    rather than returning a constant, so a fake and the thing it stands in for cannot
+    disagree about what a successful run looks like. **No assertion in this file changed**;
+    the helper grew the method the panel now calls.
     """
 
     built: ClassVar[list[list[str]]] = []
@@ -34,14 +44,25 @@ class _FakeProcess:
         self.args = args
         self.killed = False
         self._on_finished = kwargs.get("on_finished")
+        self._machine = RunStateMachine()
         type(self).built.append(list(args))
 
+    @property
+    def state(self) -> RunState:
+        return self._machine.state
+
     def start(self) -> None:
+        self._machine.move_to(RunState.STARTING)
+        self._machine.move_to(RunState.RUNNING)
         if self._on_finished is not None:
             self._on_finished(RunResult(exit_code=0))
+        self._machine.move_to(RunState.FINISHED)
 
     def kill(self) -> None:
         self.killed = True
+        if self._machine.may_become(RunState.CANCELLING):
+            self._machine.move_to(RunState.CANCELLING)
+            self._machine.move_to(RunState.CANCELLED)
 
 
 @pytest.fixture(autouse=True)

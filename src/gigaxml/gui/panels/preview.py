@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from gigaxml.gui.cli_process import CliProcess, RunResult
 from gigaxml.gui.i18n import tr
+from gigaxml.gui.run_state import RunState, state_of
 from gigaxml.gui.sampling import (
     SampledTable,
     discard_run_directory,
@@ -67,7 +68,6 @@ class PreviewPanel(QWidget):
         self._config: dict[str, object] | None = None
         self._process: CliProcess | None = None
         self._run_result: RunResult | None = None
-        self._finished = False
         #: Which run the answer in hand belongs to. Pressing Preview again replaces the run
         #: in flight, and the answer that arrives for the old one must not be applied to
         #: the new one's settings.
@@ -205,7 +205,6 @@ class PreviewPanel(QWidget):
         generation = self._generation
 
         self._run_result = None
-        self._finished = False
         self._table = None
         self._clear_tables()
         self._status.setText(tr("sampling…"))
@@ -247,10 +246,27 @@ class PreviewPanel(QWidget):
         self._pump.stop()
 
     def _note_finished(self, run: RunResult, generation: int) -> None:
-        """Reader thread. Records the outcome; touches no widget."""
+        """Reader thread. Records the outcome; touches no widget.
+
+        **No flag, and the generation stays.** The two are different questions and were
+        briefly one pile: ``_finished`` said *did it end* and ``_finished_generation`` said
+        *whose ending is it*. The first now lives on the child, as its state; the second
+        has no equivalent anywhere else, because a callback that has already been
+        delivered cannot be un-delivered and a stale answer is a question about *which run*
+        rather than about whether one finished.
+        """
         self._run_result = run
         self._finished_generation = generation
-        self._finished = True
+
+    @property
+    def state(self) -> RunState:
+        """Where the sample in hand is, as one value.
+
+        Read from the child rather than kept here -- see
+        :meth:`gigaxml.gui.panels.execution.ExecutionPanel.state` for why, and
+        :func:`gigaxml.gui.run_state.state_of` for what a panel holding no child says.
+        """
+        return state_of(self._process)
 
     def shutdown(self) -> None:
         """Give up what the window cannot clean up when it closes.
@@ -305,9 +321,11 @@ class PreviewPanel(QWidget):
     # -- the UI-thread pump ------------------------------------------------
 
     def _drain(self) -> None:
-        if not self._finished:
+        # ★ Asked of the state, not of a flag the reader thread set. A pump that keeps
+        # firing after a stale answer is dropped is the pre-existing behaviour and is left
+        # alone: the new run that replaced it stops the pump when it settles.
+        if not self.state.is_terminal:
             return
-        self._finished = False
         if self._finished_generation != self._generation:
             # Recorded for a run the user has replaced since. ``kill`` guarantees the
             # callback has been delivered before the next run starts, so this is about the
@@ -323,8 +341,11 @@ class PreviewPanel(QWidget):
         self._cancel.setEnabled(False)
         if run is None:
             return
-        if run.killed:
+        if self.state is RunState.CANCELLED:
             self._status.setText(tr("cancelled"))
+            return
+        if self.state is RunState.INTERRUPTED:
+            self._status.setText(tr("sample was interrupted"))
             return
         if self._output is None:
             return

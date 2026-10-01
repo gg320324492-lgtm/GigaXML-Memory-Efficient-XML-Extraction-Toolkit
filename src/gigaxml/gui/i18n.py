@@ -112,6 +112,14 @@ ZH: dict[str, str] = {
     "starting…": "正在启动…",
     "cancelling…": "正在取消…",
     "cancelled": "已取消",
+    # ★ M9, criterion E. Beside "cancelled" rather than near the other interrupted wording
+    # on purpose: this is the pair the milestone exists to separate, and they are two lines
+    # apart so that anyone adding one of them sees the other. "cancelled" is a decision the
+    # user made; this is a decision something else made.
+    "interrupted — a signal ended this run": "已中断 —— 信号结束了这次运行",
+    "inspect was interrupted": "inspect 已被中断",
+    "sample was interrupted": "采样已被中断",
+    "this run was interrupted by a signal": "这次运行被信号中断",
     "finished — {} rows": "已完成 — {} 行",
     "finished": "已完成",
     "failed with exit code {}": "失败，退出码 {}",

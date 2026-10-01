@@ -29,6 +29,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gigaxml.gui.progress import Progress, parse_line
+from gigaxml.gui.run_state import (
+    ContradictoryStateError,
+    RunState,
+    RunStateMachine,
+    contradiction,
+    outcome_state,
+)
 
 
 def cli_command(args: Sequence[str]) -> list[str]:
@@ -120,23 +127,50 @@ class CliProcess:
         self._result: RunResult | None = None
         self._killed = threading.Event()
         self._lock = threading.Lock()
+        #: ★ **Where the run is, as one value.** Every transition is made here rather than
+        #: in the panels, because this object is the only thing that knows both halves of
+        #: the question -- what the child did, and who asked it to stop. A panel that
+        #: derived the state for itself would be deriving it from ``_process`` and
+        #: ``_finished`` separately, which is the pile of booleans this replaced.
+        self._machine = RunStateMachine()
+        #: Whether ``Popen`` ever returned a child. Separate from ``_process is not None``
+        #: because that one goes back to ``None`` when a child is reaped or released, and
+        #: the state has to keep describing a run that really happened.
+        self._launched = False
 
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
-        """Launch the child and begin reading. Returns immediately."""
+        """Launch the child and begin reading. Returns immediately.
+
+        Raises:
+            OSError: the child could not be launched at all. **The state says so on the
+                way out** -- ``STARTING`` to :attr:`~gigaxml.gui.run_state.RunState.FAILED`
+                -- rather than being left describing a run that never existed, which is the
+                one failure with no exit code to read it from.
+        """
         if self._process is not None:
             raise RuntimeError("this process has already been started")
-        self._process = subprocess.Popen(
-            cli_command(self._args),
-            cwd=self._cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,  # line buffered, so a progress line arrives when it is written
-        )
+        self._machine.move_to(RunState.STARTING)
+        try:
+            self._process = subprocess.Popen(
+                cli_command(self._args),
+                cwd=self._cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,  # line buffered, so a progress line arrives when it is written
+            )
+        except OSError:
+            # A run that could not start has still ended, and saying so is the only way a
+            # caller finds out. ``_launched`` stays False, which is what makes ``FAILED``
+            # the one terminal state that is honest about having had no child.
+            self._machine.move_to(RunState.FAILED)
+            raise
+        self._launched = True
+        self._machine.move_to(RunState.RUNNING)
         self._reader = threading.Thread(target=self._read, name="gigaxml-cli-reader", daemon=True)
         self._reader.start()
 
@@ -177,6 +211,12 @@ class CliProcess:
         )
         with self._lock:
             self._result = result
+        # ★ **The transition that used to be a pair of booleans.** Both halves of the old
+        # answer are here: the child's exit code says how it ended, and ``killed`` says
+        # whether anybody asked. ``outcome_state`` reads the second first, so a child whose
+        # dying exit code was ``1`` or ``-9`` is not reported as a failure the user has to
+        # act on, and an exit code of 3 with nobody asking is not folded into "cancelled".
+        self._machine.move_to(outcome_state(exit_code=result.exit_code, killed=result.killed))
         if self._on_finished is not None:
             self._on_finished(result)
 
@@ -200,9 +240,12 @@ class CliProcess:
         That is safe only because **no ``on_finished`` callback calls this method**. The
         callback runs on the reader thread, and joining the current thread is not something
         Python will do: it raises ``RuntimeError: cannot join current thread`` rather than
-        deadlocking. Every callback in ``gigaxml.gui`` records its result and sets a flag --
-        see ``_note_finished`` in the execution, preview and structure panels -- and
-        ``test_killing_from_the_callback_fails_loudly_rather_than_stalling`` pins that down.
+        deadlocking. Every callback in ``gigaxml.gui`` records its result and touches no
+        widget -- see ``_note_finished`` in the execution, preview and structure panels, and
+        note that since M9 none of them sets a flag either, because the state is already
+        set here before the callback is delivered -- and
+        ``test_killing_from_the_callback_fails_loudly_rather_than_stalling`` pins the
+        threading down.
 
         **Because the callback has run by the time this returns, a caller that cancels
         should clear its "handled" flag *after* calling this, not before.** Clearing it
@@ -210,9 +253,35 @@ class CliProcess:
         the previous run" while doing nothing -- which is what the two ``_cancel_*``
         methods in the structure and field panels used to do.
         """
-        self._killed.set()
         process = self._process
-        if process is not None and process.poll() is None:
+        # ★ **A stop aimed at a run that does not exist is not recorded at all.** Returning
+        # here rather than merely skipping the transition is the fix for a bug this
+        # milestone's own tests found: setting ``_killed`` unconditionally left the flag
+        # standing, so a later ``start()`` on the same object produced a run that ended
+        # believing it had been cancelled. ``_read`` then read ``killed=True`` and tried to
+        # move a RUNNING run to CANCELLED, which the table forbids -- and it raised **on
+        # the reader thread**, so the callback was never delivered and the panel waiting on
+        # it hung. A flag set by a request that had no subject outliving the request is
+        # the same defect as the pile of booleans, one level down.
+        #
+        # Reachable rather than theoretical: every panel's ``shutdown()`` kills whatever it
+        # holds, and a panel holds its ``CliProcess`` from the line before ``start()``.
+        if process is None:
+            return
+
+        self._killed.set()
+        # **The request, recorded as a state, and conditional on being legal.** A stop is
+        # an *ask*, and an ask can arrive after the answer: ``shutdown()`` reaches every
+        # child it is holding, including one that finished a moment earlier. Rewriting that
+        # run's ending would have the window disagree with the complete report sitting
+        # beside the output, so the move is skipped and the state stays what it was. This
+        # is the one transition in this class guarded by ``may_become`` rather than raising,
+        # and the difference is what the two calls mean: a redundant cleanup request is a
+        # supported thing to make, while every other transition asserts something the caller
+        # believes and a wrong one is a bug.
+        if self._machine.may_become(RunState.CANCELLING):
+            self._machine.move_to(RunState.CANCELLING)
+        if process.poll() is None:
             process.kill()
             process.wait()
         if self._reader is not None:
@@ -226,6 +295,38 @@ class CliProcess:
             return self._result
 
     # -- state -------------------------------------------------------------
+
+    @property
+    def state(self) -> RunState:
+        """Where the run is.
+
+        **Validated on the way out, which is the point of asking through a property.** The
+        state and the fact that a child was launched are two pieces of bookkeeping held by
+        one object, and the only way they can drift is a transition that was skipped. A
+        caller asking here is told, rather than handed a value describing a run that never
+        happened -- which is exactly what ``_process is None`` beside ``_finished = True``
+        used to say, and what nothing noticed.
+
+        Raises:
+            ContradictoryStateError: the two do not agree. An ``AssertionError`` subclass,
+                so ``python -O`` cannot make it go away.
+        """
+        sentence = contradiction(state=self._machine.state, launched=self._launched)
+        if sentence is not None:
+            raise ContradictoryStateError(
+                f"{sentence} (process {id(self):#x}, state {self._machine.state.value})"
+            )
+        return self._machine.state
+
+    @property
+    def is_active(self) -> bool:
+        """Whether the run has not reached a verdict yet."""
+        return self._machine.is_active
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether the run has reached one."""
+        return self._machine.is_terminal
 
     @property
     def is_running(self) -> bool:

@@ -48,6 +48,7 @@ from gigaxml.gui.i18n import tr
 from gigaxml.gui.job_history import HistoryEntry
 from gigaxml.gui.progress import Progress, format_eta, fraction_done
 from gigaxml.gui.run_report import report_path_for
+from gigaxml.gui.run_state import RunState, state_of
 from gigaxml.gui.settings import FORMATS, ON_ERROR
 
 #: How often the UI thread drains what the reader thread collected. 50 ms is under the
@@ -110,7 +111,10 @@ class ExecutionPanel(QWidget):
         self._process: CliProcess | None = None
         self._received: list[Progress] = []
         self._run_result: RunResult | None = None
-        self._finished = False
+        #: ★ **There is no ``_finished`` flag, and its absence is the point.** The run's
+        #: state lives on the child it belongs to (:attr:`state`), so it cannot say the run
+        #: finished while holding no child, and it cannot be reset by a ``start()`` that
+        #: the reader thread is about to contradict. See :mod:`gigaxml.gui.run_state`.
         self._total: int | None = None
         self._batch_size: int | None = None
         self._probe: CliProcess | None = None
@@ -520,7 +524,6 @@ class ExecutionPanel(QWidget):
 
         self._received = []
         self._run_result = None
-        self._finished = False
         self._last_progress = None
         self._progress_updates = 0
         self._progress_while_running = 0
@@ -536,7 +539,7 @@ class ExecutionPanel(QWidget):
         process = CliProcess(
             args,
             on_progress=self._received.append,  # reader thread: append only
-            on_finished=self._note_finished,  # reader thread: set a flag only
+            on_finished=self._note_finished,  # reader thread: record the result only
         )
         self._process = process
         process.start()
@@ -547,9 +550,29 @@ class ExecutionPanel(QWidget):
 
         Not even ``app.quit()``. Doing that from here leaves the window on screen with
         no event loop to close it -- a hang that looks like the application ignoring you.
+
+        **And no flag, which is the change.** The reader thread used to end with
+        ``self._finished = True``, and the UI thread's pump used to read it -- two
+        threads agreeing on a boolean that either could write. The state is set by
+        :class:`~gigaxml.gui.cli_process.CliProcess` itself, before this callback runs, so
+        by the time this line executes the run already knows how it ended and the panel has
+        only to hold on to the details.
         """
         self._run_result = run
-        self._finished = True
+
+    @property
+    def state(self) -> RunState:
+        """Where this panel's run is, as one value.
+
+        **Read from the child rather than kept here, and that is the whole change.** A
+        panel-local copy would be a second answer to a question the child can already
+        answer, and the two would drift the moment a run ended without the panel being
+        told -- which is precisely the failure that made the old ``_finished`` flag worth
+        removing. :func:`~gigaxml.gui.run_state.state_of` supplies
+        :attr:`~gigaxml.gui.run_state.RunState.IDLE` for a panel holding no child, which
+        includes one that has been shut down.
+        """
+        return state_of(self._process)
 
     def cancel(self) -> None:
         """Stop the child and wait for it to actually be gone."""
@@ -966,7 +989,11 @@ class ExecutionPanel(QWidget):
             # which leaves one stale entry behind for the next pass to read again.
             self._received.clear()
             self._show(latest)
-        if self._finished:
+        # ★ **The pump's old "did it finish" question, now asked of the state.** Reading a
+        # flag the reader thread set is what let the panel and the child disagree; asking
+        # the child is one question with one answer, and ``is_terminal`` is a property of
+        # the enum rather than a second piece of bookkeeping.
+        if self.state.is_terminal:
             self._pump.stop()
             self._finish()
             # After _finish, so whoever listens can read the widgets this panel just
@@ -1014,15 +1041,33 @@ class ExecutionPanel(QWidget):
         self._counts.setText("  ·  ".join(parts))
 
     def _finish(self) -> None:
+        """Settle the widgets, and say which of the four endings this was.
+
+        ★ **Criterion E's payload, and the reason this dispatches on the state rather than
+        on ``run.killed``.** Two endings used to be the same ending: a run the user stopped
+        and a run a signal ended. Both are non-zero, both leave work on disk, and both were
+        reported as "cancelled" -- which tells a user who pressed Ctrl-C that they
+        themselves cancelled the run, and gives a script-reading colleague the wrong idea
+        about whether it is safe to start again. The CLI draws the same distinction
+        (exit code 3 against exit code 1, documented as wanting *opposite* reactions), and
+        the status line now draws it too.
+
+        The CLI's own line for an interrupted run ("interrupted: the run was interrupted by
+        SIGINT") is not repeated here. It names the signal, which a person looking at a
+        window cannot act on, and replacing it with a word that separates the two cases
+        says more in fewer characters. The specifics are in the run report on disk, and the
+        window's own panels report what was left behind.
+        """
         run = self._run_result
+        state = self.state
         self._start.setEnabled(True)
         self._cancel.setEnabled(False)
         if run is None:
             return
-        if run.killed:
+        if state is RunState.CANCELLED:
             self._counts.setText(tr("cancelled"))
             return
-        if run.ok:
+        if state is RunState.FINISHED:
             rows = (run.summary or {}).get("rows")
             self._bar.setRange(0, 100)
             self._bar.setValue(100)
@@ -1031,6 +1076,9 @@ class ExecutionPanel(QWidget):
                 if isinstance(rows, int)
                 else tr("finished")
             )
+            return
+        if state is RunState.INTERRUPTED:
+            self._counts.setText(tr("interrupted — a signal ended this run"))
             return
         # The CLI's own messages are written to be read, so the first one is what the
         # user sees; the rest are kept for the detail view that comes with the error
