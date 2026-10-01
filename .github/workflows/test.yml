@@ -330,6 +330,58 @@ jobs:
         shell: bash
         run: python tools/ci_selfcheck.py pins --verify-remote
 
+  # ★ M15 criterion B. Two runtime dependencies, scanned for known vulnerabilities.
+  #
+  # ★ What a red here does and does not mean. It fails this workflow, so the pull request
+  # is marked failing and somebody is told. It does *not* block a release: package.yml has
+  # no `needs:` on this job and never will, because a release has to be possible on a day
+  # the advisory database is unreachable or the scanner has an outage. Criterion B asks for
+  # "know", not "stop", and the distinction is carried by which workflow the job lives in
+  # rather than by a flag in this one -- a flag would be a thing somebody could later
+  # change without noticing they had changed what a red means.
+  #
+  # The scanned set is a real plain `pip install .` in its own environment, not a
+  # requirements file written by hand. A hand-written list is correct until somebody adds a
+  # dependency, and then it is quietly short of one -- and the dependency nobody scanned is
+  # the one that has the advisory. Same shape as the release globs reading themselves out
+  # of the workflow.
+  #
+  # pip-audit is installed here rather than added to pyproject's `dev` extra: nothing in
+  # the repository imports it, nothing a contributor needs to run it locally, and adding it
+  # would put a version floor in the tree that M6 already went round once. The cost is that
+  # `pip install -e ".[dev]"` does not bring it -- paid knowingly, and this comment is where
+  # the bill is recorded.
+  dependency-audit:
+    name: runtime dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Audit the runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          # No extras. This is the set a CLI user gets from `pip install gigaxml`, which
+          # is the smallest thing worth auditing: the optional extras are the developer's
+          # choice and are covered by the same advisories as what they pull.
+          python -m venv "$RUNNER_TEMP/auditenv"
+          "$RUNNER_TEMP/auditenv/bin/python" -m pip install --quiet .
+          "$RUNNER_TEMP/auditenv/bin/python" -m pip list --format=freeze \
+            | grep -v '^pip==' > "$RUNNER_TEMP/runtime.txt"
+          echo "--- the exact set being audited"
+          cat "$RUNNER_TEMP/runtime.txt"
+          # Every finding is printed, one per line, with its fix versions. That is not a
+          # formatting preference: "the scan passed" is a claim about a run somebody has to
+          # be able to check, and it is worth nothing next to the four rows it replaces.
+          # The exit code is non-zero on a finding, which is the only reason anyone looks.
+          pip-audit --requirement "$RUNNER_TEMP/runtime.txt" --progress-spinner off
+
   performance-baseline:
     # The one performance signal in CI, and the loose version of the A11 decision
     # that performance numbers are recorded and never asserted.
