@@ -1,0 +1,54 @@
+# Dependency updates, proposed rather than applied.
+#
+# ★ Why this file exists at all, in the shape it has. The release chain runs two
+# third-party actions that hold the rights to publish to a Release and to PyPI, and M15
+# pinned both to commit SHAs. A pin is a freeze: it removes the ability of whoever owns
+# the upstream repository to change what runs here without anyone reviewing it, and it also
+# removes the ability of this repository to receive a security fix until somebody notices.
+# Pinning without a mechanism to move is how pins become the reason a project ships a
+# known-vulnerable action for two years.
+#
+# So Dependabot is not an alternative to pinning, it is the other half of it. It opens a
+# pull request when the upstream SHA moves; a human reads the diff between the two commits
+# and merges. The pin is what makes the diff reviewable; Dependabot is what makes the
+# review happen.
+#
+# ★ And the two work together rather than merely coexisting: Dependabot's `github-actions`
+# ecosystem understands SHA-pinned actions and rewrites both the SHA and the `# vX.Y.Z`
+# comment beside it. `tools/ci_selfcheck.py pins --verify-remote` then asks the remote
+# whether that version really is that commit, so a bot bump that updates the SHA but
+# leaves a stale comment goes red rather than merging quietly.
+version: 2
+updates:
+  # The project's dependencies, from pyproject.toml's [project.dependencies]. Dependabot
+  # reads the PEP 621 file directly, so this tracks what the package declares rather than a
+  # requirements file that can drift from it.
+  #
+  # Weekly rather than daily: this is a small project whose dependencies move on a scale of
+  # months, and a bot that opens a pull request every day is a bot whose pull requests
+  # stop being read. Monday morning, in the timezone the maintainer is in.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  # The actions themselves. This is the entry that keeps the M15 pins alive: `v4` and
+  # `v5` here are the official actions' own moving tags, which criterion C deliberately
+  # left alone, and this is what brings in their updates.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "supply-chain"

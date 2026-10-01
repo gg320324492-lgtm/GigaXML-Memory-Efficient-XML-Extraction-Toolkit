@@ -284,3 +284,58 @@ def test_the_workflow_still_parses_after_edits() -> None:
     mis-indented key that both reached this file during M15."""
     for path in sorted((REPO / ".github" / "workflows").glob("*.yml")):
         assert yaml.safe_load(path.read_text(encoding="utf-8")) is not None
+
+
+# --- .github/dependabot.yml --------------------------------------------------------
+
+
+def test_dependabot_covers_both_ecosystems_and_will_actually_run() -> None:
+    """★ Dependabot failing silently is indistinguishable from not having it.
+
+    A malformed file, an ecosystem typed wrong, or a schedule nobody set produces no error
+    anywhere -- there is no failing job, because no job runs. Updates simply stop arriving,
+    and the first evidence is the day a dependency ships a fix that this repository never
+    received. That is why this is asserted rather than assumed, and why the schedule is
+    checked as well as the ecosystems: a file with no `schedule` is a file that never runs.
+    """
+    path = REPO / ".github" / "dependabot.yml"
+    assert path.is_file(), ".github/dependabot.yml is missing"
+
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert config["version"] == 2
+
+    by_ecosystem = {u["package-ecosystem"]: u for u in config["updates"]}
+    assert set(by_ecosystem) == {"pip", "github-actions"}, (
+        "dependabot must cover both: the project's Python dependencies, and the actions"
+        " the release chain runs -- the second being what keeps the M15 pins alive"
+    )
+
+    for ecosystem, update in by_ecosystem.items():
+        assert update["directory"] == "/", f"{ecosystem} must scan the repository root"
+        schedule = update["schedule"]
+        assert schedule["interval"] == "weekly", f"{ecosystem} is not scheduled"
+        assert schedule.get("day") and schedule.get("time"), (
+            f"{ecosystem} has no day or time, so `interval: weekly` picks one for you"
+        )
+        assert update["open-pull-requests-limit"] >= 1
+
+
+def test_dependabot_and_the_pin_check_agree_about_what_a_pin_is() -> None:
+    """The two halves of M15 have to fit together.
+
+    The `github-actions` ecosystem rewrites SHA-pinned actions *and* the `# vX.Y.Z` comment
+    beside them; `pins --verify-remote` then asks the remote whether that version is that
+    commit. If a future Dependabot bumped the SHA without the comment, the check goes red
+    -- which is the intended outcome, and the reason this arrangement is worth having. The
+    test pins the arrangement rather than the behaviour: it cannot observe a bot here.
+    """
+    path = REPO / ".github" / "dependabot.yml"
+    text = path.read_text(encoding="utf-8")
+    assert "github-actions" in text
+
+    from tools.ci_selfcheck import check_pins
+
+    # The check accepts the version comment as a tag or a branch, which is what lets a
+    # Dependabot bump of `softprops/action-gh-release@v2` -> a newer release land green
+    # with its comment rewritten.
+    assert check_pins(verify_remote=False) is None
