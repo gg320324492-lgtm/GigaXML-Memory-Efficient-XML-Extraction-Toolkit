@@ -65,6 +65,13 @@ dev = [
   "pyarrow>=14.0",
   "rich>=13.0",
   "pyinstaller>=6.10",
+  # Property tests (M12). Dev-only for the same reason pytest is: nothing in src/ imports
+  # it, and a library user asking for gigaxml should not inherit a data-generation
+  # dependency. The version floor is the one whose `@settings` API the tests rely on,
+  # and it is pinned low deliberately -- a property framework that regenerates its own
+  # examples database needs that directory to be writable, which is why the tests pass
+  # `database=None` rather than leaving it to the default.
+  "hypothesis>=6.100",
   # Drawn by tools/make_icon, which the packaging pipeline runs on every platform. A
   # dependency that only a script's author happened to have installed is a build that only
   # that author's machine can run -- and the icon step is the first thing the pipeline

@@ -82,7 +82,10 @@ jobs:
         # not run is worse than none: "the CI is green" would still be typed while
         # nothing in it watched the new code. tests/golden holds the command line's
         # frozen behaviour, tests/security the schema boundary; both arrived after
-        # this list was written and both had to be added to it.
+        # this list was written and both had to be added to it. tests/property is the
+        # third: it arrived in M12 and is the only suite that generates its own inputs,
+        # so the directory being absent would leave the parsers checked by hand-written
+        # cases alone and nothing would say so.
         env:
           # A CI runner has no display. The desktop tests build real widgets
           # and drive the real CLI; only the windowing system is substituted,
@@ -90,7 +93,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         shell: bash
         run: |
-          pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 tests/unit tests/integration tests/golden tests/security
+          pytest -q --cov=src/gigaxml --cov-report=term-missing --cov-fail-under=95 tests/unit tests/integration tests/golden tests/security tests/property
 
   performance-baseline:
     # The one performance signal in CI, and the loose version of the A11 decision
