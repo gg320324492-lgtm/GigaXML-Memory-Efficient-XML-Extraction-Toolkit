@@ -1,0 +1,188 @@
+{
+  "schema_version": 2,
+  "recorded": true,
+  "version_string_at_recording": "1.1.0",
+  "authoritative_key": {
+    "git_commit": "82e31eb4e35756a68507e49090ac0728d42c6dbb",
+    "why_this_is_the_key": "The commit, not the version. A version string is a label that moves when someone remembers to bump it, and this file demonstrates exactly that: the tree at 82e31eb was SIX COMMITS PAST the v1.1.0 tag and pyproject.toml still read 1.1.0 at both. So this sweep did not measure the v1.1.0 release, it measured six commits of work on top of it under a version string that had not been bumped yet. Quoting '1.1.0' without the commit is the same error results.json made with 0.1.0, one level up.",
+    "commits_past_v1_1_0": 6,
+    "recovered": true,
+    "recovery_method": "The sweep recorded no commit. Its own recorded_at is 2026-09-28T19:07:29+00:00 (2026-09-29 03:07 local) and the commit timeline has a gap spanning that moment: 82e31eb is 2026-09-28 18:25 local, 53c5b21 is 2026-09-29 08:39. One commit can have been HEAD in between. A lower bound, not a proof -- the tree at that moment need not have been clean."
+  },
+  "identity": {
+    "gigaxml": "1.1.0 -- RECOVERED from src/gigaxml/__init__.py at that commit. This file's own environment.gigaxml says 0.1.0 and is KNOWN WRONG: commit e837d7c fixed exactly that reading five and a half hours after the sweep ran ('how a sweep of 1.1.0 recorded itself as 0.1.0'). The value below is the recovered one; the wrong one is left in environment.gigaxml rather than edited, because that is what was written down at the time.",
+    "python": "3.13.14 (from environment.python, as recorded)",
+    "lxml": "6.1.3 (from environment.lxml, as recorded)",
+    "os": "Windows 11 (from environment.os, as recorded)",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel (from environment.cpu)",
+    "machine": "AMD64 (from environment.machine)",
+    "memory_total_gb": 31.8,
+    "config_sha256": "b7b51aa97e7c7ff52c7de4ef8ce0c93bab47a1bc6cdcc68452b668e146f9d647",
+    "dataset_sha256": "NOT RECORDED, and unrecoverable. run_comparison.py requires data/b100m.xml, b1g.xml and b4g.xml to exist and skips any that do not; it never hashed them, never recorded the generate command or its seed, and all three have since been deleted. gigaxml generate is a pure function of (seed, size, namespace) and is byte-reproducible -- measured, two runs at the same seed are identical -- so the bytes are recoverable in principle, but the SEED THAT PRODUCED THESE FILES was never written down, and an unrecorded seed cannot be guessed from a digest. This is the one field the milestone's invariant cannot supply for this file, and it is why benchmarks/provenance.py now records seed and digest together.",
+    "memory_method": "peak_wset (self-read in child) -- as recorded, and it was TRUE for this sweep, which is decidable rather than assumed: results.json records os 'Windows 11' and on win32 psutil's memory_info() has peak_wset, so the wrapper took the peak branch and not its 'or info.rss' fallback. It was still a hardcoded string at the time, so nothing in the code guaranteed it; run_comparison.py now has the child report which counter answered and the recorder store that instead of asserting it."
+  },
+  "numbers_live_in": "benchmarks/compare/results.json",
+  "numbers_live_in_note": "Not copied here. One file holding the numbers is one thing to keep correct; a 32 KB duplicate in benchmarks/history/ is a second thing that can drift. This entry carries the identity and the headline figures, and tests/integration/test_benchmark_provenance.py asserts those figures still match the file they came from.",
+  "sizes": [
+    "100MB",
+    "1GB",
+    "4GB"
+  ],
+  "implementations": [
+    "gigaxml",
+    "pandas",
+    "raw_lxml",
+    "xmltodict"
+  ],
+  "headline": {
+    "100MB/gigaxml": {
+      "records_per_s_median": 43385,
+      "median_s": 6.705,
+      "stdev_s": 0.085,
+      "peak_rss_mb_median": 33.2,
+      "rows_written_median": 290900,
+      "rows_in_document": 290900,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "100MB/pandas": {
+      "records_per_s_median": 50346,
+      "median_s": 5.778,
+      "stdev_s": 0.482,
+      "peak_rss_mb_median": 2050.0,
+      "rows_written_median": 290900,
+      "rows_in_document": 290900,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "100MB/raw_lxml": {
+      "records_per_s_median": 61100,
+      "median_s": 4.761,
+      "stdev_s": 0.696,
+      "peak_rss_mb_median": 24.8,
+      "rows_written_median": 290900,
+      "rows_in_document": 290900,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "100MB/xmltodict": {
+      "records_per_s_median": 51035,
+      "median_s": 5.7,
+      "stdev_s": 0.414,
+      "peak_rss_mb_median": 43.4,
+      "rows_written_median": 290900,
+      "rows_in_document": 290900,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "1GB/gigaxml": {
+      "records_per_s_median": 43873,
+      "median_s": 67.895,
+      "stdev_s": 1.077,
+      "peak_rss_mb_median": 33.4,
+      "rows_written_median": 2978816,
+      "rows_in_document": 2978816,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "1GB/pandas": {
+      "records_per_s_median": null,
+      "median_s": null,
+      "stdev_s": null,
+      "peak_rss_mb_median": null,
+      "rows_written_median": null,
+      "rows_in_document": null,
+      "complete_output": null,
+      "ok_runs": 0,
+      "failed_runs": 5,
+      "recomputes_from_own_runs": true
+    },
+    "1GB/raw_lxml": {
+      "records_per_s_median": 64002,
+      "median_s": 46.542,
+      "stdev_s": 0.741,
+      "peak_rss_mb_median": 26.1,
+      "rows_written_median": 2978816,
+      "rows_in_document": 2978816,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "1GB/xmltodict": {
+      "records_per_s_median": 52410,
+      "median_s": 56.836,
+      "stdev_s": 0.89,
+      "peak_rss_mb_median": 191.7,
+      "rows_written_median": 2978816,
+      "rows_in_document": 2978816,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "4GB/gigaxml": {
+      "records_per_s_median": 44356,
+      "median_s": 268.626,
+      "stdev_s": 3.676,
+      "peak_rss_mb_median": 33.5,
+      "rows_written_median": 11915264,
+      "rows_in_document": 11915264,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "4GB/pandas": {
+      "records_per_s_median": 11205,
+      "median_s": 935.777,
+      "stdev_s": 116.761,
+      "peak_rss_mb_median": 26004.8,
+      "rows_written_median": 10485760,
+      "rows_in_document": 11915264,
+      "complete_output": false,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "4GB/raw_lxml": {
+      "records_per_s_median": 68616,
+      "median_s": 173.65,
+      "stdev_s": 0.798,
+      "peak_rss_mb_median": 25.1,
+      "rows_written_median": 11915264,
+      "rows_in_document": 11915264,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    },
+    "4GB/xmltodict": {
+      "records_per_s_median": 53090,
+      "median_s": 224.431,
+      "stdev_s": 0.661,
+      "peak_rss_mb_median": 707.3,
+      "rows_written_median": 11915264,
+      "rows_in_document": 11915264,
+      "complete_output": true,
+      "ok_runs": 5,
+      "failed_runs": 0,
+      "recomputes_from_own_runs": true
+    }
+  },
+  "known_gaps": [
+    "dataset_sha256 was never recorded and the three generated documents have been deleted. The generate command and its seed are unrecoverable, so no digest could be reconstructed even though gigaxml generate is byte-reproducible at a known seed. This is the one field the milestone's invariant cannot supply.",
+    "The file's own environment.gigaxml says 0.1.0 and is known wrong; the value above is recovered from the tree at the recorded commit.",
+    "pandas at 1GB failed all five repeats with an lxml encoding error, and pandas at 4GB exited 0 having written 10,485,760 of 11,915,264 rows. Both are in the raw runs; neither is a gigaxml result."
+  ]
+}
