@@ -184,9 +184,9 @@ def test_an_unidentifiable_input_is_reported_missing_not_zero(
     re-read -- so the path exercised here is the one the feature was written for, not
     a contrived one.
     """
-    import gigaxml.cli as cli
+    import gigaxml.cli_pkg.common as report_common
 
-    real = cli.source_identity
+    real = report_common.source_identity
 
     def refuse(source: object) -> dict[str, object]:
         # Only the input stops being identifiable. The output was written to a real
@@ -195,7 +195,7 @@ def test_an_unidentifiable_input_is_reported_missing_not_zero(
             raise CheckpointError(f"cannot identify the source {source!r}: not seekable")
         return real(source)
 
-    monkeypatch.setattr(cli, "source_identity", refuse)
+    monkeypatch.setattr(report_common, "source_identity", refuse)
 
     source, config, output = write_inputs(tmp_path)
     report_path = tmp_path / "report.json"
@@ -235,16 +235,16 @@ def test_an_unidentifiable_output_is_reported_missing_not_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Break ``source_identity`` only for the output: same contract, other field."""
-    import gigaxml.cli as cli
+    import gigaxml.cli_pkg.common as report_common
 
-    real = cli.source_identity
+    real = report_common.source_identity
 
     def refuse_outputs(target: object) -> dict[str, object]:
         if str(target).endswith("out.csv"):
             raise CheckpointError(f"cannot identify the source {target!r}: vanished")
         return real(target)
 
-    monkeypatch.setattr(cli, "source_identity", refuse_outputs)
+    monkeypatch.setattr(report_common, "source_identity", refuse_outputs)
 
     source, config, output = write_inputs(tmp_path)
     report_path = tmp_path / "report.json"
@@ -281,9 +281,9 @@ def test_an_unmeasurable_peak_is_null_not_zero(
     read off -- so a run that cannot measure it has to say so rather than report the
     process as having used nothing.
     """
-    import gigaxml.cli as cli
+    import gigaxml.cli_pkg.common as report_common
 
-    monkeypatch.setattr(cli, "peak_rss_mb", lambda: None)
+    monkeypatch.setattr(report_common, "peak_rss_mb", lambda: None)
 
     source, config, output = write_inputs(tmp_path)
     report_path = tmp_path / "report.json"
