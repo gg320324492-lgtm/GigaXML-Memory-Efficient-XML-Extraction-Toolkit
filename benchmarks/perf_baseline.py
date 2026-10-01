@@ -25,6 +25,31 @@ reading a child's memory on this machine gets a frozen or absurdly low figure, w
 is how a comparison sweep once reported 4.1 MB for every implementation at every size.
 The extraction therefore runs here, and reports its own peak.
 
+**What this file records, and what it does not claim.** Every individual run's rate and
+peak go into the JSON beside the two numbers the check uses, so the summary can be
+recomputed from them (``provenance.recompute_perf_baseline``) and a hand-edited baseline
+is caught. Alongside them is an identity block -- commit, tool version, interpreter, OS,
+CPU, RAM, and the sha256 of both the config and the generated document -- because a
+throughput number without the machine and the data it was measured on is not evidence,
+it is a rumour with a decimal point.
+
+Two of those fields are **claims rather than measurements**, and both are held by tests
+rather than by this file:
+
+* ``memory_method`` says the peak was self-read in the process that did the work. It is
+  a constant, because nothing at record time can observe *how* the number was obtained.
+  ``tests/integration/test_benchmark_provenance.py`` holds it by running this harness
+  against a child that allocates a known amount and failing if the recorded peak
+  collapses to the ~4.1 MB a parent's view of a live child returns.
+* ``git_commit`` is ``rev-parse HEAD``, which is a lower bound if the tree was dirty; the
+  recorded string says so when it happened.
+
+**Do not re-record this file from a development machine.** The reference is the number CI
+compares against, and CI runs on a shared ubuntu runner. A baseline taken on a desktop
+asserted a 42,246 rec/s floor against a runner that sustains 19,312 and turned the guard
+red on unchanged code -- which is why ``measured_on`` below records the runner and why
+``--update`` belongs in the job, not in a terminal.
+
 Usage::
 
     python benchmarks/perf_baseline.py --update      # record the current numbers
@@ -35,6 +60,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import platform
 import statistics
@@ -42,14 +68,38 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import ModuleType
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 BASELINE = HERE / "perf-baseline.json"
 
+
+def _load_provenance() -> ModuleType:
+    """Import ``benchmarks/provenance.py`` by path -- benchmarks are scripts, not a package.
+
+    The same reason ``tests/integration/test_benchmarks.py`` loads its scripts by path.
+    """
+    path = HERE / "provenance.py"
+    spec = importlib.util.spec_from_file_location("gigaxml_benchmark_provenance", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - a missing file is a bug
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+provenance = _load_provenance()
+
 #: Throughput may fall to this fraction of the recorded reference before the check
 #: fails. Half is the point: a change that costs 50% is a change somebody will notice
 #: and can defend, and anything gentler is indistinguishable from a slow Tuesday.
+#:
+#: Note the drift between this constant, the README's "60%", the workflow comment's
+#: "half", and roadmap item A11's "50%": the *code* enforces 60% of the reference, which
+#: is a 40% drop. The code is the one that runs, and M17 does not change it -- the looser
+#: descriptions are a documentation inconsistency for M19, recorded rather than silently
+#: reconciled here.
 MIN_THROUGHPUT_RATIO = 0.60
 
 #: Peak memory ceiling for an extraction, in MiB, over the small generated dataset.
@@ -62,6 +112,14 @@ MAX_PEAK_RSS_MB = 60.0
 #: nonsense reference (recorded on a machine that was itself broken, or a typo in the
 #: JSON) cannot turn the check into something that always passes.
 FLOOR_RECORDS_PER_S = 1_000.0
+
+#: The generator's seed, passed explicitly rather than left to ``gigaxml generate``'s
+#: default. The output is a pure function of ``(seed, size, namespace)`` -- two runs at
+#: the same seed are byte-identical, which was measured rather than assumed -- so a
+#: recorded seed plus a recorded sha256 identify the exact document a number came from.
+#: Leaving the seed to an unstated default is what made ``benchmarks/compare/results.json``
+#: untraceable: its datasets are deleted and nothing recorded what produced them.
+SEED = 0
 
 CONFIG = """\
 record: /catalog/products/product
@@ -141,6 +199,8 @@ def main() -> int:
                 "generate",
                 "--size",
                 args.size,
+                "--seed",
+                str(SEED),
                 "-o",
                 str(source),
             ],
@@ -153,6 +213,10 @@ def main() -> int:
             raise SystemExit(
                 f"could not generate a {args.size} dataset:\n{generated.stderr[-600:]}"
             )
+        # Hashed before the temporary directory goes away: the document this number was
+        # measured on does not outlive the run, so its digest has to be recorded now or
+        # not at all. 10 MiB, so the cost is a rounding error next to five extractions.
+        dataset_sha256 = provenance.sha256_bytes(source.read_bytes())
 
         runs = [run_once(source, CONFIG, work_dir) for _ in range(args.repeats)]
 
@@ -163,6 +227,7 @@ def main() -> int:
         raise SystemExit(f"the repeats extracted different record counts: {sorted(records)}")
 
     measured = {
+        "schema_version": provenance.SCHEMA_VERSION,
         "records": records.pop(),
         "records_per_s": round(statistics.median(rates), 1),
         "peak_rss_mb": round(max(peaks), 1),
@@ -170,6 +235,19 @@ def main() -> int:
         "size": args.size,
         "rates": [round(rate, 1) for rate in rates],
         "peaks": [round(peak, 1) for peak in peaks],
+        "identity": provenance.identity(
+            REPO_ROOT,
+            dataset_sha256=dataset_sha256,
+            # The config is a string in this file, not a file on disk, so there is no
+            # line-ending conversion to be caught by and no blob to disagree with: the
+            # literal is the same bytes in every clone.
+            config_sha256=provenance.sha256_bytes(CONFIG.encode("utf-8")),
+            extra={
+                "config_sha256_source": "the CONFIG literal in this file, which has no "
+                "working-tree/blob split",
+                "dataset": f"gigaxml generate --size {args.size} --seed {SEED}",
+            },
+        ),
         "measured_on": {
             "python": platform.python_version(),
             "machine": platform.machine(),
@@ -195,6 +273,37 @@ def main() -> int:
             "it says about the machine it came from before trusting it."
         )
     reference = json.loads(args.baseline.read_text(encoding="utf-8"))
+
+    # A reference with no identity block cannot be reasoned about: "is this still as
+    # fast?" is unanswerable without knowing which commit, machine and document set the
+    # number, and a file that predates the block would otherwise fail later and further
+    # from the cause. The message says what to do rather than only what is wrong.
+    absent = provenance.missing_identity_fields(reference)
+    if absent:
+        raise SystemExit(
+            f"{args.baseline} has no identity block; missing {', '.join(absent)}.\n"
+            f"A throughput reference that does not say which commit, machine and document "
+            f"produced it cannot be compared against anything, including itself.\n"
+            f"Re-record it with --update from the same job that runs this check, or add "
+            f"the block by hand recording honestly that the older fields are unrecoverable."
+        )
+    print(
+        f"recorded at   {reference['identity']['git_commit'][:12]} "
+        f"on {reference['identity']['os']} (schema {reference['schema_version']})"
+    )
+
+    # Printed, not fatal, and the distinction is deliberate. A baseline with no raw
+    # per-run values cannot be recomputed, and the committed one has none -- the file was
+    # hand-authored rather than written by --update (see its identity block). Failing the
+    # build over that would be a red for a bookkeeping reason on unchanged code, which is
+    # the failure mode A11 exists to prevent. So the gap is stated on every run, loudly
+    # enough to read in the log, and the check itself goes on comparing throughput. The
+    # next --update from this job closes it.
+    try:
+        provenance.recompute_perf_baseline(reference)
+    except ValueError as exc:
+        print(f"NOTICE       this reference cannot be recomputed: {exc}")
+
     reference_rate = float(reference["records_per_s"])
     required = reference_rate * MIN_THROUGHPUT_RATIO
 
