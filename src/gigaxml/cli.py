@@ -33,6 +33,7 @@ from gigaxml.checkpoint import (
     validate_resume,
     write_checkpoint,
 )
+from gigaxml.cli_pkg.generate_cmd import handle_generate
 from gigaxml.config import ExtractionConfig, load_config
 from gigaxml.errors import (
     CheckpointError,
@@ -40,7 +41,6 @@ from gigaxml.errors import (
     RunInterruptedError,
     SecurityError,
 )
-from gigaxml.generate import generate_dataset
 from gigaxml.inspect import (
     DEFAULT_MAX_DEPTH,
     DEFAULT_MAX_PATHS,
@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Emit a default-namespace variant using this URI.",
     )
-    generate.set_defaults(handler=_handle_generate)
+    generate.set_defaults(handler=handle_generate)
 
     extract = subparsers.add_parser(
         "extract",
@@ -379,18 +379,6 @@ def _positive_int(text: str) -> int:
     if value < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
     return value
-
-
-def _handle_generate(args: argparse.Namespace) -> int:
-    """Handle ``gigaxml generate``."""
-    manifest = generate_dataset(
-        args.output,
-        size=args.size,
-        seed=args.seed,
-        namespace=args.namespace,
-    )
-    print(json.dumps(manifest.to_dict(), indent=2))
-    return 0
 
 
 #: What the ``source`` positional means when it is this: read the document from
