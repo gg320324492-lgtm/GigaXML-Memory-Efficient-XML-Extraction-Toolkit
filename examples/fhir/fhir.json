@@ -1,0 +1,805 @@
+{
+  "source": "HL7 FHIR R4 (4.0.1), the official XML distribution",
+  "url": "https://www.hl7.org/fhir/R4/fhir-all.xsd",
+  "fetched_at": "2026-10-01T19:19:47+00:00",
+  "seed": "fhir-all.xsd",
+  "crawl": "transitive closure of xs:include / xs:import schemaLocation, siblings only",
+  "xsd_file_count": 150,
+  "xsd_bytes_total": 3077151,
+  "set_sha256": "daa03c4437e7ff39372d17322e159210dedf12d1b337a0f1bbde7f6f61c8df6b",
+  "references": {
+    "edges": 296,
+    "by_kind": {
+      "import": 3,
+      "include": 293
+    },
+    "remote_schema_locations": {},
+    "escaping_schema_locations": {},
+    "files_with_doctype": []
+  },
+  "xsd_files": [
+    {
+      "name": "account.xsd",
+      "bytes": 11110,
+      "sha256": "bee9c86f0380a21241dc1474d49ac9b6c5d3ccec328ebe56548ccf88e0ca50dd"
+    },
+    {
+      "name": "activitydefinition.xsd",
+      "bytes": 33398,
+      "sha256": "b45c3dbc70e69281a643fff3ea3cc546eee33e1b930015a2c796252e8dc24f99"
+    },
+    {
+      "name": "adverseevent.xsd",
+      "bytes": 14441,
+      "sha256": "2bfa46b753c347fbb8d5fa73802b4e77ab429112fc5224e2a92145d45bcc86a8"
+    },
+    {
+      "name": "allergyintolerance.xsd",
+      "bytes": 18566,
+      "sha256": "5e372389be5aea9807bc8adbc459e7cb788ad69c21f7916507c7768e717a1407"
+    },
+    {
+      "name": "appointment.xsd",
+      "bytes": 19577,
+      "sha256": "af8aa03e26c29616502f40ce017fe39e3092788726ee11a1030a07363946de4b"
+    },
+    {
+      "name": "appointmentresponse.xsd",
+      "bytes": 6053,
+      "sha256": "0f2d03ea66f2cf307ca4d36c599de9bc1dff789ba06b5d5d13d86e222ac5ae30"
+    },
+    {
+      "name": "auditevent.xsd",
+      "bytes": 22407,
+      "sha256": "f5f25601fd5b1f60a3471366fa78ea4deb368fc0298feac0c4b306119098c2a4"
+    },
+    {
+      "name": "basic.xsd",
+      "bytes": 4857,
+      "sha256": "c8801f1e8512bfb7461f606b6c1f529e55dbf4b4bef872bc57fb2a2bf9809859"
+    },
+    {
+      "name": "binary.xsd",
+      "bytes": 4786,
+      "sha256": "d183e250fc7de05bb651af36c2ef255367455a4c623dbab8d05ddfff4ccdf835"
+    },
+    {
+      "name": "biologicallyderivedproduct.xsd",
+      "bytes": 16931,
+      "sha256": "7b288d1d53120a13da1c998de419ede9d03ce48f7cea411d64bc9e5f9e4c869b"
+    },
+    {
+      "name": "bodystructure.xsd",
+      "bytes": 5747,
+      "sha256": "22200a1270bc9bc75ed4ad4b0c4f7e30c55801a350416d8c38ebac916d80cd03"
+    },
+    {
+      "name": "bundle.xsd",
+      "bytes": 21013,
+      "sha256": "c804cb0fb1beb863a26a6441ae0af57eed3af3906c4699564d2293a86a2633aa"
+    },
+    {
+      "name": "capabilitystatement.xsd",
+      "bytes": 57377,
+      "sha256": "7b50aee431f5a801dd10c1a647014bd45149e0fd1b5ca187aae4314302e32347"
+    },
+    {
+      "name": "careplan.xsd",
+      "bytes": 32304,
+      "sha256": "fd718a175741fdbad6c7335f31a8352e32681ebf956c86802e1e37a483dc42c9"
+    },
+    {
+      "name": "careteam.xsd",
+      "bytes": 10854,
+      "sha256": "72a3966b8f9c9c4e136e1c3002b0ff24d836293825986a67a685805652ff672e"
+    },
+    {
+      "name": "catalogentry.xsd",
+      "bytes": 9313,
+      "sha256": "4268e1a4d05a608a02ad52d16bca1ed2d7ec3b9c4b08540ec8dedcea7c15efe4"
+    },
+    {
+      "name": "chargeitem.xsd",
+      "bytes": 15323,
+      "sha256": "937b9d950819d5d0d5486eb2ba12599ec97d65815ca59f5c4c9c74af3f6c7fd6"
+    },
+    {
+      "name": "chargeitemdefinition.xsd",
+      "bytes": 20361,
+      "sha256": "33f509fdfebf59ab55ae0bc65cbd497ca662271d03c9d7911f4ae6149fc95044"
+    },
+    {
+      "name": "claim.xsd",
+      "bytes": 47961,
+      "sha256": "2ec3bb8337d5d5020acd19a5708dd134cc29a8c67d3627a7afc3754186785a98"
+    },
+    {
+      "name": "claimresponse.xsd",
+      "bytes": 43219,
+      "sha256": "a579516f7623e5d5428ddd0251af48413a184631c848b91a4f4e4c3fe5a834cf"
+    },
+    {
+      "name": "clinicalimpression.xsd",
+      "bytes": 15743,
+      "sha256": "6da5d9622371579633b0068bf31f2f4ad41e85b5a134cc7b2898f3ea3d2cf261"
+    },
+    {
+      "name": "codesystem.xsd",
+      "bytes": 30478,
+      "sha256": "e24d378cbfaefd0a3e7e07281226c8f6049fda0161fc6b6505b2ee753f614fea"
+    },
+    {
+      "name": "communication.xsd",
+      "bytes": 14354,
+      "sha256": "997d818f1573956e02a09f16cd2ab0035e10fa64101751369bbfaef2291b9b99"
+    },
+    {
+      "name": "communicationrequest.xsd",
+      "bytes": 11961,
+      "sha256": "f44762efcc163104da1196965da610cc70e8c406da0f3940fed8a17c7a89642a"
+    },
+    {
+      "name": "compartmentdefinition.xsd",
+      "bytes": 11930,
+      "sha256": "921ede60d5f53e0dda2ef7c0415a13c3be160b7ddebd4e830513aa615a328a05"
+    },
+    {
+      "name": "composition.xsd",
+      "bytes": 28036,
+      "sha256": "ca4388696dd3e287d7a26155e17a2f5d4912123a67920a17f97b74763d9f10dd"
+    },
+    {
+      "name": "conceptmap.xsd",
+      "bytes": 23248,
+      "sha256": "3eb2e1cc7a2242e65a4cfea2404fdae848d15380aa4aabe2f5f3c34c464b7285"
+    },
+    {
+      "name": "condition.xsd",
+      "bytes": 12055,
+      "sha256": "7908bb2f2cf64ce9312cb8e2c0d08d3be097093184ee789831f17be5722c7fdf"
+    },
+    {
+      "name": "consent.xsd",
+      "bytes": 21974,
+      "sha256": "1959bed6b54ee9fcf60c49ff75540eede4df15352527e23fb720a858590bf02a"
+    },
+    {
+      "name": "contract.xsd",
+      "bytes": 62985,
+      "sha256": "79a1bc61db3bb93247132e600c79e448f6ac67d28cd4485212ffffeb7913b25b"
+    },
+    {
+      "name": "coverage.xsd",
+      "bytes": 13168,
+      "sha256": "615c88d3dfdd1c36ef880f2ea8575dcfdba58dc09b0f3c55ebdba258550b0463"
+    },
+    {
+      "name": "coverageeligibilityrequest.xsd",
+      "bytes": 18325,
+      "sha256": "53df5b5a1c008f598b232e4509ef1da6c03ee622c3d3e49e2a728f93d90d5924"
+    },
+    {
+      "name": "coverageeligibilityresponse.xsd",
+      "bytes": 19084,
+      "sha256": "4102f70c43dd2e83221d002b1b85e6c5da7bc4236377b0a434ac4137eb513989"
+    },
+    {
+      "name": "detectedissue.xsd",
+      "bytes": 13849,
+      "sha256": "363ea156060ecebcef2a9852d1cb1306a4c6673fdf489537d4367ded9595b82c"
+    },
+    {
+      "name": "device.xsd",
+      "bytes": 24978,
+      "sha256": "73c0b95e399492e11418e2c73ba8c6572b0c155f6fe7dded6e647b4304afe471"
+    },
+    {
+      "name": "devicedefinition.xsd",
+      "bytes": 17587,
+      "sha256": "70dd59934faba9d2a8f4f8c2b7e41874785a94cd19228f261b345ca4fd6ff2d2"
+    },
+    {
+      "name": "devicemetric.xsd",
+      "bytes": 16974,
+      "sha256": "fd336d6552cc339607d583495af382ac66ce0df0b99f6eb7ab688b6616fa919d"
+    },
+    {
+      "name": "devicerequest.xsd",
+      "bytes": 12802,
+      "sha256": "dc570a91dd321833cf5ae1259590efdbac508cd3c98cba7df48f2630a0519b30"
+    },
+    {
+      "name": "deviceusestatement.xsd",
+      "bytes": 9424,
+      "sha256": "0e3b8feb073c6d7a2ce2bc896b504fc5c54678d5476d0de60d635d95ff5c768c"
+    },
+    {
+      "name": "diagnosticreport.xsd",
+      "bytes": 14317,
+      "sha256": "bbf3a86a7c75edd88ade5424efe8cced757823d62f16cdbcd92fc5a7e00fb927"
+    },
+    {
+      "name": "documentmanifest.xsd",
+      "bytes": 8618,
+      "sha256": "aaa3342059c779191654a545e86b34d9a13e15954721f2a507dee72dcfecc207"
+    },
+    {
+      "name": "documentreference.xsd",
+      "bytes": 15353,
+      "sha256": "c97b4faac4a9eca7257271165a7823e16f99761cd09f99b3cecbd49a48792c16"
+    },
+    {
+      "name": "effectevidencesynthesis.xsd",
+      "bytes": 27098,
+      "sha256": "f882e1f376097344c9d334fdd0080933c7b541f12797fedc6a83c991c4f88950"
+    },
+    {
+      "name": "encounter.xsd",
+      "bytes": 25992,
+      "sha256": "abda36313bace2acbd0c1ab7edf3a1d22c8598197e4cad93c035415a0e5cd499"
+    },
+    {
+      "name": "endpoint.xsd",
+      "bytes": 8873,
+      "sha256": "b455a173147b09bbc4686ed55aaa4e44106295fa5c6dbf595decf5adfb4aad36"
+    },
+    {
+      "name": "enrollmentrequest.xsd",
+      "bytes": 5097,
+      "sha256": "051c78d5757d7dacf18e03d8ec0ebbf5f4bb3bb8c6debf1ebb57f4b7492a2628"
+    },
+    {
+      "name": "enrollmentresponse.xsd",
+      "bytes": 5430,
+      "sha256": "a58f3613602a3f935d8fac50e4da71fe1cfd56742ab16c0992ef976c180a818f"
+    },
+    {
+      "name": "episodeofcare.xsd",
+      "bytes": 11987,
+      "sha256": "1d5805fe41e3dde483f33bdb5e275ea74f77ebccd0287843be49dec891e705e2"
+    },
+    {
+      "name": "eventdefinition.xsd",
+      "bytes": 14126,
+      "sha256": "796792827ad43eaf5fa3bbe64697d3369d319e666d8803da03f241b43de87388"
+    },
+    {
+      "name": "evidence.xsd",
+      "bytes": 14299,
+      "sha256": "8ac3baec3776e19218a809ccdc34349ac2a7fee1207868789038861ba6d0db50"
+    },
+    {
+      "name": "evidencevariable.xsd",
+      "bytes": 20813,
+      "sha256": "0fd2e2e19cb4dc5437f0f72f4f32e477ada767d7845615aac211f2adb4ef1c25"
+    },
+    {
+      "name": "examplescenario.xsd",
+      "bytes": 95372,
+      "sha256": "6c0c578e49d0d40f3f3dbbdc07186f24ffa657959c0b2e32b57fea210222268a"
+    },
+    {
+      "name": "explanationofbenefit.xsd",
+      "bytes": 79581,
+      "sha256": "bb4627bde985c2cc65c21ff057556cc7f7dd279cbce4bc8a3a4706fb4c433b57"
+    },
+    {
+      "name": "familymemberhistory.xsd",
+      "bytes": 14049,
+      "sha256": "f66c11379d516b067c872b489fcc63d64a08c6bcac869bce26e704180a46a8a4"
+    },
+    {
+      "name": "fhir-all.xsd",
+      "bytes": 9645,
+      "sha256": "adc004278d154fb918d00403bab611a3fb117bf226ffd9449b573436c9eaa53d"
+    },
+    {
+      "name": "fhir-base.xsd",
+      "bytes": 243335,
+      "sha256": "2bfef41432f302ec192ddd396a6797e95c98ed251566b285566331942308214c"
+    },
+    {
+      "name": "fhir-xhtml.xsd",
+      "bytes": 66723,
+      "sha256": "707ad8be23f9bf8f5d6aaf32e547056834975df646b706926e01f0bf4b409495"
+    },
+    {
+      "name": "flag.xsd",
+      "bytes": 7069,
+      "sha256": "410185119cdecfeda69ddacff0ede124336d8cfb79bbdb888c54d21720e25830"
+    },
+    {
+      "name": "goal.xsd",
+      "bytes": 13445,
+      "sha256": "6e7973c045c72c89acb2b8338795ffcb0e1c5710fb64a66658154cd551bf317c"
+    },
+    {
+      "name": "graphdefinition.xsd",
+      "bytes": 18083,
+      "sha256": "74d3b5e468e8fbdc4927614369fab922122e7ce77f7389f0e1524fea4fb4a01e"
+    },
+    {
+      "name": "group.xsd",
+      "bytes": 12125,
+      "sha256": "c904005036df50fea2e25425b9aae1a289f65c7d6f1a2ab4bacac9116643ea1a"
+    },
+    {
+      "name": "guidanceresponse.xsd",
+      "bytes": 11568,
+      "sha256": "8d73c30af84434b2cee68e61000fbe91a18acbe4c2156cf6f7a2d3a05630a76b"
+    },
+    {
+      "name": "healthcareservice.xsd",
+      "bytes": 17068,
+      "sha256": "28f46f876587cc2c656edf4bae74f4e266b16c899477af669d7c09b5b73a3bb2"
+    },
+    {
+      "name": "imagingstudy.xsd",
+      "bytes": 20462,
+      "sha256": "90c890437fd79b5de17a1856bf66287effe7b2662cc26734a3a95c029ee7ea35"
+    },
+    {
+      "name": "immunization.xsd",
+      "bytes": 20011,
+      "sha256": "01d76b7fef4db1dd3a1d53a1245d8a5673c4ec652ca63060ef9d410659a4f580"
+    },
+    {
+      "name": "immunizationevaluation.xsd",
+      "bytes": 8639,
+      "sha256": "8696a81fb3e38d0da3a440086a0647cf4f9003d4e22fadba1d55eb0019240c7d"
+    },
+    {
+      "name": "immunizationrecommendation.xsd",
+      "bytes": 10545,
+      "sha256": "277247e1e4598e32a3e9092dbe622e7bf42b17ad42ffcd714ef9409610a552d3"
+    },
+    {
+      "name": "implementationguide.xsd",
+      "bytes": 109581,
+      "sha256": "da500ba284d5a944e4d4e000289688bf7d3a015dc4c709e54279105f9cde4463"
+    },
+    {
+      "name": "insuranceplan.xsd",
+      "bytes": 20763,
+      "sha256": "86672b13f5590ad1aaaaa96890408a57ae762c8ca05d932b78eacda5eebbbd50"
+    },
+    {
+      "name": "invoice.xsd",
+      "bytes": 14844,
+      "sha256": "65875f7f2ccf766dc5c2501263d95789ee1b31bce9c98ce5a4de0e92999a4780"
+    },
+    {
+      "name": "library.xsd",
+      "bytes": 15806,
+      "sha256": "3288bdd70191a5a8a66f46f385ae920f305d7d6f61f7588c22ece24e27ed23e6"
+    },
+    {
+      "name": "linkage.xsd",
+      "bytes": 6650,
+      "sha256": "f5546c2d72fc19ee842bc34a600ba75b36dc1c89f95f51594ee24a059f57fa71"
+    },
+    {
+      "name": "list.xsd",
+      "bytes": 9813,
+      "sha256": "1dabe15629fc87de098f2d565a485298fc0e15c8b59a069a18a989d41dedfa6a"
+    },
+    {
+      "name": "location.xsd",
+      "bytes": 14601,
+      "sha256": "2201b18764a89f041aaaa943c5c6e8865ba4db814747cd28f70add485923e342"
+    },
+    {
+      "name": "measure.xsd",
+      "bytes": 28158,
+      "sha256": "773155e3c433f8fca869f6e3fa823b7ad6e2eb65e982c08f21872752eca0b6aa"
+    },
+    {
+      "name": "measurereport.xsd",
+      "bytes": 18855,
+      "sha256": "8c1f649cd95022656415b83efe4d7c699f7fcb0a98c14d33a66a9eaa72bd7cb3"
+    },
+    {
+      "name": "media.xsd",
+      "bytes": 10455,
+      "sha256": "a396e3da51122593b35c33bed2a269032be765d1285ba1a2986c884fe1e738a6"
+    },
+    {
+      "name": "medication.xsd",
+      "bytes": 10426,
+      "sha256": "aa25d053d263e9dacbcc5952095acbbdb94dae3dbfc7efff7f892a67c445590e"
+    },
+    {
+      "name": "medicationadministration.xsd",
+      "bytes": 15544,
+      "sha256": "0dfd431a50d8b0ed85ba8670fb1244eb900f4dd69e5c5a6a40fc07f02ccca4d6"
+    },
+    {
+      "name": "medicationdispense.xsd",
+      "bytes": 15705,
+      "sha256": "00b81c4544d18ebce94598f36af3e3df141c03cba2fdc94bd497bf1bc6ef91cf"
+    },
+    {
+      "name": "medicationknowledge.xsd",
+      "bytes": 30175,
+      "sha256": "550fa2e5045a71496c25cbc1e7d22e23b6370cbdd726e7afd2c07b91fc3134a5"
+    },
+    {
+      "name": "medicationrequest.xsd",
+      "bytes": 26917,
+      "sha256": "6231155fc5b927f19ea41e6bed8b0b18d6f5c5da6d69f73aa3fdaae01682fa9f"
+    },
+    {
+      "name": "medicationstatement.xsd",
+      "bytes": 12494,
+      "sha256": "233a8acd5e40f79902d53887ad0e8a28450b44b6404873b13f0e2d9ae016feae"
+    },
+    {
+      "name": "medicinalproduct.xsd",
+      "bytes": 18034,
+      "sha256": "88e13fdd64f1bb7edb5178f042646fd7dc0fec5c851c7cce33bceb52299c3299"
+    },
+    {
+      "name": "medicinalproductauthorization.xsd",
+      "bytes": 11655,
+      "sha256": "4ad9a059ff7537e5f11dc47e0e2b18ee8308b508c95e09abce52f50208dba866"
+    },
+    {
+      "name": "medicinalproductcontraindication.xsd",
+      "bytes": 6788,
+      "sha256": "c3751d3300254a3cbee733721ef94cece22a8c7229aaa5721022ae127abb5e9e"
+    },
+    {
+      "name": "medicinalproductindication.xsd",
+      "bytes": 7121,
+      "sha256": "d3ae24655c55855b1291a9121cdd7628173b0ed8a6b9be7cbb58d6d94fbd5645"
+    },
+    {
+      "name": "medicinalproductingredient.xsd",
+      "bytes": 12424,
+      "sha256": "1b7221a1e99cf052d4d2d36638da691a3f3d7616e7fdd25ffe291cce6c828db3"
+    },
+    {
+      "name": "medicinalproductinteraction.xsd",
+      "bytes": 6181,
+      "sha256": "ba10036ac428049a9b0a88cff83fc5ece9ef82d1e8e8548f6e6b7d04ea47122d"
+    },
+    {
+      "name": "medicinalproductmanufactured.xsd",
+      "bytes": 5257,
+      "sha256": "e5ec399468a2eec6d5ad5cafaf200de77efd0ee2a9fac40f6cb4a604a19bf902"
+    },
+    {
+      "name": "medicinalproductpackaged.xsd",
+      "bytes": 10657,
+      "sha256": "93a6fe50028fa8f30b28060fce922d29988e5a05e29463dbab8926cd76dade06"
+    },
+    {
+      "name": "medicinalproductpharmaceutical.xsd",
+      "bytes": 11645,
+      "sha256": "60176ad739c8e667a4b17aeed40f0e005958fbc22644906f57718650ab2a0050"
+    },
+    {
+      "name": "medicinalproductundesirableeffect.xsd",
+      "bytes": 4521,
+      "sha256": "6d1c0296bef3c7959635f3041fa98a19965b4d3c4f53f7dc3cece8c8d1ac3eb2"
+    },
+    {
+      "name": "messagedefinition.xsd",
+      "bytes": 18648,
+      "sha256": "ee29eeeb1bf4c477a63ee1635a550aa3e2c4876d1b111854e77fd4fafc382af4"
+    },
+    {
+      "name": "messageheader.xsd",
+      "bytes": 14623,
+      "sha256": "18bfe22de4638a5c2925bfb40d5d823925dcc5ef36eea822db6ae65ec9eb7763"
+    },
+    {
+      "name": "molecularsequence.xsd",
+      "bytes": 37982,
+      "sha256": "91a1283ad5836f8b6ad1f40f5f2b58c9d0309660fd4e93ec6a29620c3361ef94"
+    },
+    {
+      "name": "namingsystem.xsd",
+      "bytes": 13101,
+      "sha256": "5a95e430b5fae367e002db787f529579947412b0807309847c18dbbc4d8ed4a1"
+    },
+    {
+      "name": "nutritionorder.xsd",
+      "bytes": 22562,
+      "sha256": "3651938d0c546daeb9b1cb00eb31ffa2f1e52fca6bddf51b45d254f8f7094e63"
+    },
+    {
+      "name": "observation.xsd",
+      "bytes": 19503,
+      "sha256": "4b7161da6159070d121187f2447c7113e683b61c232e5df1b227193c780a39b3"
+    },
+    {
+      "name": "observationdefinition.xsd",
+      "bytes": 16603,
+      "sha256": "ed8574594126ad077484d525895e7a63d56456fe6d02bf07860b39cda3145bcf"
+    },
+    {
+      "name": "operationdefinition.xsd",
+      "bytes": 23133,
+      "sha256": "ad3634f798f3910b93ca105a6c6bb06efdc93b656233923f6fa07c850b34cc28"
+    },
+    {
+      "name": "operationoutcome.xsd",
+      "bytes": 14549,
+      "sha256": "eed60cd76029a52d9be9dc9575df47a2040d8ce5022f035a06157c157dedc4d4"
+    },
+    {
+      "name": "organization.xsd",
+      "bytes": 8207,
+      "sha256": "543f206ad715d842d9aa1c117f5ea51679b5f706337f9cbf6e054961b2616791"
+    },
+    {
+      "name": "organizationaffiliation.xsd",
+      "bytes": 7117,
+      "sha256": "787f9e5bcb2d44dcadefef60a2ab4a59252b2509cec750aec73b26ab7aa7cd5c"
+    },
+    {
+      "name": "parameters.xsd",
+      "bytes": 8416,
+      "sha256": "fa42d45228e5840011dab5606890c02fd6f241d38f7e68c3d90bc329b80de03e"
+    },
+    {
+      "name": "patient.xsd",
+      "bytes": 15323,
+      "sha256": "ae952e505333776d6ab9e23e7b15e80e12a690c2382200285364a3eb35cb8985"
+    },
+    {
+      "name": "paymentnotice.xsd",
+      "bytes": 6666,
+      "sha256": "2c5788f3da3cc00e7caba07b3b1469ec647816c9675d55d763871a97bd73c8ff"
+    },
+    {
+      "name": "paymentreconciliation.xsd",
+      "bytes": 12146,
+      "sha256": "b1ecb142dc3f2b99c388270dc3b3790eb306adb691f99c9aaab2224a7f623378"
+    },
+    {
+      "name": "person.xsd",
+      "bytes": 8553,
+      "sha256": "7daf9918cddde6395bc5a00d029a663ef2c90cb458a55962677146a451bac335"
+    },
+    {
+      "name": "plandefinition.xsd",
+      "bytes": 47781,
+      "sha256": "446da2b04c7d6b8f4700d5d22a4e0ef6b1dc4d49875a5b4e193b17128a5b6c30"
+    },
+    {
+      "name": "practitioner.xsd",
+      "bytes": 8002,
+      "sha256": "37d5e41118ed490e9ef0e0a9ddc0809cf796ba7c5226be68a994412468bfe2b2"
+    },
+    {
+      "name": "practitionerrole.xsd",
+      "bytes": 10696,
+      "sha256": "8673be69dbd9260724640e74025ef5f281fc294109976be225ed44f026f06dbf"
+    },
+    {
+      "name": "procedure.xsd",
+      "bytes": 16123,
+      "sha256": "911d0a8cd89c78e95cf199f8dd8c7ac758c9b1003f3024cf50f46e67dd5ecd5e"
+    },
+    {
+      "name": "provenance.xsd",
+      "bytes": 13886,
+      "sha256": "47e5d35631fbcf473b8b0d0ac0c804b03760a3ba632b57527ae8e7139ad7ecec"
+    },
+    {
+      "name": "questionnaire.xsd",
+      "bytes": 31078,
+      "sha256": "471898e390f024a7dd906fd7b3c4730413a7364a07e45930b5556f7c65474527"
+    },
+    {
+      "name": "questionnaireresponse.xsd",
+      "bytes": 12928,
+      "sha256": "6b0c00d71fa39b53ae52bf534d7df66f4fbf5177dc6f511faabdbebb68181e82"
+    },
+    {
+      "name": "relatedperson.xsd",
+      "bytes": 8265,
+      "sha256": "30f50b639cfb703cfa0b235d204739e1c5d5d6c643664a21282fdfaf4d3ec85a"
+    },
+    {
+      "name": "requestgroup.xsd",
+      "bytes": 18854,
+      "sha256": "8f65f6a16b92dd17c579ef555269782fe43edb126f8147e80c61f32beaff2b9b"
+    },
+    {
+      "name": "researchdefinition.xsd",
+      "bytes": 16839,
+      "sha256": "8eabc9ab7ec8b2e17085facb60a7e5b98eb973fb8e13adb403c16e0ba3523f76"
+    },
+    {
+      "name": "researchelementdefinition.xsd",
+      "bytes": 24353,
+      "sha256": "c11f721d631a6d2838ef9d1bf9b6c7ba243aa641a87ab48a1fe9eb5f0851937d"
+    },
+    {
+      "name": "researchstudy.xsd",
+      "bytes": 18170,
+      "sha256": "ad1ea8f2ae7c6633be8aedcf424e6a2539efdc78ca9b9154a90c331d2eb4a2eb"
+    },
+    {
+      "name": "researchsubject.xsd",
+      "bytes": 8789,
+      "sha256": "8eae509f2eadd1e3f418b2bdb12a42f6513305eccb6cde2550a9d8283093c767"
+    },
+    {
+      "name": "riskassessment.xsd",
+      "bytes": 11190,
+      "sha256": "3b9d4ed67a079799190470b184bac36dfe2a867e185adee5b17923b96dcd9914"
+    },
+    {
+      "name": "riskevidencesynthesis.xsd",
+      "bytes": 23581,
+      "sha256": "7cbf67a6bea8096825d759e93d85ea1b3b5e4d52e22d8a62588e7e4dd3fade6f"
+    },
+    {
+      "name": "schedule.xsd",
+      "bytes": 5923,
+      "sha256": "a536ae8ab4239780c79bc11283501bf5c7baca9d32327e09c880ca8452374b54"
+    },
+    {
+      "name": "searchparameter.xsd",
+      "bytes": 21288,
+      "sha256": "b8729bc09dd58cdc6a4c28fbcca390aa2b9faef72325e499919be5e3317a95e4"
+    },
+    {
+      "name": "servicerequest.xsd",
+      "bytes": 15838,
+      "sha256": "7b7a10f41db398f3da21af3cbcfcfc51fb81aabbb72c8a31d10e5eb632470583"
+    },
+    {
+      "name": "slot.xsd",
+      "bytes": 8250,
+      "sha256": "2091c3f7c0a1bab0bfe253b19392caebc3234cb9c034a1796fc8e52846635c9c"
+    },
+    {
+      "name": "specimen.xsd",
+      "bytes": 15855,
+      "sha256": "9c67adcec9d0cabc386040de9c0aa90fd6f88730b6737fad72ec8508de03cc97"
+    },
+    {
+      "name": "specimendefinition.xsd",
+      "bytes": 14517,
+      "sha256": "6d6dd035812b75b6055028b218269128ac60d087647f963db7212117ea7bdd9b"
+    },
+    {
+      "name": "structuredefinition.xsd",
+      "bytes": 23177,
+      "sha256": "edb3de03e873e7e0e22ce99a12d11ba98f3f0caa3659615f79ff04e32a698095"
+    },
+    {
+      "name": "structuremap.xsd",
+      "bytes": 41677,
+      "sha256": "bac314f68e4c8875855e8232c260c9b0f8881a54dd0af00bc2d2c438544e55c3"
+    },
+    {
+      "name": "subscription.xsd",
+      "bytes": 11014,
+      "sha256": "52fd65df78ad0c7ec5de902f92ec812bbb567d1e36a7ddf7900c5fe4ebfa025e"
+    },
+    {
+      "name": "substance.xsd",
+      "bytes": 8899,
+      "sha256": "2af57ca3e5b5aa2bcce6e9826c7e2fd61742de143c8b68322f01926a93d83ba1"
+    },
+    {
+      "name": "substancenucleicacid.xsd",
+      "bytes": 12881,
+      "sha256": "0ba451b75d205646136ffb4fa5ba1be377879d1abc8323f8bcb25542c7d24a4a"
+    },
+    {
+      "name": "substancepolymer.xsd",
+      "bytes": 11641,
+      "sha256": "0c501dbfd650d39699da4a530507170297e6c534f3fbfd3b5cc484d8ecce0f35"
+    },
+    {
+      "name": "substanceprotein.xsd",
+      "bytes": 10865,
+      "sha256": "f35cf8f90a3d670b7c2922aaf0ef00a341455dc287234e70b425615553144ce5"
+    },
+    {
+      "name": "substancereferenceinformation.xsd",
+      "bytes": 10325,
+      "sha256": "b3b62203002fac8e19dc32ce0076cb1b777b242d0e76c47f7227c18c2c66622f"
+    },
+    {
+      "name": "substancesourcematerial.xsd",
+      "bytes": 26685,
+      "sha256": "1d071f85dfebf8cceea17e6a1c919facb208f2dd41b1ff2fb41420560a04573e"
+    },
+    {
+      "name": "substancespecification.xsd",
+      "bytes": 30918,
+      "sha256": "5b03d792b8a1a4889d8b70ca7c52bde17bc9483acb8ba57f54a662937a489924"
+    },
+    {
+      "name": "supplydelivery.xsd",
+      "bytes": 9319,
+      "sha256": "8f5e461fc0cb066cd24f288493418fc0f9a28941dc4bb6de4f539cea9a0dfe31"
+    },
+    {
+      "name": "supplyrequest.xsd",
+      "bytes": 11265,
+      "sha256": "aab96487e8202f92ed7421d195b3c8b3d2ba7a927463fe22acea0168816fa55c"
+    },
+    {
+      "name": "task.xsd",
+      "bytes": 28257,
+      "sha256": "41a9c13030b18e7872ad9b1319b1294aa43334b4c8d06b35f351ea471c2401c1"
+    },
+    {
+      "name": "terminologycapabilities.xsd",
+      "bytes": 27418,
+      "sha256": "b07ccac61e8adaf82fc6ed431d2e27ca9f69fc6f18f54892d29a08674ffa2452"
+    },
+    {
+      "name": "testreport.xsd",
+      "bytes": 21684,
+      "sha256": "41137d22ae6eec3416e8474af9447603368b327b293fb00887863f81893c2037"
+    },
+    {
+      "name": "testscript.xsd",
+      "bytes": 53581,
+      "sha256": "6608a1c2e1b9ce19d2079cea2f0df309c284ccbdcd90a35ba416c9964c3452b0"
+    },
+    {
+      "name": "valueset.xsd",
+      "bytes": 29308,
+      "sha256": "185eb7bdab1a602585edecdb11ed585bdec0a78d4ddb05f3a0c5b58614b04197"
+    },
+    {
+      "name": "verificationresult.xsd",
+      "bytes": 16493,
+      "sha256": "7beec4da84f2a8a4aa461b28e4de3faf77e42d787f078044062851b8c07b7fb2"
+    },
+    {
+      "name": "visionprescription.xsd",
+      "bytes": 13492,
+      "sha256": "d7c2533c1c9c0383ff6498711f787ef0ac2c26f03230c96fb8126dc9c9e1986c"
+    },
+    {
+      "name": "xml.xsd",
+      "bytes": 9568,
+      "sha256": "a6d430599c1f9ea508efa6f899bf0979d1501eb948fd51fcb9ae3df1971941a0"
+    }
+  ],
+  "examples": [
+    {
+      "name": "bundle-example.xml",
+      "url": "https://www.hl7.org/fhir/R4/bundle-example.xml",
+      "bytes": 3623,
+      "sha256": "b63afa971534afd8af37c036219f17b0956ed248a5ee6234f8bd72442742d7d3"
+    },
+    {
+      "name": "condition-example.xml",
+      "url": "https://www.hl7.org/fhir/R4/condition-example.xml",
+      "bytes": 1706,
+      "sha256": "659f035652a0d139168e89a0b102b5c807dad1f6b5f629f61c12fa54f60418e3"
+    },
+    {
+      "name": "observation-example.xml",
+      "url": "https://www.hl7.org/fhir/R4/observation-example.xml",
+      "bytes": 3662,
+      "sha256": "03906eee9a5eb59f329f8176bc150419aafa90c3b8729af614e0059054985c7b"
+    },
+    {
+      "name": "patient-example.xml",
+      "url": "https://www.hl7.org/fhir/R4/patient-example.xml",
+      "bytes": 3874,
+      "sha256": "606695d227a8669dc6ef2669957b1684990b2e127a82592008642c50359324fd"
+    },
+    {
+      "name": "practitioner-example.xml",
+      "url": "https://www.hl7.org/fhir/R4/practitioner-example.xml",
+      "bytes": 1259,
+      "sha256": "22534725be0962611829018d7a8c69595610b4ca927323d2e2992d736c9fe97b"
+    }
+  ],
+  "note": "The closure is discovered, not listed: fhir-all.xsd names 146 of these files and the rest arrive through what those include. fhir-base.xsd and xml.xsd are the two that are reachable only that way, and a copy of fhir-all.xsd's own include list is not enough to compile this schema. HL7 ships a local copy of the W3C xml.xsd rather than pointing at http://www.w3.org/2001/xml.xsd, which is what lets the set compile inside gigaxml's schema sandbox."
+}

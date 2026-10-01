@@ -1,0 +1,53 @@
+# One row per FHIR Patient, out of a real published HL7 example.
+#
+# **The shape here that no other example has: the value is in the attribute.**
+#
+# Every primitive in FHIR's XML is written as an element carrying a `value` attribute,
+# not as element text:
+#
+#     <family value="Chalmers"/>
+#     <birthDate value="1974-12-25"/>
+#     <active value="true"/>
+#
+# In the Wikipedia, PubMed and ERP examples the scalar is the element's text, so a field
+# path that stops at an element can reach it. Here a path that stops at `<family>` gets
+# nothing at all. Counted across this corpus: **157 of 304 elements carry a `value`
+# attribute** -- it is the majority shape here, not an edge case.
+#
+# The second shape is that the namespace is on the document, exactly as in the Wikipedia
+# example: `xmlns="http://hl7.org/fhir"` is the default namespace, so a path written
+# without the prefix does not resolve.
+#
+# The third is repetition with *different shapes under one name*. This document has three
+# `<name>` elements and they are not alike -- the second has no `<family>`, the third has a
+# `<period>`. `family`/`given` below therefore come from the first `<name>`, and the CSV
+# column is a fact about that element, not about the patient. See the README.
+#
+# Run it with:
+#   python -m gigaxml.cli extract data/fhir/examples/patient-example.xml \
+#       -c examples/fhir/patients.yaml -o out/patients.csv
+
+namespaces:
+  fhir: http://hl7.org/fhir
+
+record: /fhir:Patient
+
+fields:
+  id:
+    path: fhir:id/@value
+  gender:
+    path: fhir:gender/@value
+  birth_date:
+    # `date` rather than `string`, and this one *is* a real ISO date -- unlike MediaWiki's
+    # `2026-05-18T12:42:53Z`, which gigaxml's `date` type refuses. Two documents, two
+    # answers, both correct for their own format.
+    path: fhir:birthDate/@value
+    type: date
+  active:
+    path: fhir:active/@value
+    type: bool
+  # The first <name> only. See the note in the header.
+  family:
+    path: fhir:name/fhir:family/@value
+  given:
+    path: fhir:name/fhir:given/@value
