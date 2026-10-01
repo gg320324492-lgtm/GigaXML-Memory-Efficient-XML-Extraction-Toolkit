@@ -309,3 +309,209 @@ _XSD_HEAD = (
 )
 _XSD_DECLARING_STRING = f'{_XSD_HEAD}<xs:element name="name" type="xs:string"/></xs:schema>'
 _XSD_DECLARING_DECIMAL = f'{_XSD_HEAD}<xs:element name="name" type="xs:decimal"/></xs:schema>'
+
+
+# --- defects 4 and 5: found by M16, pointing this project at a real XSD for the first time
+#
+# Everything above in this file was found by reading. These two were found by downloading
+# one: HL7's FHIR R4 schema set, which ``examples/fhir/fetch.py`` crawls and this file
+# pins the consequences of. Neither is fixed, per M16 criterion E -- so each test asserts
+# what happens today, and says in its docstring what a fix would have to change.
+#
+# **Why none of M1 through M15 found them.** Every XSD this project had been pointed at
+# was written for these tests: no target namespace, and every ``xs:import`` naming a
+# namespace that ``xmlschema`` does not also ship. Both assumptions are load-bearing and
+# both are false of real schemas, so the guards measured the fixture rather than the
+# world. That is the same shape as the M14 ``report`` self-check and the M15
+# ``#``-inside-a-block-scalar findings: a guard proved against something shaped to suit it.
+
+
+def _schema_doc(target_namespace: str | None, body: str) -> str:
+    """A schema document declaring ``target_namespace``, containing ``body``.
+
+    Two things have to line up for a namespaced form to be *valid* rather than merely
+    different: ``elementFormDefault="qualified"``, and a prefix bound to the target so a
+    prefixed type reference resolves. Without both, the schema fails to compile for a
+    reason of its own, and a test built on that would go red under any policy and so
+    distinguish nothing -- the trap ``tests/security/conftest.py`` is built around.
+
+    The prefix is skipped for the XML namespace, which XML forbids binding to a prefix at
+    all: binding one fails the document before any policy is consulted, and the resulting
+    error names neither the element nor the sandbox.
+    """
+    if target_namespace is None:
+        attributes = ""
+    elif target_namespace == _XML_NAMESPACE:
+        attributes = f' targetNamespace="{target_namespace}" elementFormDefault="qualified"'
+    else:
+        attributes = (
+            f' targetNamespace="{target_namespace}" xmlns:t="{target_namespace}"'
+            ' elementFormDefault="qualified"'
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"{attributes}>\n'
+        f"{body}\n</xs:schema>\n"
+    )
+
+
+_PRODUCT_TYPE = (
+    '  <xs:complexType name="productType"><xs:sequence>'
+    '<xs:element name="sku" type="xs:string"/></xs:sequence></xs:complexType>'
+)
+_PROBE_NS = "urn:gigaxml:known-defect:probe"
+
+#: The namespace of the W3C XML schema. Not an arbitrary choice: ``xmlschema`` ships this
+#: one inside itself, which is what makes defect 5 below reproducible at this size.
+_XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
+
+_MARKER_ELEMENT = (
+    '  <xs:element name="leakMarker"><xs:complexType><xs:sequence>'
+    '<xs:element name="leakField" type="xs:string"/></xs:sequence></xs:complexType>'
+    "</xs:element>"
+)
+
+
+def test_a_known_defect_a_namespaced_schema_reports_declaring_the_element_it_could_not_find(
+    tmp_path: Path,
+) -> None:
+    """**Found in M16, by ``examples/fhir/fetch.py``. Not fixed.**
+
+    **What it does today**: ``record_field_types`` asks ``xmlschema`` for a top-level
+    element by its bare local name. ``xmlschema`` keys a schema with a target namespace by
+    the Clark-notation name ``{namespace}local``, so the lookup returns ``None`` and the
+    caller reports that the schema declares no such element -- naming the element in the
+    list of what it does declare::
+
+        the schema 'fhir-all.xsd' declares no top-level element named 'Patient'; it has:
+        Account, ActivityDefinition, ..., Patient, ...
+
+    On the official HL7 FHIR R4 schema all 146 global elements are refused this way, so
+    the error is not merely wrong but wrong about every element the schema has.
+
+    **Why the two schemas below differ in exactly one thing.** Both compile; both declare
+    one global element; the bodies are byte-identical apart from the prefix on the type
+    reference, which the namespace requires. That is what makes the second half of this
+    test the control that gives the first half its meaning. Without it, a fixture whose
+    namespaced form was invalid for some other reason would report the same failure under
+    any policy.
+
+    **What a fix would have to change**: qualify the lookup, then keep matching *fields*
+    by local name so a config written without prefixes still works. The error message is
+    the part that hides this -- a user reads "declares no such element", checks the name,
+    finds it in the same sentence, and has no reason left to suspect the namespace.
+    """
+    pytest.importorskip("xmlschema", reason="the 'xsd' extra is optional")
+    import xmlschema
+
+    from gigaxml.errors import SchemaError
+    from gigaxml.fields import FieldType
+    from gigaxml.xsd import record_field_types
+
+    namespaced = tmp_path / "namespaced.xsd"
+    plain = tmp_path / "plain.xsd"
+    namespaced.write_text(
+        _schema_doc(
+            _PROBE_NS, _PRODUCT_TYPE + '  <xs:element name="product" type="t:productType"/>'
+        ),
+        encoding="utf-8",
+    )
+    plain.write_text(
+        _schema_doc(None, _PRODUCT_TYPE + '  <xs:element name="product" type="productType"/>'),
+        encoding="utf-8",
+    )
+
+    # Both must be valid XSDs, or the failure below could be either one being broken.
+    for source in (namespaced, plain):
+        assert xmlschema.XMLSchema(str(source)) is not None
+
+    # Control: the identical schema without a namespace is read normally. If this failed,
+    # the fixture would be wrong rather than the code, and the failure below meaningless.
+    assert record_field_types(plain, "/product") == {"sku": FieldType.STRING}
+
+    with pytest.raises(SchemaError) as caught:
+        record_field_types(namespaced, "/product")
+
+    message = str(caught.value)
+    assert "declares no top-level element named 'product'" in message
+    # The part that makes this a defect rather than a refusal: the message lists as
+    # present the very element it just said was absent.
+    assert "it has: product" in message, (
+        "the error is expected to list the element it denies; if that stops happening the "
+        "cause has changed and this pin needs rewriting rather than deleting"
+    )
+
+
+def test_a_known_defect_a_blocked_import_still_compiles_and_only_warns(tmp_path: Path) -> None:
+    """**Found in M16. Not fixed.** The refusal holds; the *report* of it does not.
+
+    An ``xs:import`` pointing out of the sandbox is stopped -- ``XMLResourceBlocked`` is
+    raised inside ``_reject_escape``, and the outside file is genuinely not read. But
+    ``xmlschema`` catches that, downgrades it to ``XMLSchemaImportWarning``, and satisfies
+    the namespace from its own bundled copy, so the schema **compiles and the caller gets
+    a schema back**. A user who deleted a file, or whose schema references something the
+    policy refuses, gets a successful run.
+
+    ``SECURITY.md`` records the pre-M1 behaviour as *"not merely 'it goes out to the
+    network', but 'the failed fetch is silently downgraded to a Warning and the schema
+    still compiles'"*, and the repaired behaviour as ``XMLResourceBlocked``. On the
+    ``xs:import`` path the first half is still true: **nothing was read and nothing was
+    fetched.** The second half -- telling the user -- is what came back.
+
+    **The condition is a bundled fallback, not the escape.** Every fixture M1 wrote
+    imported a namespace ``xmlschema`` does not ship, so there was nothing to fall back to
+    and the block ended the compile. The namespace here is the one this fixture borrows
+    from the FHIR set for exactly that reason.
+
+    **Both halves are asserted, and neither alone would do.** ``leakMarker`` absent proves
+    the file was not read; the absence of an exception proves the refusal was not
+    reported. A test asserting only the first would pass on the old behaviour too.
+    """
+    pytest.importorskip("xmlschema", reason="the 'xsd' extra is optional")
+    import warnings
+
+    from gigaxml.xsd import _open_schema
+
+    outside = tmp_path / "outside"
+    sandbox = tmp_path / "sandbox"
+    outside.mkdir()
+    sandbox.mkdir()
+    (outside / "secret.xsd").write_text(
+        _schema_doc(_XML_NAMESPACE, _MARKER_ELEMENT), encoding="utf-8"
+    )
+    (sandbox / "inside.xsd").write_text(
+        _schema_doc(_XML_NAMESPACE, _MARKER_ELEMENT), encoding="utf-8"
+    )
+
+    def root_naming(location: str) -> Path:
+        root = sandbox / "root.xsd"
+        root.write_text(
+            _schema_doc(
+                None,
+                f'  <xs:import namespace="{_XML_NAMESPACE}" schemaLocation="{location}"/>\n'
+                + _MARKER_ELEMENT,
+            ),
+            encoding="utf-8",
+        )
+        return root
+
+    # Control: the same import naming a file inside the sandbox. This one must both
+    # compile and bring the declaration across, or the assertions below prove nothing --
+    # a policy that read nothing at all would satisfy "leakMarker absent".
+    control = _open_schema(root_naming("inside.xsd"))
+    assert f"{{{_XML_NAMESPACE}}}leakMarker" in control.maps.elements
+
+    root = root_naming("../outside/secret.xsd")
+    assert (outside / "secret.xsd").is_file(), "the escaped file must really exist"
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        blocked = _open_schema(root)  # does NOT raise, and that is the defect
+
+    assert f"{{{_XML_NAMESPACE}}}leakMarker" not in blocked.maps.elements, (
+        "the file outside the sandbox was read -- the reach boundary is not holding"
+    )
+    assert caught_warnings, (
+        "no warning was emitted, so the block was not even reported; if xmlschema has "
+        "stopped downgrading this, a fix has landed and this pin should be rewritten"
+    )
