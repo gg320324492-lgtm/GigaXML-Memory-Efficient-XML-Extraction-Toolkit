@@ -420,6 +420,22 @@ jobs:
       # assets were attached, the tag existed. Only reading the published page found it.
       - uses: actions/checkout@v4
 
+      # ★ M15. This job had no interpreter -- it checked out, unpacked archives and
+      # called an action, all of which is bash and an HTTP request. Two new steps below
+      # are Python, so one is declared here rather than each of them discovering the
+      # difference between a runner's default `python` and a chosen one.
+      #
+      # This is the only structural change M15 makes to the release job, and it is worth
+      # being exact about what it does and does not do. It does not change what is
+      # published, how it is published, when it is published, or the rc gate. It does add
+      # one way for this job to fail that did not exist before: the release now needs PyPI
+      # to be reachable, because the SBOM is generated from a real install rather than
+      # written by hand. That failure is deliberate -- see the SBOM step -- but it is new,
+      # and it should not arrive as a surprise.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       # The guard for the line above, because "the job went green" is not the claim
       # being made here -- "the release page carries these notes" is. A missing or
       # empty file is the exact condition that produced four blank release pages, and
@@ -465,6 +481,67 @@ jobs:
           done
           ls -la
 
+      # ★ M15 criterion F. Two new files go out with every release, and they are in this
+      # order for a reason that is easy to get backwards: the SBOM is written *before* the
+      # checksums, because the checksum file covers everything the release attaches --
+      # including the SBOM -- and a file cannot contain its own hash.
+      - name: Describe what is being shipped (SBOM)
+        # A CycloneDX 1.6 SBOM of a plain `pip install .`: gigaxml itself as the root
+        # component, plus lxml and PyYAML. Generated from an environment that was really
+        # built, not written by hand -- a hand-written SBOM is a claim about what would be
+        # installed, and this is meant to be a record of what was.
+        #
+        # ★ What this covers and what it does not, said here because the release page is
+        # where a reader meets it. It describes a *library* install. The PySide6 tree the
+        # three frozen binaries actually contain is a different set, and describing it
+        # would mean describing an install rather than the frozen artifact -- so it is out
+        # of scope rather than quietly approximated. Worth saying why, because the
+        # alternative is tempting: an SBOM listing more than it measured is worse than a
+        # narrow one, since the extra entries look checked when they are inferred.
+        # `tools/check_sbom.py` prints anything present that pyproject does not declare --
+        # `pip` does show up there -- rather than hiding it.
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/sbomenv"
+          "$RUNNER_TEMP/sbomenv/bin/python" -m pip install --quiet --upgrade pip
+          # No extras. `pip install .` is what the README tells a CLI user to run, so it is
+          # the set of packages this release's library actually pulls.
+          "$RUNNER_TEMP/sbomenv/bin/python" -m pip install --quiet .
+          python -m pip install --quiet cyclonedx-bom
+          echo "--- what the environment holds, which is what the SBOM must list"
+          "$RUNNER_TEMP/sbomenv/bin/python" -m pip list --format=freeze
+          # `--validate` is ON by default in this tool and is written out anyway, because
+          # "it validates" is the whole claim and a reader should not have to know that.
+          # PYTHONIOENCODING is set because `cyclonedx-py` cannot print its own --help on a
+          # console whose encoding cannot represent the bullet argparse puts in it --
+          # measured here, where the encoding is gbk. It costs nothing on a UTF-8 runner.
+          PYTHONIOENCODING=utf-8 cyclonedx-py environment "$RUNNER_TEMP/sbomenv/bin/python" \
+            --pyproject pyproject.toml \
+            --mc-type library \
+            --sv 1.6 --of JSON --validate \
+            -o artifacts/gigaxml-sbom.json
+          # Valid CycloneDX is not the same as an SBOM about this project: a file with no
+          # components in it validates perfectly, and that is a failure the format cannot
+          # catch and only a check against pyproject can.
+          python tools/check_sbom.py artifacts/gigaxml-sbom.json
+
+      - name: Hash what is being shipped
+        # `SHA256SUMS.txt` in GNU sha256sum's format, so a downloader verifies it with
+        # `sha256sum -c SHA256SUMS.txt` and none of this project's code.
+        #
+        # The list of files is read out of the `files:` glob of the release step below
+        # rather than kept here. A second list of a release's contents is a list that is
+        # correct until somebody adds an artifact -- at which point the one file a user
+        # most wants to check is the one with no hash beside it, and nothing says so.
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/release_checksums.py --artifacts artifacts
+          # Recomputed immediately, from the bytes just written. A generator that cannot
+          # detect its own mistake has no standing to assert anything about a download.
+          python tools/release_checksums.py --verify artifacts/SHA256SUMS.txt
+
       - name: Create the release
         # ★ M15 criterion C: pinned to the commit SHA, because this is the step that
         # attaches files to a public Release. `@v2` was a movable tag -- whoever owns
@@ -499,10 +576,24 @@ jobs:
           # alone it is 3.7 MiB that downloads, refuses to start, and sits on a page next
           # to the zip that actually contains the program. Deliverables are attached by
           # name; whatever happens to match a loose glob is not.
+          # ★ M15 adds two named files. They are named rather than added to the loose globs
+          # above: those are for the three artifacts whose *names* vary with the version, and
+          # a wildcard that matched "everything in here" is the loose glob this file already
+          # has a scar about. `fail_on_unmatched_files: true` below turns a missing one of
+          # these into a failed release rather than a release page quietly missing its
+          # checksums.
+          #
+          # ★ This comment sits above the block and not inside it, and that is not a style
+          # preference. `files: |` is a literal block scalar: a `#` on its own line inside
+          # one is *text*, so `tools/release_checksums.py` reads every line of it as a
+          # glob. It drops whole-line `#`s defensively, but the place for a note about a
+          # list is beside the list, where YAML and every reader agree it is a comment.
           files: |
             artifacts/*.zip
             artifacts/*.tar.gz
             artifacts/**/GigaXML-Setup-*.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/gigaxml-sbom.json
           fail_on_unmatched_files: true
           # A rehearsal tag names itself rc, and the page it produces should say so with
           # the same visibility that keeps it off PyPI: a pre-release badge is the one

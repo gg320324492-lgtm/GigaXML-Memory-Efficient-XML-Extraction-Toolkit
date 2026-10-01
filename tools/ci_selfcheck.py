@@ -437,7 +437,60 @@ def check_workflow_shape() -> tuple[list[str], list[tuple[str, str, dict[str, An
     if not macos:
         problems.append("no job runs on macos-latest: the platform is claimed nowhere")
 
+    problems.extend(check_release_artifacts())
+
     return problems, listing
+
+
+#: The two files M15 adds to every release, and the script that makes each.
+RELEASE_ARTIFACTS = (
+    ("SHA256SUMS.txt", "release_checksums.py"),
+    ("gigaxml-sbom.json", "check_sbom.py"),
+)
+
+
+def check_release_artifacts() -> list[str]:
+    """The release must produce the checksums and the SBOM, and must attach both.
+
+    ★ Three separate claims, and each can be true while the other two are false:
+    the file is generated, the file is attached, and the file is checked. Removing the
+    generation step leaves a release page with no checksums and a green job; removing the
+    line from ``files:`` leaves a checksum file generated, verified, and never shipped.
+    Neither failure announces itself, which is the whole reason this check exists -- and
+    the shape of it is the one this project has paid for repeatedly, including the four
+    blank release pages that were generated correctly and attached to nothing.
+    """
+    problems: list[str] = []
+    workflow = load_workflows().get("package.yml")
+    if workflow is None:
+        return ["package.yml is missing, so there is no release to check"]
+
+    release = (workflow.get("jobs") or {}).get("release")
+    if release is None:
+        return ["package.yml has no `release` job"]
+
+    steps = steps_of(release)
+    create = next((s for s in steps if "action-gh-release" in str(s.get("uses", ""))), None)
+    if create is None:
+        return ["package.yml's release job has no step using action-gh-release"]
+    attached = str((create.get("with") or {}).get("files", ""))
+    everything = "\n".join(run_text(step) for step in steps)
+
+    for filename, script in RELEASE_ARTIFACTS:
+        if script not in everything:
+            problems.append(
+                f"package.yml:release: nothing runs tools/{script}, so {filename} is "
+                f"either never produced or produced without anything checking it. A "
+                f"release with no checksums and no SBOM still goes out green, and an "
+                f"unchecked one looks exactly like a checked one from the log."
+            )
+        if filename not in attached:
+            problems.append(
+                f"package.yml:release: {filename} is not in the release step's `files:`, so "
+                f"it is produced and never attached. `fail_on_unmatched_files` cannot catch "
+                f"this -- it guards the other direction."
+            )
+    return problems
 
 
 # --- platform --------------------------------------------------------------------
