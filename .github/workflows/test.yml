@@ -310,6 +310,26 @@ jobs:
         shell: bash
         run: python tools/ci_selfcheck.py shape --verbose
 
+      # ★ M15 criterion C/D. Two third-party actions on the release chain hold the rights
+      # to publish -- one attaches files to a Release, the other uploads to PyPI where a
+      # name cannot be reused -- and both were referenced by refs that move: a tag, and a
+      # *branch*, which is worse because it can be force-pushed with no release to account
+      # for. They are now pinned to commit SHAs.
+      #
+      # This step is the guard for that, and it is split from the one below on purpose. The
+      # structural check needs no network and cannot be argued with; the resolution check
+      # asks each remote whether the version comment is true, and if github.com is
+      # unreachable it says the check could not run and exits 2. Keeping them apart means a
+      # network blip cannot be mistaken for a workflow defect, which is the failure mode a
+      # combined check would have.
+      - name: Third-party actions are pinned to commit SHAs
+        shell: bash
+        run: python tools/ci_selfcheck.py pins
+
+      - name: ...and each pin really is the release it claims
+        shell: bash
+        run: python tools/ci_selfcheck.py pins --verify-remote
+
   performance-baseline:
     # The one performance signal in CI, and the loose version of the A11 decision
     # that performance numbers are recorded and never asserted.
