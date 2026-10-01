@@ -17,6 +17,8 @@ and date recorded in its ``environment`` block.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import platform
 import statistics
@@ -25,11 +27,33 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 import psutil
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
+
+
+def _load_provenance() -> ModuleType:
+    """Import ``benchmarks/provenance.py`` by path -- benchmarks are scripts, not a package."""
+    path = REPO_ROOT / "benchmarks" / "provenance.py"
+    spec = importlib.util.spec_from_file_location("gigaxml_benchmark_provenance", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - a missing file is a bug
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _sha256_of(path: Path) -> str:
+    """The digest of a whole file, read in chunks because one of these is 4 GB."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 
 IMPLEMENTATIONS = {
     "raw_lxml": HERE / "raw_lxml.py",
@@ -81,8 +105,20 @@ except SystemExit as exit_exc:
     code = exit_exc.code or 0
 finally:
     info = process.memory_info()
-    peak = getattr(info, "peak_wset", None) or info.rss
-    print(f"__GIGAXML_PEAK__{peak}", file=sys.stderr)
+    # Which counter answered is **reported, not assumed**. The `or info.rss` below is a
+    # real fallback for a platform whose psutil build has no `peak_wset`, and a fallback
+    # that returns *current* RSS is a different quantity wearing the same label. Before
+    # this, the recorder wrote "peak_wset (self-read in child)" unconditionally, so a run
+    # that had quietly fallen back would have been filed as a peak measurement. The
+    # measurement is unchanged -- same counter, same process, same moment -- but the
+    # record now says which one it was, and `peak_rss_method` is read from this line
+    # rather than typed in next to it.
+    peak_wset = getattr(info, "peak_wset", None)
+    if peak_wset:
+        peak, counter = peak_wset, "peak_wset"
+    else:
+        peak, counter = info.rss, "rss (fallback: this platform has no peak_wset)"
+    print(f"__GIGAXML_PEAK__{peak} {counter}", file=sys.stderr)
 raise SystemExit(code)
 """
 
@@ -104,14 +140,18 @@ def run_once(script: Path, input_path: Path, output_path: Path) -> dict[str, obj
     elapsed = time.perf_counter() - started
     peak_lines = [line for line in stderr.splitlines() if line.startswith(PEAK_MARKER)]
     peak_rss_mb = 0
+    peak_method = "unreadable: the child printed no peak line"
     if peak_lines:
-        peak_rss_mb = round(int(peak_lines[-1][len(PEAK_MARKER) :]) / (1024 * 1024), 1)
+        reported = peak_lines[-1][len(PEAK_MARKER) :].split(maxsplit=1)
+        peak_rss_mb = round(int(reported[0]) / (1024 * 1024), 1)
+        counter = reported[1] if len(reported) > 1 else "peak_wset (counter not named by the child)"
+        peak_method = f"{counter}, self-read in the process that did the work"
     output_size = output_path.stat().st_size if output_path.is_file() else 0
     return {
         "wall_s": round(elapsed, 3),
         "exit_code": process.returncode,
         "peak_rss_mb": peak_rss_mb,
-        "peak_rss_method": "peak_wset (self-read in child)",
+        "peak_rss_method": peak_method,
         "output_bytes": output_size,
         "stdout_tail": stdout.strip().splitlines()[-1] if stdout.strip() else "",
         "stderr_tail": (stderr.strip().splitlines() or [""])[-1][:300],
@@ -208,7 +248,46 @@ def main() -> int:
         "10GB": args.data_dir / "b10g.xml",
     }
 
-    results: dict[str, object] = {"environment": environment(), "results": {}}
+    # The identity block (M17 criterion A). Two of its fields are the reason this is a
+    # function rather than a cosmetic addition to the output:
+    #
+    # * `git_commit` is `rev-parse HEAD`, never a branch name, because a branch moves and
+    #   the commit does not -- "measured on main" is worth nothing the day after.
+    # * `config_sha256` is taken over the **committed blob**, not the file in the working
+    #   tree. With `core.autocrlf=true` those are different files: a fresh clone of
+    #   `gigaxml-config.yaml` is 524 bytes of CRLF where the blob is 512 bytes of LF, and
+    #   their digests differ. A working-tree hash is true on the machine that took it and
+    #   false on every other one, which is worse than recording nothing.
+    #
+    # `dataset_sha256` is a map keyed by size rather than one string, because this script
+    # measures four documents and a single hash would name the wrong one. Hashing them
+    # costs a few seconds for the 4 GB file and happens once per size, beside the rows
+    # that describe it. The situation this milestone found the existing `results.json` in
+    # is the one it prevents: every number real, none of it traceable, because the
+    # datasets were deleted and nothing recorded what produced them.
+    datasets: dict[str, str] = {}
+    for size in args.sizes:
+        path = size_paths[size]
+        datasets[size] = _sha256_of(path) if path.is_file() else "not measured: the file was absent"
+
+    provenance = _load_provenance()
+    identity = provenance.identity(
+        REPO_ROOT,
+        dataset_sha256=datasets,
+        config_sha256=provenance.blob_sha256(REPO_ROOT, "benchmarks/compare/gigaxml-config.yaml"),
+        extra={
+            "config": "benchmarks/compare/gigaxml-config.yaml",
+            "implementations": sorted(IMPLEMENTATIONS),
+            "repeats": args.repeats,
+        },
+    )
+
+    results: dict[str, object] = {
+        "schema_version": provenance.SCHEMA_VERSION,
+        "identity": identity,
+        "environment": environment(),
+        "results": {},
+    }
     # The outputs land under <repo>/.scratch/, which a fresh checkout does not have --
     # found by running this in a clean worktree, where every implementation failed on
     # its output's missing parent directory before extracting a single row.
