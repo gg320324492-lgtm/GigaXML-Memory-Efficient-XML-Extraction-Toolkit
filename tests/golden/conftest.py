@@ -136,8 +136,11 @@ def read_golden(name: str) -> tuple[int, str, str]:
     Read with ``newline=""`` so the file's own line endings survive: a sample's artefact
     is CRLF, and the default text mode would fold it to LF and quietly stop comparing
     what is actually written to disk.
+
+    Use ``read_bytes().decode("utf-8")`` because ``Path.read_text(newline=)`` is only
+    available on Python 3.13+; the project supports 3.11+.
     """
-    raw = (EXPECTED_DIR / name).read_text(encoding="utf-8", newline="")
+    raw = (EXPECTED_DIR / name).read_bytes().decode("utf-8")
     header, _, body = raw.partition("\n")
     fields = dict(
         part.split("=", 1) for part in header.removeprefix("# ").split(" ") if "=" in part
