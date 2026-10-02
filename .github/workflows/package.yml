@@ -73,6 +73,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone -- history and tags -- for the reason the test workflow sets out
+          # at its own first checkout: a depth-1 clone answers "was this released?" and
+          # "which commit was this?" with a confident no, and a guard that asks those
+          # questions passes vacuously when there are no tags at all. No step in this
+          # workflow reads history today, so the setting is here so that a step which
+          # grows to need it does not have to discover the shallow default by watching
+          # a guard go quietly hollow.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -419,6 +428,9 @@ jobs:
       # v1.2.0rc1) went out that way, and nothing caught it: the run was green, the
       # assets were attached, the tag existed. Only reading the published page found it.
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       # ★ M15. This job had no interpreter -- it checked out, unpacked archives and
       # called an action, all of which is bash and an HTTP request. Two new steps below
@@ -629,6 +641,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

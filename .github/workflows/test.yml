@@ -13,6 +13,17 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A shallow clone has no history and, by default, no tags, and three of the
+          # benchmark provenance tests ask git questions a depth-1 clone cannot answer:
+          # whether the recorded commit exists here, which versions were released, and
+          # whether v1.1.0 is an ancestor of that commit. Two of the three fail loudly.
+          # The third does not -- it reads "no tags" as "no releases" and passes
+          # vacuously, over a completeness check it never performed. A guard that is
+          # green because it looked at nothing is worse than one that is red, because
+          # the green is the part people read. So the clone is made whole instead.
+          # `fetch-depth: 0` is the whole of the fix: every commit and every tag.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -175,6 +186,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -231,6 +245,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -291,6 +308,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -379,6 +399,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -430,6 +453,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Whole clone: history and tags. The first checkout in this file says why.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
