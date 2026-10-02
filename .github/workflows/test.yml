@@ -310,6 +310,16 @@ jobs:
         shell: bash
         run: python tools/ci_selfcheck.py shape --verbose
 
+      # ★ A comment that grew into an essay costs nothing to write and is
+      # never paid for. This job is where that belongs: `check_comments.py` reads
+      # src/ with `tokenize` and `ast` and imports nothing outside the standard
+      # library, so -- like the steps above it -- it needs no Qt, no lxml and no
+      # gigaxml. A guard no job runs is a sentence in a file, which is the failure
+      # mode the comment milestone was raised to end.
+      - name: Comments in src/ stay within their limits
+        shell: bash
+        run: python tools/check_comments.py
+
       # ★ M15 criterion C/D. Two third-party actions on the release chain hold the rights
       # to publish -- one attaches files to a Release, the other uploads to PyPI where a
       # name cannot be reused -- and both were referenced by refs that move: a tag, and a
