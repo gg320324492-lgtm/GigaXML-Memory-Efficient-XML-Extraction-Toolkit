@@ -8,7 +8,7 @@ project's eight "green here, red in CI" incidents were of exactly that shape -- 
 suspicion, an environment difference, and a suite that never ran -- so this milestone
 adds the machine checks that make the claim falsifiable.
 
-Three subcommands, and each answers a different way the claim could be false:
+Five subcommands, and each answers a different way the claim could be false:
 
 ``shape``
     Static. Reads ``.github/workflows/*.yml`` and asserts the properties a matrix is not
@@ -47,6 +47,17 @@ Three subcommands, and each answers a different way the claim could be false:
     ``git ls-remote``, whether that release really is that commit -- which is what turns a
     label from a comment into a fact. A network failure is reported as the check failing
     to run, exit 2, and never as a defect in the workflow.
+
+``tracked``
+    Static, and about the repository rather than the workflow. A path that ``.gitignore``
+    excludes is meant to be invisible here, and ``git add -f`` is the one command that
+    makes it visible anyway -- so the convention is only as strong as the next time
+    somebody reaches for it. Three milestone reports reached for it, and ``.gitignore``
+    says in as many words that the friction is the point. This asks ``git check-ignore``
+    which of its rules each tracked path matches, and fails when the rule that matched is
+    a committed ``.gitignore`` and not a machine-local exclude file. The distinction is not
+    a detail: see the note in ``check_tracked`` for why the naive form of this check is red
+    on a healthy repository.
 
 None of this replaces pytest's exit code, and none of it makes a failure quieter. It adds
 the two things an exit code cannot say: *how much* ran, and *on what*.
@@ -908,6 +919,83 @@ def check_pins(verify_remote: bool) -> None:
         raise SelfCheckError("\n  - ".join(["", *problems]))
 
 
+def _tracked_paths() -> list[str]:
+    """Every path in the index, as git writes them."""
+    completed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, timeout=120
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip()[:200]
+        raise SelfCheckError(f"git ls-files failed with {completed.returncode}: {detail}")
+    return [p.decode("utf-8", "replace") for p in completed.stdout.split(b"\0") if p]
+
+
+def check_tracked() -> tuple[int, list[str]]:
+    """No tracked path may be excluded by a committed ``.gitignore``. Returns how many
+    paths were asked about, and which ones a machine-local rule excludes instead.
+
+    ★ **The question is *which* rule matched, not whether one did.** ``git check-ignore``
+    reads three sources -- the ``.gitignore`` files in the tree, ``$GIT_DIR/info/exclude``,
+    and ``core.excludesFile`` -- and only the first is in this repository. On this checkout
+    the second carries ``/.??*``, which matches every dot-path at the root,
+    ``.gitignore`` and ``.github/`` among them, both tracked deliberately. A check that
+    asked only "is this path ignored" is therefore red on a healthy repository, and a guard
+    that is always red is a guard that gets deleted.
+
+    ``-v`` reports which rule matched, and gitignore(5)'s ladder puts the ``.gitignore``
+    files above ``$GIT_DIR/info/exclude`` above ``core.excludesFile``, first level that
+    matches decides. That a ``.gitignore`` match is never hidden behind a local one is
+    measured rather than assumed: ``.venv/_probe.py`` force-added is matched by both this
+    repository's ``.venv/`` and the local ``/.??*``, and git attributes it to
+    ``.gitignore``. The paths only the local rule matches are returned and printed rather
+    than counted silently -- there are five here, and they are the whole reason the naive
+    form of this check does not work.
+    """
+    tracked = _tracked_paths()
+    if not tracked:
+        raise SelfCheckError("git ls-files returned no paths; this is not a populated checkout.")
+
+    answered = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin", "-z", "-v"],
+        cwd=REPO_ROOT,
+        input=("\0".join(tracked) + "\0").encode("utf-8"),
+        capture_output=True,
+        timeout=120,
+    )
+    if answered.returncode not in (0, 1):
+        detail = answered.stderr.decode("utf-8", "replace").strip()[:200]
+        raise SelfCheckError(f"git check-ignore failed with {answered.returncode}: {detail}")
+
+    # ★ -v emits four NUL-separated fields per match -- source, line, pattern, path -- and
+    # prints a re-included path as well, named by the "!..." line that allowed it back in.
+    # Read in groups of four rather than split on a tab: a pattern may contain one.
+    fields = [f.decode("utf-8", "replace") for f in answered.stdout.split(b"\0") if f]
+    if len(fields) % 4:
+        raise SelfCheckError(
+            f"git check-ignore -v produced {len(fields)} fields, which is not a multiple of "
+            "four; this tool reads them as (source, line, pattern, path)"
+        )
+
+    problems: list[str] = []
+    local: list[str] = []
+    for index in range(0, len(fields), 4):
+        source, line, pattern, path = fields[index : index + 4]
+        if pattern.startswith("!"):
+            continue
+        if pathlib.PurePosixPath(source).name != ".gitignore":
+            local.append(f"{path} ({source}:{line} {pattern})")
+            continue
+        problems.append(
+            f"{path} is tracked, and {source}:{line} ({pattern}) excludes it. Either the "
+            "path should not be tracked, or .gitignore should not exclude it -- and the "
+            "friction of `git add -f` is the mechanism that makes the first true quietly."
+        )
+
+    if problems:
+        raise SelfCheckError("\n  - ".join(["", *problems]))
+    return len(tracked), sorted(local)
+
+
 # --- entry point -----------------------------------------------------------------
 
 
@@ -936,6 +1024,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="resolve each version comment against github with git ls-remote",
     )
+
+    sub.add_parser("tracked", help="no tracked path may be excluded by a committed .gitignore")
 
     args = parser.parse_args(argv)
     try:
@@ -980,6 +1070,18 @@ def main(argv: list[str] | None = None) -> int:
                 "pins: every third-party action is pinned to a commit SHA and labelled "
                 "with the release it came from."
             )
+            return 0
+        if args.command == "tracked":
+            checked, local = check_tracked()
+            print(
+                f"tracked: {checked} paths in the index, and not one of them is excluded "
+                "by a committed .gitignore."
+            )
+            if local:
+                print(
+                    f"  {len(local)} are excluded only by a machine-local rule, which is "
+                    f"this machine's business and not the repository's: {', '.join(local)}"
+                )
             return 0
     except SelfCheckError as exc:
         # ★ stdout is flushed first, and that is not tidiness. Without it the verdict --
