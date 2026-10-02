@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
 
         text = f"# exit_code={code} stream={stream}\n{body}"
         target = EXPECTED_DIR / name
-        existing = target.read_text(encoding="utf-8", newline="") if target.is_file() else None
+        existing = target.read_bytes().decode("utf-8") if target.is_file() else None
         if existing == text:
             continue
         changed.append(name)
