@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import warnings
 from dataclasses import replace
 from typing import TYPE_CHECKING, Final
 from urllib.parse import unquote, urlsplit
@@ -144,6 +145,14 @@ _POLICY_NOTE: Final = (
 #: of the URL grammar, not part of the drive. Matched before trimming it away.
 _DRIVE_PREFIX: Final = re.compile(r"^/[A-Za-z]:")
 
+#: The sentence :func:`_reject_escape` puts in the exception it raises, named as a
+#: constant rather than repeated because **that string is the only trace left of a
+#: refusal**. The library catches the exception and downgrades it to a warning, so by the
+#: time it arrives the exception type is gone and the text is all that is left -- which
+#: is what tells a blocked import apart from a file that simply is not there. Both ends
+#: read this constant, so the two cannot drift apart.
+_BLOCKED_PREFIX: Final = "block access to out of sandbox file"
+
 
 def _refuse_by_policy(target: pathlib.Path, reason: object) -> SecurityError:
     """The error for a resource the schema policy refused.
@@ -153,9 +162,11 @@ def _refuse_by_policy(target: pathlib.Path, reason: object) -> SecurityError:
     fixes -- the first wants editing, the second wants knowing that the policy is what
     refused it -- and one message for both leaves a user unable to tell which they have.
     """
+    # The reason can arrive as a whole sentence of the library's own -- a downgraded
+    # warning that kept its own full stop -- so it is trimmed rather than doubled.
     return SecurityError(
         f"the XSD file {str(target)!r} was refused by the schema security policy: "
-        f"{reason}. {_POLICY_NOTE}"
+        f"{str(reason).rstrip('.')}. {_POLICY_NOTE}"
     )
 
 
@@ -217,7 +228,7 @@ def _reject_escape(source: object, base_url: str | None, boundary: pathlib.Path)
     except OSError:  # pragma: no cover - lets the library report the real problem
         return
     if not _within(resolved, boundary):
-        raise XMLResourceBlocked(f"block access to out of sandbox file {url}")
+        raise XMLResourceBlocked(f"{_BLOCKED_PREFIX} {url}")
 
 
 def _sandbox_loader_class(boundary: pathlib.Path) -> type:
@@ -281,33 +292,140 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     unparseable file, an undeclared namespace, a schema that references nothing that
     exists -- falls through to "not a usable XSD", which is the honest description of a
     file that is simply wrong.
+
+    **An import that could not be loaded is not one of the tolerated cases.** The library
+    satisfies a namespace it failed to import from its own bundled copy, reports that as a
+    warning, and returns a schema whose declarations are silently missing. The
+    boundaries still hold under that -- nothing was read, nothing was fetched -- but the
+    user is handed an incomplete answer and told nothing, which is the failure this
+    function exists to prevent. So ``XMLSchemaWarning`` is escalated to an exception here
+    and classified by the same two buckets: one carrying :data:`_BLOCKED_PREFIX` was the
+    policy speaking, the rest are a file that is wrong or absent. Raising it at the point
+    it is raised is deliberate -- the library's own handler runs *inside* the compile, so
+    that is the one a downgraded warning cannot escape.
+
+    The escalation is scoped to this call and costs nothing when there is nothing to
+    escalate. It does temporarily replace the process-wide warning filters, which is not
+    thread-safe; that is acceptable because a schema is compiled before a run begins, in
+    one call, and this package never compiles two at once.
     """
     xmlschema = require_schema()
     target = pathlib.Path(schema_path)
     if not target.is_file():
         raise SchemaError(f"the XSD file {str(target)!r} does not exist")
     # Imported here, after require_schema(), so a machine without the extra never
-    # reaches it, and because these two live under xmlschema.exceptions rather than
+    # reaches it, and because these three live under xmlschema.exceptions rather than
     # on the module's top level -- reaching them from a module-level import would be
-    # an ImportError at load time for anyone who installed a plain gigaxml.
-    from xmlschema.exceptions import XMLResourceBlocked, XMLResourceForbidden
+    # an ImportError at load time for anyone who installed a plain gigaxml. Only the
+    # base class is named: the concrete subclasses (``XMLSchemaImportWarning`` among them)
+    # are built on demand, and importing one by name raises ImportError.
+    from xmlschema.exceptions import (
+        XMLResourceBlocked,
+        XMLResourceForbidden,
+        XMLSchemaWarning,
+    )
 
     try:
-        return xmlschema.XMLSchema(
-            str(target),
-            allow=ALLOW,
-            defuse=DEFUSE,
-            loader_class=_sandbox_loader_class(target.resolve().parent),
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", category=XMLSchemaWarning)
+            return xmlschema.XMLSchema(
+                str(target),
+                allow=ALLOW,
+                defuse=DEFUSE,
+                loader_class=_sandbox_loader_class(target.resolve().parent),
+            )
     except (XMLResourceBlocked, XMLResourceForbidden) as exc:
         raise _refuse_by_policy(target, exc) from exc
     except Exception as exc:  # xmlschema raises a family of its own
+        # The same refusal, one layer down: by the time the library has downgraded it,
+        # all that is left of the exception is the sentence _reject_escape wrote.
+        if isinstance(exc, XMLSchemaWarning) and _BLOCKED_PREFIX in str(exc):
+            raise _refuse_by_policy(target, exc) from exc
         raise SchemaError(f"{str(target)!r} is not a usable XSD: {exc}") from exc
 
 
 def _local(name: str) -> str:
     """A qualified name's local part: ``{ns}price`` -> ``price``, ``p:price`` -> ``price``."""
     return name.split("}")[-1].split(":")[-1]
+
+
+#: The XML Schema language's own namespace. Its globals sit in ``maps.elements`` of
+#: *every* compiled schema, because the compiler builds the meta-schema into the maps --
+#: they are not declarations from the schema under test, so a lookup that treated them as
+#: such would report a ``{...XMLSchema}element`` as a record element of somebody's data.
+_XSD_NAMESPACE: Final = "http://www.w3.org/2001/XMLSchema"
+
+
+def _global_element(schema: object, name: str, schema_path: object) -> object | None:
+    """The one global element whose local name is ``name``, or ``None`` if there is none.
+
+    **The library indexes globals by Clark name.** A schema with a ``targetNamespace``
+    registers ``product`` under ``{urn:example}product``, and a lookup by the bare name
+    returns ``None`` -- which used to be reported to the user as "this schema declares no
+    such element", while the very next clause of the same sentence listed it. The fix is
+    not to soften that message but to make the question answerable: qualify the name with
+    the schema's own namespace first, which is where a record path means "the element
+    this schema declares".
+
+    Failing that, the name is looked for across every namespace the schema loaded, because
+    ``xs:import`` exists precisely so a schema can use elements it does not declare itself.
+
+    **More than one hit is an error.** A record path names a local name and nothing else,
+    so two schemas declaring ``Gadget`` leave the question genuinely unanswered, and
+    picking one would return a confident type for the wrong field. That is the silent
+    wrong answer this project treats as worse than no answer, so it raises.
+
+    Returns:
+        The element, or ``None`` when no loaded schema declares the name at all -- which
+        is the only case in which the caller's "no such element" message can be true.
+    """
+    namespace = getattr(schema, "target_namespace", "") or ""
+    qualified = f"{{{namespace}}}{name}" if namespace else name
+    try:
+        found = schema.get_element(qualified)  # type: ignore[attr-defined]
+    except KeyError:  # pragma: no cover - the library returns None for an absent name
+        found = None
+    if found is not None:
+        return found
+
+    candidates = sorted(
+        key
+        for key in schema.maps.elements  # type: ignore[attr-defined]
+        if _local(key) == name and not key.startswith(f"{{{_XSD_NAMESPACE}}}")
+    )
+    if len(candidates) > 1:
+        raise SchemaError(
+            f"the schema {str(schema_path)!r} has {len(candidates)} global elements "
+            f"named {name!r}, one per namespace: {', '.join(candidates)}. A record path "
+            "names a local name only, so which of them it means is not decided here."
+        )
+    if candidates:
+        return schema.get_element(candidates[0])  # type: ignore[attr-defined]
+    return None
+
+
+def _field_declarations(content: object) -> list[object]:
+    """The element declarations reachable from one ``content`` sequence.
+
+    A ``<xs:choice>`` or ``<xs:all>`` written inside a record's type is not a field. It
+    is a branch point, and it arrives as an ``XsdGroup`` carrying no ``.type`` at all --
+    asking one for its type is an ``AttributeError``, not an empty field. FHIR writes
+    every resource that way and nests three deep, so a lookup that stopped at the first
+    group would report no fields anywhere in the real-world schema set this project has
+    been pointed at. Groups are descended; only element declarations come back.
+
+    ``XsdElement`` has a ``.content`` of its own -- the child sequence of *that* element --
+    so ``.content`` cannot tell the two apart and ``.type`` is the test. An element is
+    collected, never descended into, which is what keeps a record's fields free of its
+    descendants'.
+    """
+    found: list[object] = []
+    for item in content:  # type: ignore[union-attr]
+        if hasattr(item, "type"):
+            found.append(item)
+        elif hasattr(item, "content"):
+            found.extend(_field_declarations(item.content))
+    return found
 
 
 def _child_elements(element: object) -> list[object]:
@@ -318,16 +436,38 @@ def _child_elements(element: object) -> list[object]:
     it walks the whole document's schema at once, so a record's fields would come back
     with every descendant's fields mixed in, and two records at different depths of the
     same schema would come back identical.
+
+    A record element declared with an atomic type -- ``<xs:element name="id"
+    type="xs:string"/>`` -- has no ``content`` attribute at all rather than an empty
+    sequence, so it has no children by this route and by any other.
     """
-    return list(element.type.content)  # type: ignore[attr-defined]
+    return _field_declarations(getattr(element.type, "content", ()))  # type: ignore[attr-defined]
 
 
 def _find_child(element: object, name: str) -> object | None:
-    """The direct child element with this local name, or ``None``."""
-    for candidate in _child_elements(element):
-        if _local(candidate.name) == name:  # type: ignore[attr-defined]
-            return candidate
-    return None
+    """The direct child element with this local name, or ``None``.
+
+    More than one match is an error, not the first one. Two children sharing a local name
+    under different namespaces are two distinct fields as far as XML is concerned, and a
+    record path carries a local name only, so returning either of them is a coin toss
+    dressed up as an answer.
+    """
+    matches = [
+        candidate
+        for candidate in _child_elements(element)
+        if _local(candidate.name) == name  # type: ignore[attr-defined]
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise SchemaError(
+            f"{_local(element.name)!r} has {len(matches)} child elements named "  # type: ignore[attr-defined]
+            f"{name!r}, one per namespace: "
+            f"{', '.join(sorted(str(c.name) for c in matches))}. "
+            "A field path names a local name only, so which of them it means is not "
+            "decided here."
+        )
+    return matches[0]
 
 
 def _field_types_of(element: object) -> dict[str, FieldType]:
@@ -338,7 +478,7 @@ def _field_types_of(element: object) -> dict[str, FieldType]:
         if mapped is not None:
             types[_local(child.name)] = mapped  # type: ignore[attr-defined]
     # attributes is a mapping of name -> declaration, unlike content which is a sequence.
-    for name, declaration in element.type.attributes.items():  # type: ignore[attr-defined]
+    for name, declaration in getattr(element.type, "attributes", {}).items():  # type: ignore[attr-defined]
         mapped = _map_type(declaration.type)
         if mapped is not None:
             types[f"@{_local(name)}"] = mapped
@@ -362,27 +502,35 @@ def record_field_types(schema_path: str | pathlib.Path, record_path: str) -> dic
 
     Returns:
         Field name to declared type, matched by local name so a namespaced schema and
-        a plain one both work. A child whose type this project does not model is
-        absent rather than mapped to a guess.
+        a plain one both work -- the global element is found under its Clark name and
+        everything below it by local name, which is how a config writes a path. A child
+        whose type this project does not model is absent rather than mapped to a guess.
 
     Raises:
         SchemaUnavailableError: ``xmlschema`` is not installed.
-        GigaXMLError: the file is missing, unparseable, or does not declare the path.
+        GigaXMLError: the file is missing, unparseable, or does not declare the path --
+            including the case where the name is declared in more than one namespace, in
+            which the schema says so rather than choosing one.
     """
     schema = _open_schema(schema_path)
     segments = [s for s in (_local(x) for x in record_path.replace("//", "/").split("/")) if s]
     if not segments:
         raise SchemaError(f"the record path {record_path!r} names no element")
 
-    try:
-        element = schema.get_element(segments[0])
-    except KeyError:
-        element = None
+    element = _global_element(schema, segments[0], schema_path)
     if element is None:
         declared = ", ".join(sorted(_local(e) for e in schema.elements))  # type: ignore[attr-defined]
+        namespace = getattr(schema, "target_namespace", "") or ""
+        scope = f" in namespace {namespace!r} or in any namespace it imports" if namespace else ""
+        # The old wording contradicted itself -- "declares no element named 'product'"
+        # followed by "it has: product" -- because it listed what the schema declares
+        # while asking a question the Clark-notation index could not answer. That cannot
+        # happen now: the list is a subset of what was just searched, and the search
+        # covered every loaded namespace, so anything in the list would have answered
+        # the question. The clause names what was searched, which is what was hidden.
         raise SchemaError(
             f"the schema {str(schema_path)!r} declares no top-level element named "
-            f"{segments[0]!r}; it has: {declared or '(none)'}"
+            f"{segments[0]!r}{scope}; it has: {declared or '(none)'}"
         )
 
     for segment in segments[1:]:
