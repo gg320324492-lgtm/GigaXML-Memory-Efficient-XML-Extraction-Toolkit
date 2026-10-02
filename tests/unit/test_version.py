@@ -1,17 +1,28 @@
-"""The version is written in three places, and only agreement makes them one number.
+"""The version is written in four places, and only agreement makes them one number.
 
 ``pyproject.toml`` is what the package metadata, the frozen binary's file properties and
 the sdist all carry; ``gigaxml.__version__`` is what ``--version`` prints and what the
-window shows; the release notes name the version a user is about to download. A bump that
-touches one and not the others ships three different answers to "what version is this" --
-the classic release accident, and the reason the memory of this project says both files
-must move together. These tests make that a test failure instead of a release note.
+window shows; the release notes name the version a user is about to download; and the tag
+is the name the release is published under. A bump that touches one and not the others
+ships more than one answer to "what version is this" -- the classic release accident, and
+the reason the memory of this project says both files must move together. These tests make
+that a test failure instead of a release note.
+
+**The tag is the fourth one because the other three cannot see it.** A build reads its
+version from ``pyproject.toml``; the tag is cut by a separate human step and reaches the
+build only as a ref. So a tag cut without the bump produces a binary, a release page and a
+tag that disagree, and every check that compares the notes against ``gigaxml.__version__``
+passes -- which is exactly what would have happened at ``v2.0.0rc2`` had this file not
+changed. The tag guard below is the one that fails.
 """
 
 from __future__ import annotations
 
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 import tomllib
 
 import pytest
@@ -23,7 +34,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: This release's version, spelled the way the tag spells it. The tag itself is pushed by
 #: a human step outside the test suite, but everything the tag names has to match this
 #: string, and this constant is where "what are we releasing" is written down once.
-RELEASE_VERSION = "2.0.0rc1"
+RELEASE_VERSION = "2.0.0rc2"
 
 
 def test_the_package_version_and_the_import_version_agree() -> None:
@@ -39,6 +50,189 @@ def test_the_release_notes_announce_the_same_version() -> None:
     """The version a downloader reads first is the version the package reports."""
     notes = (REPO_ROOT / "packaging" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
     assert f"| **Version** | {RELEASE_VERSION}" in notes
+
+
+# --------------------------------------------------------------------------
+# The tag. The one version source none of the three above can see.
+# --------------------------------------------------------------------------
+
+#: A tag that names a release, as opposed to a tag that names something else. Anchored on
+#: three numeric components -- the shape every tag in this repository has -- and
+#: deliberately looser than :data:`RELEASE_SPELLING`: whether a spelling is one a release
+#: may carry is the question above, and repeating that judgement here would make this guard
+#: fail on a tag whose version it was never asked to interpret. A tag that names no version
+#: at all is skipped rather than failed, because a guard that goes red for a shape it was
+#: not asked about is the "green on my machine, red on the runner" failure this repository
+#: has paid for before.
+VERSION_TAG = re.compile(r"\Av?\d+\.\d+\.\d+")
+
+
+def tags_at_head(cwd: pathlib.Path | None = None) -> list[str] | None:
+    """The tags pointing at HEAD, or ``None`` when git cannot be asked.
+
+    **``git tag --points-at HEAD`` rather than ``git describe --exact-match``.** Describe
+    searches *annotated* tags only unless ``--tags`` is passed, and this repository's tags
+    are a mix: ``v0.9.0``, ``v1.0.0`` and ``v1.1.0`` are annotated tag objects, and
+    ``v1.2.0``, ``v1.2.1`` and ``v2.0.0rc1`` are lightweight refs pointing straight at a
+    commit. Measured here, on this repository, today::
+
+        git describe --exact-match v2.0.0rc1    rc=128  "fatal: no tag exactly matches"
+        git tag --points-at v2.0.0rc1           rc=0     v2.0.0rc1
+
+    So a guard built on describe would pass on the majority of this repository's own tags,
+    including every one cut since 1.2.0 -- it would be red exactly where the check is most
+    wanted and quiet everywhere else. Reading ``.git/`` directly is worse rather than
+    better: it means reimplementing git's own ref resolution across a plain repository, a
+    linked worktree (where ``.git`` is a *file*), and a ``packed-refs`` file.
+
+    ``None`` is the answer for every way this can fail to produce one -- ``git`` not on
+    PATH, a tree that is not a repository, an unreadable object store -- because each of
+    them means the same thing here: there is nothing to check. A shallow clone is not one
+    of them. ``fetch-depth: 0`` is what ``test.yml`` uses and it fetches the tags; a local
+    shallow clone has whatever tags it fetched, and a tag that is absent is the quiet
+    case rather than an error. Reading tags is cheap and never mutates the repository, so
+    there is nothing here that a CI runner could reach a different answer on.
+    """
+    if shutil.which("git") is None:
+        return None
+    completed = subprocess.run(
+        ["git", "tag", "--points-at", "HEAD"],
+        cwd=str(cwd or REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.split()
+
+
+def test_the_tag_at_head_names_the_version_this_build_reports() -> None:
+    """A tag is the name a release is published under, and the build has to agree with it.
+
+    **The accident this exists for.** A build reads its version from ``pyproject.toml``;
+    the tag reaches the pipeline only as a ref, cut by a separate step. Cut ``v2.0.0rc2``
+    on a tree still declaring ``2.0.0rc1`` and every other check in this file passes: the
+    package, the import and the notes all agree with *each other*, on the wrong number.
+    The tag, the binary's file properties, ``gigaxml-gui --version`` and the release page
+    then describe three releases.
+
+    **Quiet everywhere it has nothing to say.** On a branch, or in a clone holding no
+    tags, this skips rather than fails -- which is the whole reason it is a test rather
+    than a gate in ``ci-shape``. A check that goes red because a checkout is shallow is
+    the failure mode this file's neighbours exist to prevent, and a guard that cries wolf
+    on a pull request gets deleted.
+    """
+    tags = tags_at_head()
+    if tags is None:
+        pytest.skip("git could not be asked which tags point at HEAD")
+    named = [tag for tag in tags if VERSION_TAG.match(tag)]
+    if not named:
+        pytest.skip(f"HEAD is not a release tag: {tags or 'no tags point at it'}")
+
+    # Both sources the build reads, and both are asked separately on purpose.
+    # pyproject.toml is what the metadata, the file properties and the sdist carry;
+    # gigaxml.__version__ is what `--version` prints. Comparing only the import would let
+    # a pyproject-only drift land on the *other* test in this file rather than here, and
+    # comparing only pyproject would miss the import half. Each assert below names which
+    # one is wrong, because "the versions disagree" is not an actionable failure message.
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    claimed = {
+        "pyproject.toml": str(pyproject["project"]["version"]),
+        "gigaxml.__version__": __version__,
+    }
+    for tag in sorted(named):
+        tagged = tag.removeprefix("v")
+        for source, value in claimed.items():
+            assert tagged == value, (
+                f"the tag {tag!r} at HEAD names version {tagged!r}, but {source} says "
+                f"{value!r}: a build reads its version from the tree and not from the "
+                f"tag, so this binary and this tag would ship as two different releases"
+            )
+
+
+def test_the_tag_check_would_not_have_looked_at_a_lightweight_tag(tmp_path: pathlib.Path) -> None:
+    """The reason for ``--points-at``, proved rather than asserted in a comment.
+
+    A guard that has quietly stopped watching is worse than one that is red, and a guard
+    built on ``git describe --exact-match`` does exactly that on a lightweight tag: it
+    reports no tag at all and the release goes out unchecked. So this builds a throwaway
+    repository, tags it the lightweight way, and asks both questions -- the one this guard
+    asks, and the one it does not.
+
+    Nothing about this touches the real repository, which is why it is safe to run
+    everywhere rather than only where the tags happen to be fetched.
+    """
+    if shutil.which("git") is None:  # pragma: no cover - git is present to run pytest
+        pytest.skip("git is not on PATH")
+
+    def git(*arguments: str, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
+        # Every call carries an explicit cwd, defaulting to this test's own temporary
+        # repository. A git invocation that inherits the working directory runs against the
+        # real checkout, and `git add -A` there stages whatever this tree happens to have
+        # modified -- which is how this test was written once, and had to be taken back
+        # out of the index again.
+        return subprocess.run(
+            ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", *arguments],
+            cwd=str(cwd or tmp_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def commit_one(root: pathlib.Path) -> None:
+        """``root`` becomes a repository with exactly one commit and no tags."""
+        assert git("init", "-q", cwd=root).returncode == 0
+        (root / "a.txt").write_text("x", encoding="utf-8")
+        assert git("add", "-A", cwd=root).returncode == 0
+        done = git("commit", "-q", "-m", "c", cwd=root)
+        assert done.returncode == 0, done.stderr
+
+    commit_one(tmp_path)
+    tagged = git("tag", "v9.9.9")  # a lightweight tag: no -a, no -m
+    assert tagged.returncode == 0, tagged.stderr
+
+    # What the guard asks, on a lightweight tag.
+    assert tags_at_head(tmp_path) == ["v9.9.9"]
+
+    # And the quiet branch, on a repository whose HEAD simply carries no tag: an empty
+    # list, not None. That is the case every pull request in CI hits, and the distinction
+    # is the guard's whole behaviour -- None means "could not ask" and [] means "asked, and
+    # HEAD is not a release". Both skip; conflating them would hide the second. (A
+    # repository with *no commits* answers None instead, because `git tag --points-at HEAD`
+    # cannot resolve HEAD at all -- which is also true, and is the same answer.)
+    with tempfile.TemporaryDirectory() as bare:
+        root = pathlib.Path(bare)
+        commit_one(root)
+        assert tags_at_head(root) == []
+
+    # The third quiet branch: a directory that is not a repository at all. Note this cannot
+    # be a subdirectory of tmp_path -- git walks up, so a subdirectory *is* in the
+    # repository, and asking there answers normally. It needs a directory outside any
+    # repository, which the platform's own temporary area normally is. If some machine
+    # keeps its temporary area inside a checkout, that cannot be staged and this test says
+    # so out loud rather than failing on the ambient environment.
+    with tempfile.TemporaryDirectory() as outside:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=outside,
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode == 0:  # pragma: no cover - a temp dir inside a checkout
+            pytest.skip(
+                f"the temporary area is inside a repository ({outside}); the "
+                "not-a-repository case cannot be staged here"
+            )
+        assert tags_at_head(pathlib.Path(outside)) is None
+
+    # What the alternative would have answered, and why it was not used.
+    describe = git("describe", "--exact-match", "HEAD")
+    assert describe.returncode != 0, (
+        f"git describe --exact-match found {describe.stdout.strip()!r}; if lightweight "
+        "tags are now found by default this comment -- and the choice of --points-at -- "
+        "is stale and should be re-argued"
+    )
 
 
 #: The spellings a release may carry: three numeric parts, optionally followed by a

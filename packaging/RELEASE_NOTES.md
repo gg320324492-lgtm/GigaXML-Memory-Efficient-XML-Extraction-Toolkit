@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 2.0.0rc1 — the version in this build's file properties, and the one the package reports |
+| **Version** | 2.0.0rc2 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -33,6 +33,38 @@ The window does the same things: **GigaXML**
   the packaged application is the same program.
 - The interface runs in English or Chinese, chosen in the settings panel — see
   [Languages](#languages).
+
+### What changed in 2.0.0rc2
+
+**The program does what it did in 2.0.0rc1. What changed is the build, and the checks
+around it.**
+
+- **2.0.0rc1 produced no binary at all.** All three packaging platforms failed while
+  PyInstaller was still *reading* the build spec, before it built anything, with
+  `ValueError: invalid literal for int() with base 10: '0rc1'`. The spec reduced the
+  version to the four integers a Windows version number is made of by splitting it on dots
+  and asking `int()` of each part, and the third part of `2.0.0rc1` is `"0rc1"`. The
+  installer script kept a second copy of the same rule and had already been repaired to ask
+  `tools/make_version_info.py` for the number instead: two copies of one rule, one of them
+  fixed, and the fixed one is not the copy the build reads.
+- **The build spec is now executed on every pull request.** `tools/spec_check.py` runs
+  `packaging/gigaxml.spec` with PyInstaller stubbed out, so what executes is the spec's own
+  Python, and it asks the same module the installer asks for the four integers. It checks
+  the version this tree declares and five fixed pre-release shapes besides, so the next
+  bump goes red there rather than at a tag. The packaging workflow still runs only on a
+  tag.
+- **Four comments about that failure were false, and are corrected.** Each said `2.0.0rc1`
+  was the first tag this pipeline ever built. Nine tag builds had already gone green before
+  it, four of them named for a pre-release, but all four were built from trees reading
+  `0.9.0` or `1.2.0`, so the reduction was never handed a non-digit until `2.0.0rc1`. A tag
+  *named* for a pre-release is not a tree that carried one.
+- **A tag and the build are now checked against each other.** The version a binary reports
+  comes from `pyproject.toml`, not from the tag, so cutting a tag without bumping
+  `pyproject.toml` would ship a binary announcing the previous release while the tag and
+  this page announce the new one. The notes were compared only with `gigaxml.__version__`,
+  so that build would have passed every test in this repository. The version tests now ask
+  git which tags point at `HEAD` and require the version in the tag to be the version the
+  build reports. On a branch, or in a clone that has no tags, they say nothing and pass.
 
 ### What changed in 2.0.0rc1
 
