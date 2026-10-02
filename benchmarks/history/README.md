@@ -11,7 +11,7 @@ including — mostly — the measurements that were never taken.
 | `true` | A sweep ran. The entry carries the identity and the headline figures, and says which file holds the numbers. |
 | `false` | **No measurement was taken at this version.** The entry says so, with the evidence. |
 
-The `false` entries are the point. Four of the five versions in this repository have no
+The `false` entries are the point. Five of the six versions in this repository have no
 benchmark record, and three of them shipped *after* the last measurement was taken:
 
 ```
@@ -20,6 +20,7 @@ benchmark record, and three of them shipped *after* the last measurement was tak
 1.1.0  2026-09-28   RECORDED, and recovered after the fact (see below)
 1.2.0  2026-09-30   no record — the last measurement was 1 day 20 min earlier
 1.2.1  2026-10-01   no record — the last measurement was 2 days earlier
+2.0.0rc1 2026-10-03   no record — the build failed on all three platforms, so nothing was measured
 ```
 
 Each `false` entry carries the commit dates that establish the absence, so the claim is
