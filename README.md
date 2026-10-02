@@ -1,13 +1,28 @@
 # GigaXML
 
-Extract structured data from multi-gigabyte XML files with bounded memory — as a command
-line and as a desktop application.
+Extract structured data from multi-gigabyte XML files **at constant, bounded memory** — as
+a command line and as a desktop application.
 
-**If your extraction task is fixed and small, write the twenty lines of `lxml` yourself —
-that is the right call, and the [comparison](#gigaxml-vs-alternatives) says so with
-numbers.** This toolkit is for the rest of it: documents you cannot hold in memory,
-fields that will change, output formats you cannot predict, runs that get interrupted,
-and records that are not all well-formed.
+**If your extraction task is fixed and small, write the twenty lines of `lxml` yourself.**
+That is the right call, and the [measured comparison](#gigaxml-vs-alternatives) says so
+before anything else: a hand-written script is about **1.5× faster** than this toolkit,
+and no amount of toolkit changes that. What is left over is the part you would otherwise
+have to build — on a **4.05 GiB** file of **11,915,264** records, GigaXML peaks at
+**33.7 MiB, 5.1 MiB above its own baseline, and the increase does not move when the input
+quadruples.**
+
+## Install and run
+
+```bash
+pip install gigaxml                                                   # "gigaxml[gui]" adds the app
+gigaxml inspect big.xml --generate-config config.yaml --infer-types  # propose a config
+gigaxml extract big.xml -c config.yaml -o out.csv                     # extract
+```
+
+Output is **CSV, JSONL or Parquet** — `--format`, one writer and one code path — written in
+parts and moved into place atomically, so a failed or cancelled run leaves no half-written
+file behind. Fields, types and the output format live in `config.yaml` rather than in code,
+and `inspect` writes a starting one for a document it has never seen.
 
 ## Why GigaXML?
 
@@ -70,23 +85,19 @@ fields:
   manufacturer: {path: manufacturer/name}
 ```
 
-## Install
+## Installing
 
-From PyPI:
+Three extras, all optional. Parquet output needs `parquet`
+(`pip install "gigaxml[parquet]"`); CSV and JSONL do not. Reading field types from an XSD
+needs `xsd` (`pip install "gigaxml[xsd]"`), and the tool works without it — it never
+consults a schema while parsing. The desktop application needs `gui`, which pulls PySide6
+(640 MiB installed, measured on Windows).
 
-```bash
-pip install gigaxml           # the command-line toolkit
-pip install "gigaxml[gui]"    # and the desktop application (pulls PySide6: 640 MiB installed, measured on Windows)
-```
-
-Parquet output needs the `parquet` extra (`pip install "gigaxml[parquet]"`); CSV and JSONL
-do not. Reading field types from an XSD needs the `xsd` extra
-(`pip install "gigaxml[xsd]"`), which is also optional — the tool works without it and
-never consults a schema while parsing. The desktop application is also packaged per
-platform — an unsigned Windows build, an Apple Silicon `.dmg` and an x86_64 AppImage —
-under
-[Releases](https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases);
-its release notes say what each build runs on and what the unsigned warnings mean.
+The application is also packaged per platform — an unsigned Windows build, an Apple
+Silicon `.dmg` and an x86_64 AppImage — under
+[Releases](https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases),
+and [its release notes](packaging/RELEASE_NOTES.md) say what each build runs on and what
+the unsigned warnings mean.
 
 From source, if you would rather:
 
@@ -101,22 +112,10 @@ python -m venv .venv
 
 ## Thirty seconds
 
-Point it at a document you know nothing about, let it propose a config, then run it:
-
-```bash
-# 1. What is in this file?
-gigaxml inspect big.xml
-
-# 2. Write a starting-point config for the highest-ranked record candidate
-gigaxml inspect big.xml --generate-config config.yaml --infer-types
-
-# 3. Extract
-gigaxml extract big.xml -c config.yaml -o out.csv
-```
-
-`inspect` does not read the whole document — it reports the structure and the repeating
-paths it found, and ranks them. The config it writes is explicitly a **starting point**,
-not a conclusion; read the comments in it.
+Step one on its own — `gigaxml inspect big.xml` — does not read the whole document: it
+reports the structure and the repeating paths it found, and ranks them. The config that
+step two writes is explicitly a **starting point**, not a conclusion; read the comments
+in it.
 
 For a quick look at the data before committing to a full run:
 
@@ -141,42 +140,31 @@ gigaxml sample big.xml -c config.yaml -n 20 -o first20.jsonl
 
 ## The run report
 
-Every run writes a machine-readable summary of itself. It goes to `run-report.json` beside
-`--output` unless you name somewhere else with `--report`, and it is written **on success
-and on failure**, because the exit code tells a shell script whether the data is usable
-while the report tells everything else.
-
-```bash
-gigaxml extract catalog.xml -c config.yaml -o out.csv --report run.json
-```
-
-What is in it is the part worth knowing: `input_identity` (the source's size and sha256),
-`config_hash` (a digest of the *parsed* config, not its bytes, so a comment does not change
-it), `peak_rss_mb`, `elapsed_seconds`, `throughput_records_per_s`, `records`, and
-`output_complete` — which is true only once the finished file is actually in place, so a
-caller can tell a partial output from a complete one without parsing a message.
-
-`status` has three values, and the third is the one that is easy to get wrong:
+Every run writes a machine-readable summary of itself, to `run-report.json` beside
+`--output` unless `--report` names somewhere else, **on success and on failure** — the exit
+code tells a shell script whether the data is usable, and the report tells everything else.
+[`RUN-REPORT-FORMAT.md`](RUN-REPORT-FORMAT.md) documents all 24 fields; these are the ones
+worth knowing before a script depends on them:
 
 | | means |
 |---|---|
-| `ok` | finished, and the output is in place |
-| `failed` | stopped on an error — a bad value, an unwritable target, a config that will not load |
-| `interrupted` | stopped by a signal — Ctrl-C, or `kill` on POSIX |
+| `status: ok` | finished, and the output is in place |
+| `status: failed` | stopped on an error — a bad value, an unwritable target, a config that will not load |
+| `status: interrupted` | stopped by a signal — Ctrl-C, or `kill` on POSIX |
+| `output_complete` | true only once the finished file is there, so a partial output is distinguishable without parsing a message |
+| `config_hash` | a digest of the *parsed* config, not its bytes, so adding a comment does not change it |
 
-A measurement that could not be taken is `null` rather than zero. Reading a document from
-a pipe leaves `input_identity: null` with an `input_identity_error` beside it saying why,
-because a stream has no length to stat and no content to hash, and a `0.00` there would
-claim the document was empty.
+A measurement that could not be taken is `null` rather than zero. A document read from a
+pipe has `input_identity: null` with an `input_identity_error` beside it saying why, because
+a stream has no length to stat and no content to hash, and a `0.00` there would claim the
+document was empty.
 
-**What "interrupted" covers, and what it cannot.** A stop signal arrives as an exception
-the ordinary error path already handles, so the report is written on the way out.
-`SIGINT` — Ctrl-C — is covered on every platform. `SIGTERM` is covered on POSIX. **On
-Windows `TerminateProcess` is not, and cannot be**: the task manager, and anything else
-that kills without a signal, leaves the process no code to run, so no handler in any
-language would fire. A stopped run then leaves its parts and its manifest and no report.
-The failure path in the middle is not a limitation so much as a reminder that a report is
-written by a process that gets to finish writing it.
+**What "interrupted" covers, and what it cannot.** A stop signal arrives as an exception the
+ordinary error path already handles, so the report is written on the way out. `SIGINT` —
+Ctrl-C — is covered on every platform, `SIGTERM` on POSIX. **On Windows `TerminateProcess`
+is not, and cannot be**: the task manager, and anything else that kills without a signal,
+leaves the process no code to run, so no handler in any language would fire. A stopped run
+then leaves its parts and its manifest and no report.
 
 ## Reading from a pipe
 
@@ -201,23 +189,10 @@ one. Save the document to a file, or drop the flag.
 
 ## Types from an XSD
 
-If the document has a schema, the config can point at it and the declared types win:
-
-```yaml
-schema: catalog.xsd
-record: /catalog/product
-fields:
-  id:    {path: '@id'}
-  name:  {path: name}
-  price: {path: price}          # xs:decimal in the schema
-```
-
-```bash
-pip install "gigaxml[xsd]"      # pulls xmlschema; the extra is optional
-```
-
-The same document, same records, with and without the schema — and the difference is
-exactly the field the schema says is money:
+If the document has a schema, the config's optional `schema` key
+([`CONFIG-FORMAT.md`](CONFIG-FORMAT.md)) points at it and the declared types win. The same
+document, same records, with and without the schema — and the difference is exactly the
+field the schema says is money:
 
 ```
 # without the schema, `price` is text:      9.99, 19.5
@@ -231,44 +206,39 @@ what it produces is a config with the types filled in; that config is also what 
 report's `config_hash` covers, so a run whose schema changed has a different fingerprint
 from one that did not.
 
-A schema that will not compile gives you the compiler's own answer — tag, position and
-path — rather than a traceback:
+A schema that will not load gives you the compiler's own answer — tag, position and path —
+rather than a traceback:
 
 ```
 error: 'catalog.xsd' is not a usable XSD: Unexpected child with tag 'xs:sequence' at
 position 2: ... Path: /xs:schema/xs:element/xs:complexType/xs:sequence/...
 ```
 
+One the sandbox policy refuses is reported as a refusal rather than dropped, and an import
+that resolves to nothing fails the run instead of compiling a schema with declarations
+missing — [what a schema may not reach is written down](SECURITY.md), and
+[the error classes and exit codes are in `ERRORS.md`](ERRORS.md).
+
 ## The desktop application
 
-```bash
-pip install "gigaxml[gui]"     # PySide6; see Install for the installed size
-gigaxml-gui
-```
+`gigaxml-gui`, from `pip install "gigaxml[gui]"`.
 
-Eight steps, in the order they are done, each one usable without touching the command line:
-open a document, **Analyse** it for record candidates, build the field list from a
-candidate, **Preview** a sample, retype any field, **Export**, watch it run, and continue a
-run that stopped. Prebuilt binaries are under
-[Releases](https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit/releases).
+Eight steps, in the order they are done, each usable without touching the command line: open
+a document, **Analyse** it for record candidates, build the field list from a candidate,
+**Preview** a sample, retype any field, **Export**, watch it run, and continue a run that
+stopped.
 
 **The window never parses your document.** It starts the CLI as a child process and reads
 what the CLI prints, so opening the application does not undo the memory claim — which is
 the whole point of having one. That is enforced rather than promised:
 `tests/integration/test_gui_no_parsing.py` walks the AST of every module under
-`src/gigaxml/gui/` and fails if a parser is reachable from one, checking the tree rather
-than the text so that a docstring explaining the rule does not trip it. The same file
-carries the mutation that must fail, and a second test asserts the window still reaches
-`subprocess.Popen` — "never parses" is otherwise satisfied by a window that never does
-anything.
+`src/gigaxml/gui/` and fails if a parser is reachable from one.
 
 **Job History and Resume Manager** are the window's view of the run reports: past runs with
 their source, row count, time, peak, output and outcome, newest first, and a button that
-carries a stopped run into the Execute tab. The numbers are read out of the reports rather
-than kept by the window, so a run started in a terminal shows up in the list too. Pressing
-Resume fills the panel and stops there — the run is started by pressing Start, because
-continuing somebody's earlier work is a decision and this project does not make it on
-their behalf.
+carries a stopped run into the Execute tab. Pressing Resume fills the panel and stops
+there — the run is started by pressing Start, because continuing somebody's earlier work is
+a decision and this project does not make it on their behalf.
 
 ## Examples
 
@@ -302,12 +272,18 @@ dataset   fields     input MiB      records        s   MiB/s     peak    delta
 
 `peak` and `delta` are MiB; `delta` is against the same process's post-import baseline.
 `peak` is `PeakWorkingSetSize` — the maximum over the process's life, not the current RSS
-at the end, which reads 10–14% lower.
+at the end, which reads 10–14% lower. `--size` is approximate: `--size 1GB` produces
+1033.65 MiB, not 1024, and the sizes above are the measured ones. Both numbers are reported
+because either alone can be misread — peak includes about 32 MiB of interpreter and library
+overhead, delta is what the workload is responsible for.
+
 The one-field rows are a control, not the headline: a single-field config is the easiest
 member of this family to run, and quoting it alone would overstate what a real config
 costs. Field count costs about **2.5×** in throughput.
 
-To reproduce, generate the datasets and run the harness in [`benchmarks/`](benchmarks):
+To reproduce, generate the datasets and run the harness in [`benchmarks/`](benchmarks).
+[`BENCHMARK-METHODOLOGY.md`](BENCHMARK-METHODOLOGY.md) is how those numbers are taken, what
+the two thresholds are each for, and what enforces the memory one:
 
 ```bash
 gigaxml generate --size 100MB -o data/b100m.xml
@@ -317,17 +293,9 @@ python benchmarks/bench_extraction.py          # runs each pair 5x by default (-
 ```
 
 Every raw run is kept in `results.json`; the printed rows carry the median across the
-repeats. The comparison against hand-written `lxml`, `xmltodict` and
-`pandas.read_xml` — including the sizes where the hand-written script is faster — is in
-[GigaXML vs Alternatives](#gigaxml-vs-alternatives), produced by
-[`benchmarks/compare/`](benchmarks/compare/).
-```
-
-`--size` is approximate: `--size 1GB` produces 1033.65 MiB, not 1024, and the sizes above
-are the measured ones. Peak and delta are both reported because either alone can be
-misread — peak includes about 32 MiB of interpreter and library overhead, delta is what
-the workload is responsible for, and both baselines in this repository are taken after
-every import so that two deltas are comparable.
+repeats. The comparison against hand-written `lxml`, `xmltodict` and `pandas.read_xml` —
+including the sizes where the hand-written script is faster — is in
+[GigaXML vs Alternatives](#gigaxml-vs-alternatives).
 
 ## GigaXML vs Alternatives
 
@@ -354,18 +322,15 @@ hand-written script is the better tool on time, and no amount of toolkit changes
 
 **On memory, the two are now within about 8 MB of each other and both are flat across a 40×
 range** — and that is a correction, not a win. Two numbers in an earlier version of this
-table were not measurements of the thing they claimed to measure. GigaXML's 19.4 / 19.4 /
-19.1 MB was the benchmark harness's own overhead: the CLI ran in a grandchild process,
-outside the counter the sampler was reading, and the figure repeated because it never saw
-the input. The hand-written script's 1222 MB was real, but it had been attributed to
-libxml2's parse context rather than to the actual cause, which was calling `clear()`
-without unlinking — `clear()` empties an element, it does not detach it, so every
-element outside the record stayed reachable. These documents carry a 96,966-element
-`<orders>` section after `</products>` that makes that unavoidable to miss. Fixing both
-is what produced the two flat curves above. **The knowledge is learnable — a determined
-script can land within about 8 MB of the tool** — and what GigaXML adds is that you never have
-to find either trap, or find out which of your measurements are really the harness
-describing itself.
+table were not measurements of the thing they claimed to measure: GigaXML's 19.4 / 19.4 /
+19.1 MB was the harness's own overhead, and the hand-written script's 1222 MB was real but
+had been attributed to libxml2 rather than to the actual cause, calling `clear()` without
+unlinking — `clear()` empties an element, it does not detach it, so every element outside
+the record stayed reachable. The full account, and the ways this comparison has been unfair
+to itself, are in [the report](benchmarks/compare/REPORT.md). **The knowledge is learnable
+— a determined script can land within about 8 MB of the tool** — and what GigaXML adds is
+that you never have to find either trap, or find out which of your measurements are really
+the harness describing itself.
 
 What the throughput buys, each measured rather than asserted: a corrupted record
 mid-file ends the hand-written script (exit 1, header only in the CSV) while
@@ -493,6 +458,20 @@ large sizes; for analysis of documents that fit, it is.**
 - **Input is a local file, never a URL.** A `.xml.gz` file is fine; a document that lives
   behind HTTP is out of scope.
 
+## Documentation
+
+| | |
+|---|---|
+| [CONFIG-FORMAT.md](CONFIG-FORMAT.md) | every config key, its default, and what an unrecognised one does |
+| [ERRORS.md](ERRORS.md) | error classes, exit codes, and what to do about each |
+| [RUN-REPORT-FORMAT.md](RUN-REPORT-FORMAT.md) | all 24 fields of the run report, and how it is versioned |
+| [CHECKPOINT-FORMAT.md](CHECKPOINT-FORMAT.md) | the on-disk layout `--checkpoint-every` writes and `--resume` reads |
+| [OUTPUT-DURABILITY.md](OUTPUT-DURABILITY.md) | what "atomically" covers, layer by layer — and the layer it does not |
+| [SECURITY.md](SECURITY.md) | the three boundaries: network, schema, filesystem |
+| [BENCHMARK-METHODOLOGY.md](BENCHMARK-METHODOLOGY.md) | how the performance numbers are taken, and what enforces the memory one |
+| [REAL-WORLD-VALIDATION.md](REAL-WORLD-VALIDATION.md) | the same extraction run against Wikipedia, PubMed, an ERP export and FHIR |
+| [python-api.md](python-api.md) | driving the package from Python, and the one rule about what is public |
+
 ## Development
 
 ```bash
@@ -500,10 +479,17 @@ pytest -q                                   # unit + integration
 pytest -q tests/performance                 # memory and throughput; not in CI
 ruff check .
 ruff format --check .
+
+python tools/check_comments.py              # comment and docstring size in src/
+python tools/ci_selfcheck.py shape          # the workflow's own claims
+python tools/ci_selfcheck.py tracked        # nothing tracked is excluded by .gitignore
+python tools/ci_selfcheck.py pins           # release actions pinned to a commit SHA
 ```
 
 Performance tests are excluded from CI: they measure memory and throughput, take minutes,
-and are not a pass/fail signal.
+and are not a pass/fail signal. The four `tools/` commands are the repository's own
+checks — they read files rather than running the code, so they need nothing installed, and
+CI runs all of them.
 
 ## License
 

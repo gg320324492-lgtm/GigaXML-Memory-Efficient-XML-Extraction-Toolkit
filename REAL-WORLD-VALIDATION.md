@@ -130,8 +130,8 @@ measurements agreeing. It is left as it is rather than dressed up.
 ## 4. HL7 FHIR R4
 
 A real health-interchange schema set and the five instances HL7 publishes beside it.
-Added in M16; the argument for it is in the [report](docs/STAGE3-M16-REPORT.md), and the
-one-line version is that it is the only one of the four that ships a schema.
+Added in M16, which is also when this project first pointed a schema at anything not
+written for its own tests; it is the only one of the four that ships a schema.
 
 ### 4a. The schema set
 
@@ -202,22 +202,27 @@ config ends in `@value`. No other dataset here has that shape — see the
 ## Criterion D — the sandbox against a real XSD
 
 This was the first time this project pointed a schema at anything not written for its own
-tests. The measurements are in the [report](docs/STAGE3-M16-REPORT.md); the short form:
+tests. The short form:
 
 | | |
 |---|---|
 | Real 150-file set compiles under `allow="sandbox"`, `defuse="always"` | **yes**, 146 global elements, ~2.5 s |
 | A name the schema genuinely does not declare | still refused |
-| **A name the schema *does* declare** | **also refused** — defect, see below |
+| **A name the schema *does* declare** | **also refused** — defect, see below; repaired since |
 | Remote `schemaLocation` | file not read; **0 outbound connections** |
-| `../` escape | file not read — but the refusal is downgraded to a warning |
+| `../` escape | file not read — but the refusal is downgraded to a warning; reported since |
 
 **The reach boundary holds; the report of the refusal does not.** Both statements were
-measured by watching `socket.connect` during compilation, not inferred from a message.
+measured by watching `socket.connect` during compilation, not inferred from a message. The
+two rows marked above were true when measured and were both fixed afterwards — a declared
+name is read again, and a downgraded refusal is now raised instead of passed over. The reach
+boundary was never the thing at risk.
 
-## Criterion E — two real defects, found and pinned
+## Criterion E — two real defects, found, pinned, and since repaired
 
-Neither is fixed, per the milestone's own instruction to pin and stop.
+Both were pinned rather than fixed, in M16's own instruction to pin and stop — and both were
+repaired afterwards. The pins stay, because a pin that says a defect is gone and can be read
+back is the record that it was ever there; what changed is what each test now asserts.
 
 1. **`record_field_types` refuses every schema with a target namespace.** It looks the
    element up by bare local name; `xmlschema` keys a namespaced schema by `{ns}local` and

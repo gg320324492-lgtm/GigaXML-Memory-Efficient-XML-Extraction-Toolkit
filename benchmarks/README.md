@@ -50,13 +50,13 @@ their **own** peak working set, and requires two things:
 
 | | |
 |---|---|
-| throughput | at least **60%** of the recorded reference, taken as the median of five runs |
+| throughput | at least **60%** of the recorded reference — a drop of up to 40% still passes — taken as the median of five runs |
 | peak memory | at most **60 MiB** — absolute, not relative |
 
 The memory ceiling is the one that matters. Bounded memory is the property the tool is
 sold on, it belongs to the code rather than to the hardware, and a regression in it does
-not need a reference to be visible. The throughput floor exists to catch a change that
-made the tool twice as slow, which is the size of regression a person would defend and
+not need a reference to be visible. The throughput floor exists to catch a change that made
+the tool more than 40% slower, which is the size of regression a person would defend and
 the size nobody ships on purpose.
 
 **What it was verified against.** Adding a per-record loop that does no useful work and
