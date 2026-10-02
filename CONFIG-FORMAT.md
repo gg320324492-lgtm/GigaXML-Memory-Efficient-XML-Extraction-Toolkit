@@ -35,8 +35,32 @@ Each entry in `fields` requires a `path`; `type` and `required` are optional wit
 |---|---|---|---|
 | `namespaces` | mapping | none | Prefix → URI. The empty-string key is the default namespace. Applies to the record path and every field path. |
 | `on_error` | `"abort"` \| `"quarantine"` | `abort` | What one unconvertible record does. `abort` stops the run; `quarantine` logs it and continues. |
-| `schema` | string | none | Path to an XSD. Read through the optional `xsd` extra; changes field *types* only, never which records match. |
+| `schema` | string | none | Path to an XSD. **Relative to the directory you run gigaxml in**, not to this config — see below. Read through the optional `xsd` extra; changes field *types* only, never which records match. |
 | `version` | integer | — | See above. |
+
+### `schema`, and what a relative path is relative to
+
+A `schema:` path is resolved **against the working directory** — the directory you are in
+when you type the command, not the directory the config file sits in. That is the same
+rule a shell applies, so a config and its data can travel together as a folder you `cd`
+into and run from.
+
+It is worth being explicit about what this is *not*, because the other answer is
+reasonable and wrong: a relative `schema:` is **not** resolved against the config file's
+own directory. That would move the sandbox boundary — which a schema may read is measured
+from the schema's directory — from where the user named the file to where the config
+happens to be, and the two are frequently not the same. A config kept in a central
+directory, pointing at schemas beside the data, would silently gain reach.
+
+What a relative path **cannot** do is reach outside the schema's own directory. Every
+`xs:include` and `xs:import` inside the schema is still measured against the directory
+the schema file is in, and one that escapes is refused — see [SECURITY.md](SECURITY.md).
+The same holds whatever the config lives in and however the schema path is spelled.
+
+```bash
+cd /srv/exports/2026-10-02          # config.yaml and catalog.xml are here
+gigaxml extract catalog.xml -c config.yaml -o out.csv     # schema: schemas/catalog.xsd
+```
 
 ## Unknown keys
 
