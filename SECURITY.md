@@ -3,6 +3,17 @@
 > 对象：`src/gigaxml/xsd.py` 与解析器。
 > 本文记录**这个工具允许什么、拦什么、拦在哪一层**，以及**一处已知的行为变更**和**根为符号链接时边界如何定义**。
 
+本文提到的其他概念，各自有专门的一份文档：
+
+| 想知道 | 看 |
+|---|---|
+| 报出来的错是哪一类、退出码是几、该怎么办 | [ERRORS.md](ERRORS.md) |
+| 配置里有哪些键、`schema:` 是什么 | [CONFIG-FORMAT.md](CONFIG-FORMAT.md) |
+| 运行报告里每个字段的含义 | [RUN-REPORT-FORMAT.md](RUN-REPORT-FORMAT.md) |
+| `--checkpoint-every` 在磁盘上写了什么、`--resume` 读什么 | [CHECKPOINT-FORMAT.md](CHECKPOINT-FORMAT.md) |
+| 「原子地落盘」到底覆盖哪一层、不覆盖哪一层 | [OUTPUT-DURABILITY.md](OUTPUT-DURABILITY.md) |
+| 从 Python 调用时的公开接口 | [python-api.md](python-api.md) |
+
 ## 安全模型
 
 ### 为什么是「边界」而不是「校验」
@@ -111,6 +122,27 @@ namespace 顶上** —— schema 照样编译成功返回，缺的声明悄无�
 带 `_BLOCKED_PREFIX` 的走**策略拒绝**（`SecurityError`），其余走**不是可用的 XSD**（`SchemaError`）。
 两种措辞必须不同，因为用户的下一步不同：文件不在 → 去补文件；
 被策略拦下 → 补上文件也没有用。**两种情况现在都报出来，没有一种静默。**
+
+★ **被升级的是整个 `XMLSchemaWarning` 家族，不是只有 import 那一类。**
+我在 xmlschema 4.3.2 上数过，它有 **4 个**子类，四个现在**全部**是错误：
+
+| 子类 | 触发条件（据 `xmlschema` 源码） | 我实测到吗 |
+|---|---|---|
+| `XMLSchemaImportWarning` | `xs:import` 的每一个 `schemaLocation` 都取不到 | ✔ 实测 |
+| `XMLSchemaIncludeWarning` | `xs:include` / `xs:redefine` / `xs:override` 的文档读不到或解析不了 | ✔ 实测 |
+| `XMLSchemaAssertPathWarning` | `xs:assert` 的 XPath 里出现 `/` 或 `//` 这类绝对位置路径 | ✘ **构造不出来** |
+| `XMLSchemaTypeTableWarning` | UPA 检查判定两个元素的 type table 不等价 | ✘ **构造不出来** |
+
+**为什么按子类收窄**：需要 `from xmlschema.exceptions import XMLSchemaImportWarning`，
+而那是**直接 ImportError** —— 这四个是 `exceptions` 模块的惰性属性，
+`getattr(exceptions, "XMLSchemaImportWarning")` 拿到的也是 `None`。所以在当前版本上
+按子类收窄做不到，收窄等于退回「静默缺声明」。
+
+**代价是明确的**：一条本来能编译的 schema 现在可能失败，而失败可能落在上表后两行里。
+后两行标着「构造不出来」，是因为我没有做出能触发它们的 schema ——
+**读不到的东西必须说出来**，所以这里写「我没做出来」，而不是写「不会发生」。
+能确定的是前两行：**一条 `xs:include` 指向不存在的文件，改动前只发 warning 并照常编译，
+现在会失败。**
 
 不误伤的两半同样有钉子：合法同目录 `xs:import` 仍然通过（上面那张表的
 「同目录合法 include」一行没有因这次改动而变化），而真实 HL7 FHIR R4
