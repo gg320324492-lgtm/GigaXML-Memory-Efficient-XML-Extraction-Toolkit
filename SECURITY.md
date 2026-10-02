@@ -100,6 +100,23 @@ DEFUSE = "always"  # 不解析 XML 实体
 `_open_schema` 的 `except Exception` 抓不到 Warning ——
 于是可能拿到一份不完整的类型映射，而整个过程不报任何错。
 
+★ **但降级这条路在 M1 之后并没有完全堵上，直到 M16-FIX 才补上（2026-10-02）。**
+`xs:import` 指向沙箱外的文件时，`_reject_escape` 抛出的 `XMLResourceBlocked`
+**会被 `xmlschema` 抓住、降级成 `XMLSchemaImportWarning`，再拿它自己内置的那份
+namespace 顶上** —— schema 照样编译成功返回，缺的声明悄无声息地不在。
+上面那句描述的失败，在 `xs:import` 这条路上在 M1 之后**依然成立**。
+**读取边界自始至终没有失守（0 出网、0 越界读），失守的是报告。**
+
+现在 `_open_schema` 把 `XMLSchemaWarning` 升级为异常，并按已有的两种措辞分类：
+带 `_BLOCKED_PREFIX` 的走**策略拒绝**（`SecurityError`），其余走**不是可用的 XSD**（`SchemaError`）。
+两种措辞必须不同，因为用户的下一步不同：文件不在 → 去补文件；
+被策略拦下 → 补上文件也没有用。**两种情况现在都报出来，没有一种静默。**
+
+不误伤的两半同样有钉子：合法同目录 `xs:import` 仍然通过（上面那张表的
+「同目录合法 include」一行没有因这次改动而变化），而真实 HL7 FHIR R4
+（150 个 XSD、296 条 include·import 边）在升级后**仍编译成功、仍报 146 个全局元素** ——
+它在升级前后都**不产生任何一条 `XMLSchemaWarning`**，这正是这条修法成立的前提。
+
 ★ 没有任何逃生口。不提供 `--allow-remote-schemas` 之类的开关，
 与 ① 的立场一致（不为兼容性放宽安全默认）。
 
@@ -243,6 +260,8 @@ schema 若单独放行，等于给同一类输入开了一个特例。
   schema 仍「编译成功」。
 - **本模块的行为是：明确拒绝。** 一个消失的 include 不该伴随一次成功的编译，
   这与 ② 里「远程 include 失败却照样编译成功」是同一类问题。
+  ★ **这句话在 M16-FIX 之前对 `xs:import` 是假的** —— 那条降级路径只堵了 `xs:include`。
+  现在两种都拒绝，见上文「降级这条路」。
 - **相对路径 + 符号链接根**要能工作，请用**绝对路径**，或直接把根文件放在它真实的目录里。
 
 钉住这两种行为的测试：`test_a_root_that_is_a_symlink_sets_the_boundary_where_it_lands`
