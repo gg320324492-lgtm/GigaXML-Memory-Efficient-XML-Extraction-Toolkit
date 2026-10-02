@@ -1,8 +1,10 @@
 """Execute ``packaging/gigaxml.spec`` far enough to prove the version it would build.
 
 **Why this file exists.** The packaging workflow runs only on a tag, so a defect in a
-build input is invisible to every pull request in between. On the first tag this
-repository ever built, all three platforms failed with
+build input is invisible to every pull request in between. On the first tag whose
+tree actually carried a pre-release -- nine tag builds had already gone green before
+it, four of them named for a pre-release their pyproject.toml did not carry, so this
+reduction was never handed a non-digit -- all three platforms failed with
 
     ValueError: invalid literal for int() with base 10: '0rc1'
 

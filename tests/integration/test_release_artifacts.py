@@ -149,10 +149,12 @@ def test_the_pyinstaller_spec_asks_for_the_quad_instead_of_reimplementing_it() -
 
     ★ ``packaging/gigaxml.spec`` carried its own four lines of a reduction that already
     lived in :func:`tools.make_version_info.version_info_version`, and nothing in the
-    suite ever executed the spec. So on the first tag this repository built, all three
-    packaging platforms failed with ``ValueError: invalid literal for int() with base
-    10: '0rc1'`` while every test here was green -- which is the failure mode the
-    installer's own comment warns about, now with the evidence attached.
+    suite ever executed the spec. So on the first tag whose tree actually carried a
+    pre-release -- nine tag builds had already gone green before it, four of them named
+    for a pre-release their pyproject.toml did not carry -- all three packaging
+    platforms failed with ``ValueError: invalid literal for int() with base 10:
+    '0rc1'`` while every test here was green, which is the failure mode the installer's
+    own comment warns about, now with the evidence attached.
 
     Two halves, and the second is the one that matters. The first reads the text and
     refuses a second implementation. The second **executes the file**: PyInstaller is

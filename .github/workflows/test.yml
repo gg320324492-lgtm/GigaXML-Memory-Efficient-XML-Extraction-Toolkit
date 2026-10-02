@@ -352,12 +352,14 @@ jobs:
         run: python tools/check_comments.py
 
       # ★ The packaging job runs only on a tag, so a build input that does not parse was
-      # invisible to every pull request in between. On the first tag this repository ever
-      # built, all three platforms failed with "ValueError: invalid literal for int()
-      # with base 10: '0rc1'", raised while PyInstaller was *reading*
-      # packaging/gigaxml.spec -- and the whole test suite was green, because nothing in
-      # it ever executed the spec. A version bump is an ordinary pull request here; only
-      # the artifact build was ever able to notice one.
+      # invisible to every pull request in between. On the first tag whose tree actually
+      # carried a pre-release -- nine tag builds had already gone green before it, four of
+      # them named for a pre-release their pyproject.toml did not carry, so the reduction
+      # never saw a non-digit -- all three platforms failed with "ValueError: invalid
+      # literal for int() with base 10: '0rc1'", raised while PyInstaller was *reading*
+      # packaging/gigaxml.spec, and the whole test suite was green, because nothing in it
+      # ever executed the spec. A version bump is an ordinary pull request here; only the
+      # artifact build was ever able to notice one.
       #
       # This executes the spec without building anything: PyInstaller is stubbed and its
       # four build calls are recorders, so what runs is the spec's own Python -- its

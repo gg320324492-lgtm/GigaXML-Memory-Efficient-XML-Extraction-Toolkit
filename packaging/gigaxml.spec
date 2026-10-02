@@ -48,7 +48,10 @@ VERSION = str(_version["project"]["version"])
 # file through on every pull request. Splitting the string apart here was a second,
 # untested copy of that rule, and the copy that breaks is the one nobody can see until
 # a release build fails: at 2.0.0rc1 ``int("0rc1")`` raised on all three packaging
-# platforms on the first tag this pipeline ever built, with the whole test suite green.
+# platforms, with the whole test suite green. That was the first tag whose pyproject
+# actually carried a pre-release -- nine tag builds had already gone green before it,
+# four of them named for a pre-release their tree did not carry, so none of the nine
+# ever reached this line.
 sys.path.insert(0, str(ROOT))
 
 from tools.make_version_info import version_quad  # noqa: E402
