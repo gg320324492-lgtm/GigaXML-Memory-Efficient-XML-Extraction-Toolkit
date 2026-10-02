@@ -104,16 +104,53 @@ RUNS_ON_TO_SYS_PLATFORM = {
 #: naming it, rather than quietly removing the only assertion that the Windows leg
 #: exercises anything Windows-specific. A list that updated itself would be a list nobody
 #: reads.
+#:
+#: ★ Which is also why an entry here is a claim to be argued, not a thing to add to make a
+#: leg green. It carried seven until 2026-10-03, when the run self-check failed on every
+#: non-Windows leg with five of them: those five *ran* on linux rather than skipping. Each
+#: was judged individually, and each came off -- not as a way of silencing the message, but
+#: because the platform claim in the entry was false:
+#:
+#: * ``test_interrupt_report.py::test_a_failed_run_still_says_failed`` and
+#:   ``::test_a_finished_run_still_says_ok`` send no signal at all. They start the CLI, let
+#:   it finish, and read the report. Nothing in either is a Windows operation, so "can only
+#:   run on Windows" was never true of them; they look like they were listed by file rather
+#:   than by what they do.
+#: * ``test_interrupt_report.py::test_a_stopped_run_writes_a_report_that_says_it_was_
+#:   interrupted`` and ``::test_the_numbers_in_that_report_are_the_ones_on_disk`` do send a
+#:   signal, but through helpers that branch on the platform deliberately: ``_command``
+#:   wraps the child in the ``SetConsoleCtrlHandler`` shim on win32 and leaves it alone
+#:   elsewhere, ``_start`` sets ``CREATE_NEW_PROCESS_GROUP`` only on win32, and ``_stop``
+#:   sends ``CTRL_C_EVENT`` on win32 and ``os.kill(pid, SIGINT)`` everywhere else. That is
+#:   the signature of a test written to run on both, not of one that could not.
+#: * ``test_gui_history.py::test_a_run_the_cli_stopped_is_shown_as_interrupted_and_can_be_
+#:   continued`` inlines the same three branches over its own child. It is not one of the
+#:   tests that go through ``_terminate``, which is the actual Windows-only helper in that
+#:   file and whose ``pytest.skip("TerminateProcess is a Windows call")`` is the reason
+#:   seven *other* tests skip on a linux leg.
+#:
+#: Two independent facts back this up, and neither is "CI was red". ``git log -p --follow``
+#: over both files shows **no skip marker has ever existed on any of the five**: not in the
+#: revision that introduced ``test_interrupt_report.py`` (d21ce8e) and not in any later one,
+#: and the single marker in ``test_gui_history.py`` has sat on ``_terminate``'s line 104
+#: since that file's first revision. So this was never a guard that went missing; the tests
+#: were cross-platform from the start and the list was wrong about them. And the 2026-10-02
+#: CI run measured the consequence: on the linux legs all five ran, none appeared among the
+#: skips, and neither appeared among the failures -- they passed.
+#:
+#: Gating them would have been the other available fix and would have been worse: it deletes
+#: the only end-to-end coverage of "a signal arrives and the run writes a report saying so"
+#: on two of the three platforms the product ships binaries for, and it does it to satisfy a
+#: list. The platform legs exist to find differences *between* platforms; a test of this
+#: shape is exactly the kind that finds them.
+#:
+#: ★ What is left is what the description above actually names: two tests whose bodies make
+#: a call POSIX does not have. Both begin with
+#: ``pytest.skip("only Windows refuses os.replace while the target is open")``, and both
+#: were skipped on every linux leg measured -- the list, the code and the run agree.
 WINDOWS_ONLY_TESTS = (
     "tests/integration/test_atomic_output.py::test_a_target_held_open_is_one_clear_error_and_the_partial_survives",
     "tests/integration/test_atomic_output.py::test_the_held_open_error_names_the_partial_file",
-    "tests/integration/test_gui_history.py::"
-    "test_a_run_the_cli_stopped_is_shown_as_interrupted_and_can_be_continued",
-    "tests/integration/test_interrupt_report.py::test_a_failed_run_still_says_failed",
-    "tests/integration/test_interrupt_report.py::test_a_finished_run_still_says_ok",
-    "tests/integration/test_interrupt_report.py::"
-    "test_a_stopped_run_writes_a_report_that_says_it_was_interrupted",
-    "tests/integration/test_interrupt_report.py::test_the_numbers_in_that_report_are_the_ones_on_disk",
 )
 
 #: The test directories every job runs. Asserted identical everywhere, so a platform leg

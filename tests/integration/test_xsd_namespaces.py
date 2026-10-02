@@ -20,7 +20,22 @@ from typing import Final
 import pytest
 
 REPO_ROOT: Final = pathlib.Path(__file__).resolve().parents[2]
-FHIR_ALL: Final = REPO_ROOT / "data" / "fhir" / "xsd" / "fhir-all.xsd"
+
+#: HL7's own R4 schema set, committed at examples/fhir/xsd/ rather than fetched per
+#: machine. It used to point into ``data/``, which .gitignore covers, and these two tests
+#: were guarded by a skip that therefore fired on *every* checkout -- including CI, where
+#: the run self-check asks the Windows leg for zero skips and so could never be satisfied.
+#:
+#: They are not guarded any more, and that is the point. The set is repository content, so
+#: its absence is a broken checkout rather than a condition to be excused: a skip here
+#: would report a suite that never compiled 150 files as one that had, which is the shape
+#: of guard that is green because it looked at nothing. The only thing still optional is
+#: the ``xsd`` extra, and each test below asks for it the way every other test in this
+#: file does.
+#:
+#: The licence these files carry, and what is verified about it, is recorded beside them in
+#: ``examples/fhir/XSD-LICENSE.md``.
+FHIR_ALL: Final = REPO_ROOT / "examples" / "fhir" / "xsd" / "fhir-all.xsd"
 
 #: The three HL7 namespaces this file uses. ``XML`` is not arbitrary: ``xmlschema`` ships
 #: a copy of it inside itself, which is what lets an import of it fail *silently* by
@@ -34,14 +49,6 @@ NS_ROOT: Final = "urn:gigaxml:xsd-namespaces:root"
 #: compiles" is also true of a schema compiled from half its files; the count is what
 #: says the whole set was read.
 FHIR_ELEMENT_COUNT: Final = 146
-
-requires_fhir = pytest.mark.skipif(
-    not FHIR_ALL.is_file(),
-    reason=(
-        "the FHIR R4 schema set is not on this machine -- 150 files, ~3 MB, not committed "
-        "to the repository. Fetch it with `python examples/fhir/fetch.py`."
-    ),
-)
 
 
 def schema_doc(
@@ -415,7 +422,6 @@ def test_a_missing_import_and_a_refused_import_are_reported_differently(
 # --- the real schema set -------------------------------------------------------
 
 
-@requires_fhir
 def test_the_real_fhir_r4_schema_set_still_compiles() -> None:
     """The no-false-positive half, on 150 files and 296 include/import edges.
 
@@ -424,6 +430,8 @@ def test_the_real_fhir_r4_schema_set_still_compiles() -> None:
     tool, and it is the set that found the defects in the first place; if it raised here,
     the change would be a regression wearing a fix's clothes.
     """
+    pytest.importorskip("xmlschema", reason="the 'xsd' extra is optional")
+
     from gigaxml.xsd import _open_schema
 
     schema = _open_schema(FHIR_ALL)
@@ -436,7 +444,6 @@ def test_the_real_fhir_r4_schema_set_still_compiles() -> None:
     assert schema.target_namespace == "http://hl7.org/fhir"
 
 
-@requires_fhir
 def test_the_real_fhir_r4_schema_yields_field_types() -> None:
     """What the M16 defect actually cost: 146 elements, none of them reachable.
 
@@ -447,6 +454,8 @@ def test_the_real_fhir_r4_schema_yields_field_types() -> None:
     are absent by design rather than by failure, which is the same rule that keeps an
     unrecognised type from being guessed at.
     """
+    pytest.importorskip("xmlschema", reason="the 'xsd' extra is optional")
+
     from gigaxml.fields import FieldType
     from gigaxml.xsd import record_field_types
 
