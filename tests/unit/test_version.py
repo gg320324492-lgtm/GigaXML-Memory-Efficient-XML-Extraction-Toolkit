@@ -11,7 +11,10 @@ must move together. These tests make that a test failure instead of a release no
 from __future__ import annotations
 
 import pathlib
+import re
 import tomllib
+
+import pytest
 
 from gigaxml import __version__
 
@@ -20,7 +23,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: This release's version, spelled the way the tag spells it. The tag itself is pushed by
 #: a human step outside the test suite, but everything the tag names has to match this
 #: string, and this constant is where "what are we releasing" is written down once.
-RELEASE_VERSION = "1.2.1"
+RELEASE_VERSION = "2.0.0rc1"
 
 
 def test_the_package_version_and_the_import_version_agree() -> None:
@@ -38,6 +41,32 @@ def test_the_release_notes_announce_the_same_version() -> None:
     assert f"| **Version** | {RELEASE_VERSION}" in notes
 
 
+#: The spellings a release may carry: three numeric parts, optionally followed by a
+#: release-candidate marker and its number. PEP 440 normalises ``2.0.0rc1`` to itself, so
+#: the tag ``v2.0.0rc1`` and the PyPI name ``2.0.0rc1`` both name the same thing -- which
+#: is the entire difference between a release candidate and the placeholder class this
+#: test exists to refuse. Everything outside this shape is refused, including the
+#: spellings that look close to it: ``2.0.0-rc1`` is a different string that a tag and an
+#: upload would not both match, and ``2.0.0rc`` names no candidate at all.
+RELEASE_SPELLING = re.compile(r"\A\d+\.\d+\.\d+(?:rc\d+)?\Z")
+
+#: Spellings that must be refused, with the reason each one is in the placeholder class.
+#: Pinned as data rather than left to one assertion, so widening the pattern above has
+#: somewhere to show up: each of these is a version that would ship as a name no tag
+#: matches, or as a pre-release snapshot nobody released.
+REFUSED_SPELLINGS = [
+    pytest.param("2.0.0.dev1", id="dev-snapshot"),
+    pytest.param("2.0.0a1.dev2", id="dev-inside-an-alpha"),
+    pytest.param("2.0.0+giga", id="local-suffix"),
+    pytest.param("2.0.0.dirty", id="local-in-the-third-part"),
+    pytest.param("2.0.0.1", id="four-numeric-parts"),
+    pytest.param("2.0.0-rc1", id="un-normalised-rc"),
+    pytest.param("2.0.0rc", id="rc-without-a-number"),
+    pytest.param("2.0", id="two-parts"),
+    pytest.param("2.0.0.post1", id="post-release"),
+]
+
+
 def test_the_version_is_not_a_development_placeholder() -> None:
     """A version that parses but carries no release semantics has slipped through.
 
@@ -48,10 +77,32 @@ def test_the_version_is_not_a_development_placeholder() -> None:
     opposite: usable, but still free to change. What this refuses is the placeholder class
     -- a version left at a pre-release snapshot or one carrying a local suffix that no tag
     and no PyPI upload would match.
+
+    **A release candidate is not in that class, and the check used to say it was.**
+    Requiring every part to be a digit refused ``2.0.0rc1`` -- which has a tag,
+    ``v2.0.0rc1``, and a PyPI name, and is what 2.0 is actually being released as. So the
+    pattern now states the whole vocabulary rather than one spelling of it, and
+    :data:`REFUSED_SPELLINGS` is the rest of that vocabulary, kept as data so a later
+    widening has somewhere to land visibly instead of passing quietly.
     """
-    parts = __version__.split(".")
-    assert len(parts) == 3
-    assert all(part.isdigit() for part in parts)
+    assert RELEASE_SPELLING.match(__version__), (
+        f"{__version__!r} is not a spelling a tag and a PyPI upload would both match: "
+        "three numeric parts, optionally followed by rc and a number"
+    )
+
+
+@pytest.mark.parametrize("candidate", REFUSED_SPELLINGS)
+def test_the_placeholders_stay_refused(candidate: str) -> None:
+    """The refusals above are the guard; this is what keeps them refusals.
+
+    Without it, ``RELEASE_SPELLING`` is a pattern nobody has watched fail, and the way to
+    make the current version legal -- loosening the pattern -- is also the way to make
+    ``2.0.0.dev1`` legal, one character at a time.
+    """
+    assert not RELEASE_SPELLING.match(candidate), (
+        f"{candidate!r} is a version no tag and no PyPI upload would match, and it must "
+        "stay refused"
+    )
 
 
 def test_the_typed_classifier_is_backed_by_a_py_typed_marker() -> None:
