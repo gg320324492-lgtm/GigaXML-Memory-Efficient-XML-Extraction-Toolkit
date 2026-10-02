@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Final
@@ -49,6 +49,7 @@ __all__ = [
     "_vmhwm_mib",
     "consume_records",
     "peak_rss_mb",
+    "peak_rss_source",
 ]
 
 #: File name of the rejection log, written beside the output file.
@@ -93,17 +94,45 @@ def peak_rss_mb() -> float | None:
     * **macOS** is the one place ``getrusage`` is used, because there is no
       ``/proc``, and its ``ru_maxrss`` is documented in bytes.
     """
+    chosen = _peak_reader()
+    return None if chosen is None else chosen[1]()
+
+
+def peak_rss_source() -> str | None:
+    """The name of the OS counter :func:`peak_rss_mb` reads here, or ``None``.
+
+    A measurement nobody can name is a measurement nobody can check, and a reader
+    deciding whether a peak figure means anything has to know which counter produced
+    it before they know what it was. Both functions go through :func:`_peak_reader`, so
+    the number and the name describing it cannot come from different platforms: a
+    harness that typed its own "which counter is this" string is the second copy of a
+    fact that rots, which is how a run that quietly fell back to current RSS came to
+    be filed as a peak measurement.
+    """
+    chosen = _peak_reader()
+    return None if chosen is None else chosen[0]
+
+
+def _peak_reader() -> tuple[str, Callable[[], float | None]] | None:
+    """``(counter name, reader)`` for this platform, or ``None`` where there is neither.
+
+    The one place the platform is decided. :func:`peak_rss_mb` and
+    :func:`peak_rss_source` are two views of the same choice, so splitting the branch
+    in two would let the name say one platform while the number came from another.
+    """
     if sys.platform == "win32":
-        return _windows_peak_working_set_mb()
+        return ("PeakWorkingSetSize (psapi GetProcessMemoryInfo)", _windows_peak_working_set_mb)
     if sys.platform.startswith("linux"):
-        return _linux_vmhwm_mb()
+        return ("VmHWM (/proc/self/status)", _linux_vmhwm_mb)
     try:
         import resource
     except ImportError:  # pragma: no cover - no getrusage on this platform
         return None
-    # macOS reports bytes; the BSDs report kilobytes.
-    scale = _MB if sys.platform == "darwin" else 1024
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale
+    ru_maxrss = lambda: resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # noqa: E731
+    if sys.platform == "darwin":
+        return ("ru_maxrss (getrusage RUSAGE_SELF, bytes)", lambda: ru_maxrss() / _MB)
+    # The BSDs report kilobytes; see the docstring above for why this is not a constant.
+    return ("ru_maxrss (getrusage RUSAGE_SELF, KiB)", lambda: ru_maxrss() / 1024)
 
 
 def _vmhwm_mib(status_text: str) -> float | None:

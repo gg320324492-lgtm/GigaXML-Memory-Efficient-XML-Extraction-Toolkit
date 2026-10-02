@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 
 from gigaxml import __version__
 
@@ -27,6 +28,120 @@ def _unsigned_binaries_section(notes: str) -> str:
     next_heading = lowered.find("\n## ", start + 1)
     end = next_heading if next_heading > 0 else len(lowered)
     return lowered[start:end]
+
+
+#: The grammar ISCC 6 accepts in ``VersionInfoVersion``, measured on 2026-10-03 by
+#: compiling the project's own ``packaging/gigaxml.iss`` once per candidate:
+#: ``2.0.0rc1``, ``2.0.0.rc1`` and ``2.0.0-rc1`` each failed with ``rc=2`` and
+#: ``Value of [Setup] section directive "VersionInfoVersion" is invalid``; ``2.0.0``,
+#: ``2.0.0.0`` and ``2.0.0.1`` each compiled with ``rc=0``. One to four dot-separated
+#: runs of digits, and nothing else. Restated here rather than imported from the tool
+#: because a test that checks the tool against the tool is a tautology.
+ISCC_VERSION_GRAMMAR = r"^[0-9]+(\.[0-9]+){0,3}$"
+
+
+def iscc_accepts(value: str) -> bool:
+    return re.fullmatch(ISCC_VERSION_GRAMMAR, value) is not None
+
+
+def test_the_installer_version_resource_is_digits_and_the_display_name_is_not() -> None:
+    """The installer carries two numbers, and neither is derived from the other by luck.
+
+    ``AppVersion``/``AppVerName``/the output file name are what a person reads, and they
+    say ``2.0.0rc1``. ``VersionInfoVersion`` is the Windows binary version resource,
+    whose four words are 16-bit integers with nowhere to put ``rc1`` -- and handing it
+    the pre-release string does not degrade the resource, it **aborts the compile**.
+    Measured, not assumed: ISCC 6 on 2026-10-03, against this repository's own script,
+
+    * ``/DAppVersion=2.0.0rc1 /DAppVerInfo=2.0.0.0`` -> ``rc=0``, "Successful compile",
+      and the resulting ``GigaXML-Setup-2.0.0rc1.exe`` reports ``FileVersion 2.0.0.0``
+      and ``ProductVersion 2.0.0rc1``.
+    * the same script with ``VersionInfoVersion={#AppVersion}`` -> ``rc=2``,
+      ``Value of [Setup] section directive "VersionInfoVersion" is invalid``.
+
+    So the packaging job was going to fail, and it fails loudly rather than shipping a
+    wrong number. This pins the shape so the next version bump is not the thing that
+    discovers it.
+    """
+    script = (REPO_ROOT / "packaging" / "gigaxml.iss").read_text(encoding="utf-8")
+
+    assert "VersionInfoVersion={#AppVerInfo}" in script, (
+        "the installer feeds AppVersion straight into VersionInfoVersion again, so the "
+        "next pre-release version fails the build"
+    )
+    assert "VersionInfoVersion={#AppVersion}" not in script, (
+        "VersionInfoVersion is back on the pre-release string, which ISCC rejects outright"
+    )
+    # The user-visible half keeps the pre-release. A fix that flattened both numbers
+    # would pass the shape check above and ship "GigaXML-Setup-2.0.0.0.exe".
+    assert re.search(r"^AppVerName=\{#AppName\} \{#AppVersion\}$", script, re.M), (
+        "AppVerName no longer shows the real version, so the installer would announce "
+        "2.0.0.0 to the person installing it"
+    )
+    assert "OutputBaseFilename=GigaXML-Setup-{#AppVersion}" in script
+
+    # The fallback default has to be valid too: a bare `iscc packaging/gigaxml.iss`
+    # with no /D arguments must compile, and 0.0.0-dev would not.
+    default = re.search(r'#ifndef AppVerInfo\s*#define AppVerInfo "([^"]+)"', script)
+    assert default, "AppVerInfo has no default, so a bare ISCC run cannot compile"
+    assert iscc_accepts(default.group(1)), (
+        f"the default AppVerInfo {default.group(1)!r} is not a version ISCC accepts"
+    )
+
+
+def test_the_packaging_pipeline_asks_for_the_digits_only_number_from_the_one_place() -> None:
+    """The workflow must not re-derive the rule inside a shell string.
+
+    Two copies of a reduction is two things to rot, and the copy inside a ``run:`` block
+    is the one no test can see. So the YAML asks the module that already reduces the
+    version for the exe's resource, and this checks it went on asking.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "package.yml").read_text(encoding="utf-8")
+    )
+    steps = yaml.safe_dump(workflow)
+    assert "--print-version-info-version" in steps, (
+        "the packaging workflow no longer asks tools.make_version_info for the digits-only version"
+    )
+    assert "/DAppVerInfo=" in steps, "the packaging workflow does not pass the second macro"
+    assert "/DAppVersion=" in steps, "the packaging workflow stopped passing the real version"
+    # And the value it passes is checked before ISCC sees it, so a bad reduction fails
+    # with a message that names the problem rather than with ISCC's.
+    assert "is not digits and dots" in steps
+
+
+def test_the_version_reduction_keeps_the_numbers_and_drops_only_the_pre_release() -> None:
+    """What the reduction must do, and what it must never do.
+
+    The mutation is the second half: a reduction that returned the version unchanged
+    would satisfy every "is it digits" check on a plain release and only fail once a
+    pre-release shipped -- which is the shape of a bug that hides until the worst moment.
+    So ``2.0.0rc1`` is asserted to come out *changed*, and to come out as the number a
+    person would recognise.
+    """
+    sys.path.insert(0, str(REPO_ROOT))
+    from tools.make_version_info import version_info_version
+
+    cases = {
+        "2.0.0rc1": "2.0.0.0",
+        "2.0.0": "2.0.0.0",
+        "2.0.0.1": "2.0.0.1",
+        "1.2.1": "1.2.1.0",
+        "3.0.0b2": "3.0.0.0",
+        "0.1.0.dev4": "0.1.0.0",
+    }
+    for given, expected in cases.items():
+        produced = version_info_version(given)
+        assert produced == expected, f"{given} -> {produced}, expected {expected}"
+        assert iscc_accepts(produced), f"{given} produced {produced!r}, which ISCC rejects"
+
+    for pre_release in ("2.0.0rc1", "3.0.0b2", "1.0.0a1", "2.0.0.post1"):
+        assert version_info_version(pre_release) != pre_release, (
+            f"{pre_release!r} survived the reduction unchanged, so it would be handed to "
+            f"VersionInfoVersion as-is and ISCC would reject it"
+        )
 
 
 def test_the_release_notes_do_not_claim_a_version_the_build_does_not_have() -> None:

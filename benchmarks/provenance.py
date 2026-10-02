@@ -81,7 +81,16 @@ SCHEMA_VERSION: Final = 2
 #: because the counter is the easy half: the failure this guards against is a parent
 #: reading a live child, which on this machine reports a frozen ~4.1 MiB for an 800 MiB
 #: process.
-MEMORY_METHOD_SELF_READ: Final = "peak_wset, self-read in the process that did the work"
+#: Criterion F's claim, in the words a reader of ``results.json`` will check it against.
+#: It names the *function* rather than an OS field, because the OS field is
+#: platform-dependent -- ``PeakWorkingSetSize`` on Windows, ``VmHWM`` on Linux,
+#: ``ru_maxrss`` on macOS -- and one string cannot be right for all three. The function
+#: has one dispatch for all three, and ``gigaxml.run.peak_rss_source()`` reports which
+#: counter it reached; a run that fell back to current RSS has no way to be described
+#: by this string, because the harness no longer performs one.
+MEMORY_METHOD_SELF_READ: Final = (
+    "gigaxml.run.peak_rss_mb, self-read in the process that did the work"
+)
 
 #: Every one of these is criterion A's list. A results file that is missing one of them
 #: is refused by :func:`missing_identity_fields` rather than quietly accepted, because a
@@ -367,7 +376,11 @@ def recompute_summary(runs: list[dict[str, Any]], *, rows_in_document: int) -> d
         }
 
     wall = [float(r["wall_s"]) for r in ok]
-    peak = [float(r["peak_rss_mb"]) for r in ok]
+    # A run whose peak is ``None`` was not measured on a platform without a high-water
+    # mark. It is dropped, not zeroed -- the recorder's rule, restated here because this
+    # function is a reimplementation of it and a reimplementation that disagrees is
+    # exactly what criterion B exists to catch.
+    peak = [float(r["peak_rss_mb"]) for r in ok if r["peak_rss_mb"] is not None]
     rows_written = int(ok[0]["rows_written"])
     ordered = sorted(wall)
     p95_index = min(len(ordered) - 1, round(0.95 * (len(ordered) - 1)))
@@ -379,7 +392,7 @@ def recompute_summary(runs: list[dict[str, Any]], *, rows_in_document: int) -> d
         "max_s": round(max(wall), 3),
         "stdev_s": round(statistics.stdev(wall), 3) if len(wall) > 1 else 0.0,
         "p95_s": round(ordered[p95_index], 3),
-        "peak_rss_median_mb": round(statistics.median(peak), 1),
+        "peak_rss_median_mb": round(statistics.median(peak), 1) if peak else None,
         "records_per_s_median": int(rows_written / median_s),
         "rows_written_median": int(statistics.median([int(r["rows_written"]) for r in ok])),
         "complete_output": rows_written == rows_in_document,
