@@ -395,8 +395,16 @@ jobs:
           # choice and are covered by the same advisories as what they pull.
           python -m venv "$RUNNER_TEMP/auditenv"
           "$RUNNER_TEMP/auditenv/bin/python" -m pip install --quiet .
+          # gigaxml is filtered out, and the filter is not tidying: `pip-audit
+          # --requirement` resolves what it is given by installing it, so listing the
+          # package made the job audit gigaxml by downloading it from PyPI. That works
+          # only for a version already published -- ahead of a release the install failed
+          # and the job went red with "No matching distribution found", which reads like
+          # a security finding and is not one. Measured: the same file with the published
+          # 1.2.1 audits clean; with the unpublished version it cannot install at all; with
+          # gigaxml dropped, the dependencies audit clean from the same tree.
           "$RUNNER_TEMP/auditenv/bin/python" -m pip list --format=freeze \
-            | grep -v '^pip==' > "$RUNNER_TEMP/runtime.txt"
+            | grep -viE '^(pip|gigaxml)==' > "$RUNNER_TEMP/runtime.txt"
           echo "--- the exact set being audited"
           cat "$RUNNER_TEMP/runtime.txt"
           # Every finding is printed, one per line, with its fix versions. That is not a
