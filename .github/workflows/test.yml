@@ -320,6 +320,19 @@ jobs:
         shell: bash
         run: python tools/check_comments.py
 
+      # ★ M19. `docs/` is gitignored on purpose -- the comment in .gitignore says the
+      # friction of `git add -f` is the point -- and three milestone reports were added
+      # with exactly that command, so anyone opening the repository could read the
+      # project's internal process vocabulary. A convention nothing checks is a
+      # convention that has already failed once.
+      #
+      # It reads the index and .gitignore with git itself, so it needs nothing installed,
+      # and it is here rather than in a test because what it checks is the repository's
+      # own shape rather than any behaviour of the code.
+      - name: Nothing tracked is excluded by .gitignore
+        shell: bash
+        run: python tools/ci_selfcheck.py tracked
+
       # ★ M15 criterion C/D. Two third-party actions on the release chain hold the rights
       # to publish -- one attaches files to a Release, the other uploads to PyPI where a
       # name cannot be reused -- and both were referenced by refs that move: a tag, and a
@@ -426,8 +439,9 @@ jobs:
         # counters are self-read inside the child that does the work.
         #
         # If this goes red on a change you believe is harmless, the honest response is
-        # to look at the numbers it printed before touching the baseline: a shared
-        # runner under load and a real 50% regression look identical from here, and
-        # re-recording the baseline is how you tell them apart.
+        # to look at the numbers it printed before touching the baseline. The throughput
+        # floor is 60% of the recorded reference -- a drop of more than 40% -- and a
+        # shared runner under load looks exactly like a regression of that size from
+        # here, so re-recording the baseline is how you tell the two apart.
         shell: bash
         run: python benchmarks/perf_baseline.py
