@@ -133,12 +133,9 @@ def read_golden(name: str) -> tuple[int, str, str]:
     all three together means the expectation describes the whole of what a user could
     observe, not just the part that happened to be printable.
 
-    Read with ``newline=""`` so the file's own line endings survive: a sample's artefact
-    is CRLF, and the default text mode would fold it to LF and quietly stop comparing
-    what is actually written to disk.
-
-    Use ``read_bytes().decode("utf-8")`` because ``Path.read_text(newline=)`` is only
-    available on Python 3.13+; the project supports 3.11+.
+    The file is read as bytes and decoded to preserve its original line endings (a
+    sample artefact is CRLF) while avoiding the ``newline`` parameter of
+    ``Path.read_text``, which exists only on Python 3.13+; the project supports 3.11+.
     """
     raw = (EXPECTED_DIR / name).read_bytes().decode("utf-8")
     header, _, body = raw.partition("\n")
