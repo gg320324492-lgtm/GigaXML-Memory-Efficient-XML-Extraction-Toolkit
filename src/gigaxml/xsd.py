@@ -284,7 +284,7 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     *at* the root points where the user meant it to; everything reached *from* the root is
     measured against what that name actually resolves to. A resource inside is fine, a
     resource outside is refused, and a link is no different from the file it leads to --
-    which is the whole point of resolving before comparing.
+    Which is the whole point of resolving before comparing.
 
     The rejection is classified rather than rewrapped. ``XMLResourceBlocked`` and
     ``XMLResourceForbidden`` descend from ``XMLResourceError`` and mean "the policy said
@@ -328,8 +328,16 @@ def _open_schema(schema_path: str | pathlib.Path) -> object:
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings("error", category=XMLSchemaWarning)
+            # Under allow='sandbox' xmlschema cuts its base out of the source it
+            # is given (normalize_url then os.path.dirname --
+            # resources/xml_resource.py:166) and resolves that same source against
+            # the parent, so a relative source arrives with its directory twice:
+            # 'schemas/catalog.xsd' reaching for '<cwd>/schemas/schemas/catalog.xsd'.
+            # An absolute source cannot show it and goes through byte for byte.
+            # Derived in tests/integration/test_xsd_relative_path.py.
+            handed_over = str(target) if target.is_absolute() else str(target.resolve())
             return xmlschema.XMLSchema(
-                str(target),
+                handed_over,
                 allow=ALLOW,
                 defuse=DEFUSE,
                 loader_class=_sandbox_loader_class(target.resolve().parent),
