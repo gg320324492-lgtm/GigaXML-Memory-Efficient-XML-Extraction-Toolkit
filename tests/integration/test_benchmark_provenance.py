@@ -537,8 +537,16 @@ def test_the_comparison_harness_records_the_peak_the_worker_read(provenance: Mod
     assert named.startswith(peak_rss_source() or "nothing"), (
         f"the recorded method names a counter this platform does not use: {named!r}"
     )
-    assert "rss (" not in payload["peak_rss_method"], (
-        f"the child fell back to a counter that is not a peak: {payload['peak_rss_method']!r}"
+    # **Compared as a name, not as a substring.** An earlier version of this line was
+    # ``"rss (" not in payload["peak_rss_method"]`` and went red on macOS, where the
+    # counter is ``ru_maxrss (getrusage RUSAGE_SELF, bytes)`` and the substring sits
+    # inside ``ru_maxrss``. A substring test for "did it fall back" cannot be written
+    # without catching the real thing: every peak counter's name is a superset of a
+    # current one. So the platform's own counter name is compared whole.
+    counter = (peak_rss_source() or "").split(" (")[0]
+    assert counter != "rss", (
+        f"this platform's high-water mark is called {counter!r}, which is the name of a "
+        f"current reading; a peak filed under it would be the fallback wearing a label"
     )
 
 
