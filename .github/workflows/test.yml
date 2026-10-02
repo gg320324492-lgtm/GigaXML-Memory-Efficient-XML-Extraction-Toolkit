@@ -142,15 +142,19 @@ jobs:
       - name: Check the run was real
         # ★ M14 criterion B, and the reason it is a separate step with `always()`: a
         # report that only prints when the tests passed diagnoses nothing. The floors
-        # here are measured, not chosen for comfort -- 1779 test cases on this
-        # repository's Windows checkout, 0 skipped, so 1700 leaves about 4% of headroom
-        # and a ceiling of 0 skips on that platform is a real claim: the whole suite runs
-        # there, including the seven tests that exist only to skip themselves elsewhere.
+        # here are measured, not chosen for comfort -- 2004 test cases on this
+        # repository's Windows checkout as of 2026-10-02, 0 skipped, so 1700 leaves about
+        # 15% of headroom and a ceiling of 0 skips on that platform is a real claim: the
+        # whole suite runs there, including the sixteen platform guards that skip
+        # themselves on this one.
         #
         # 40 is the ceiling for this platform and it is the one number here that is NOT
-        # measured: roughly a dozen of the suite's skips are the platform guards in
-        # test_interrupt_report.py, test_gui_results.py, test_gui_errors.py and
-        # test_gui_resume.py, which skip on every non-Windows machine by design. It is
+        # measured: of the 18 skips this platform recorded on 2026-10-02, seven are
+        # `TerminateProcess is a Windows call` (test_gui_history.py, test_gui_results.py
+        # and test_gui_resume.py), six are `exclusive file locking is a Windows behaviour`
+        # (test_gui_errors.py, test_gui_results.py), two are `only Windows refuses
+        # os.replace while the target is open` (test_atomic_output.py) and one is the
+        # case-folding check in test_filesystem_paths.py. It is
         # deliberately loose -- it exists to catch a suite that stopped running, not to
         # police individual skips -- and this run of CI prints the exact count and every
         # reason, which is what turns the estimate into a measurement.
@@ -228,14 +232,21 @@ jobs:
 
       - name: Check the run was real
         # ★ `--max-skips 0`, which is the strongest claim in this file and the reason this
-        # leg is worth its minutes. On a Windows checkout the entire suite runs: 1779
-        # cases, none skipped. That includes the seven tests whose bodies are Windows-only
-        # (the Ctrl-C stop, TerminateProcess, the exclusive-handle lock) and the three
-        # filesystem tests that need a symlink, a hard link and case folding -- every one
-        # of which skips or is impossible on the linux leg. A ceiling of zero means a
+        # leg is worth its minutes. On a Windows checkout the entire suite runs: 2004 cases
+        # as of 2026-10-02, none skipped. That includes the Windows-only bodies (the two
+        # exclusive-handle locks, TerminateProcess, the filesystem tests needing a symlink,
+        # a hard link and case folding) and the 150-file FHIR schema set in
+        # examples/fhir/xsd/ -- every one of which skips or is impossible on the linux leg.
+        # A ceiling of zero means a
         # runner that cannot do one of those things fails loudly, with the probe above
         # naming the missing capability, rather than reporting green over a suite that
         # quietly stopped testing the platform it exists for.
+        #
+        # ★ This ceiling was unreachable until 2026-10-03, and the reason is worth keeping:
+        # the two FHIR tests skipped because the schema set lived in gitignored `data/`, so
+        # the strongest claim in this file was contradicted by the repository's own layout
+        # rather than by any runner's capability. Committing the set is what made the claim
+        # true; raising the ceiling would have hidden it.
         if: always()
         shell: bash
         run: python tools/ci_selfcheck.py report ci-report.xml --min-tests 1700 --max-skips 0

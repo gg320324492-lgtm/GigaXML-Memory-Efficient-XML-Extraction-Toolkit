@@ -142,6 +142,23 @@ written for its own tests; it is the only one of the four that ships a schema.
 | **Fetch method** | discovered — the transitive closure of `xs:include` / `xs:import` from one seed |
 | **Files** | **150**, totalling **3,077,151** bytes |
 | **Per-file hashes** | all 150 recorded in [`fhir.json`](examples/fhir/fhir.json) |
+| **Where it lives** | [`examples/fhir/xsd/`](examples/fhir/XSD-LICENSE.md) — committed, unchanged, under the licence the files carry |
+| **Why it is committed** | the schema tests compile the whole set, and it was in gitignored `data/` before 2026-10-03, so both of them skipped on every machine |
+
+The set was fetched to a gitignored directory and used from there for its first two
+milestones. That was the wrong shape: `tests/integration/test_xsd_namespaces.py` is the only
+place this repository has ever compiled a schema set that was not written for its own
+tests, and it was skipping on **every** checkout — including CI, where the run self-check
+asks the Windows leg for zero skips and so could not be satisfied at all. The set is 150
+files and 3.3 MB, which is not the "large file" the size rule is about; that rule was
+written for the M16 datasets (`s400.xml`, 404 MB).
+
+The files are stored byte for byte — see `.gitattributes`, and the mixed line endings and
+three BOMs that make that necessary. They are **not** covered by this repository's
+`LICENSE`; [`XSD-LICENSE.md`](examples/fhir/XSD-LICENSE.md) records what HL7 and W3C
+actually say about them, read at the source on 2026-10-02. In short: 148 of the 150 carry
+HL7's own BSD 3-Clause header, the other two are W3C documents, and the CC0 on HL7's
+licence page covers the specification rather than the schema files.
 
 There is no single archive and so no single archive hash. What is recorded instead is a
 `set_sha256` over every file's name and bytes in name order, so "did anything change" is

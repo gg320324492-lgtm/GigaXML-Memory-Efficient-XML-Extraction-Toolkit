@@ -31,7 +31,9 @@ Usage::
     python examples/fhir/fetch.py            # download, verify, record
     python examples/fhir/fetch.py --force    # re-fetch even if it verifies
 
-Where it writes: ``data/fhir/`` (gitignored) and ``examples/fhir/fhir.json`` (committed).
+Where it writes: ``examples/fhir/xsd/`` (committed, third-party, byte for byte -- see
+``XSD-LICENSE.md``), ``data/fhir/`` for the example instances (gitignored), and
+``examples/fhir/fhir.json`` (committed).
 
 **Not a second copy of the download machinery**, for the reason
 ``examples/pubmed/fetch.py`` gives: the hashing and the TLS context -- including the
@@ -56,10 +58,18 @@ from pathlib import Path
 from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = REPO_ROOT / "data" / "fhir"
-XSD_DIR = DATA_DIR / "xsd"
-EXAMPLES_DIR = DATA_DIR / "examples"
 HERE = Path(__file__).resolve().parent
+#: The schema set is committed, under the licence HL7 and W3C put on it -- see
+#: ``XSD-LICENSE.md`` beside this directory, which records where the terms came from. So
+#: this is the one directory in this repository that a fetch writes *into* the working
+#: tree of, and that is deliberate: a vendored set with no refresh path drifts from the
+#: recorded digests silently. ``--force`` leaves a dirty working tree on purpose, because
+#: that diff is the review.
+XSD_DIR = HERE / "xsd"
+#: The example instances stay a dataset. They are documents, not schema, and they are
+#: still fetched per machine like every other one in ``data/``.
+DATA_DIR = REPO_ROOT / "data" / "fhir"
+EXAMPLES_DIR = DATA_DIR / "examples"
 METADATA = HERE / "fhir.json"
 
 BASE_URL = "https://www.hl7.org/fhir/R4/"

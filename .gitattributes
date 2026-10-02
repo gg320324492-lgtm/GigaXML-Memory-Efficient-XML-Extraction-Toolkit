@@ -14,3 +14,24 @@
 #
 # So these files are stored and checked out byte for byte, on every platform.
 tests/golden/expected/** -text
+
+# HL7's FHIR R4 XML schema set, fetched by examples/fhir/fetch.py and committed here.
+#
+# The same reason as above, arrived at the other way round: these are third-party files
+# that this repository does not author, and it does not edit. What they are is a record
+# of bytes -- HL7's, published under their own licence -- and the reason this repository
+# stores them at all is that tests/integration/test_xsd_namespaces.py compiles all 150 of
+# them, which it could not do while they lived in data/ (gitignored, fetched per machine).
+#
+# Measured on the set fetched 2026-10-01: 136 files are CRLF throughout, 2 are LF
+# throughout and 12 are mixed within one file, and three begin with a UTF-8 BOM
+# (fhir-all.xsd, fhir-xhtml.xsd, xml.xsd). So the endings are not uniform and not
+# guessable, and with core.autocrlf on an unmarked checkout would rewrite 136 of them on
+# Windows and normalise the three BOMs away -- leaving files that no longer match the
+# per-file sha256 values recorded in examples/fhir/fhir.json, on whichever platform
+# happens to disagree with the one that fetched them.
+#
+# `-text` stores and checks out every one of these byte for byte, on every platform, so
+# the recorded digests describe the same bytes everywhere. It changes nothing about what
+# is committed, and a file here must not be edited: to update the set, re-fetch it.
+examples/fhir/xsd/** -text

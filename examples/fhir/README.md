@@ -15,7 +15,8 @@ why that is what the milestone asked for.
 ## Run it
 
 ```bash
-# 1. fetch. ~3 MB of schema plus five small instances; the crawl is discovered, not listed
+# 1. fetch. The ~3 MB schema set is already committed in xsd/; this fetches the five
+#    small instances beside it, and with --force refreshes the schema set too
 python examples/fhir/fetch.py
 
 # 2. extract, from the repository root
@@ -79,8 +80,14 @@ on a red build for a reason that has nothing to do with the extraction. The `dat
 
 ## The schema set, if you want to look at it
 
+It is **committed**, in [`xsd/`](XSD-LICENSE.md) — HL7's own files, unchanged, under the
+licence they carry. They are here rather than in `data/` because
+[`tests/integration/test_xsd_namespaces.py`](../../tests/integration/test_xsd_namespaces.py)
+compiles the whole set, and a gitignored directory would leave those two tests skipping on
+every machine including CI, where the run self-check asks the Windows leg for zero skips.
+
 ```
-data/fhir/xsd/
+examples/fhir/xsd/
   fhir-all.xsd          9,645 B   146 xs:include, and nothing else
   fhir-base.xsd                reachable only through those includes
   xml.xsd                      and so is this -- W3C's, shipped as a local copy
