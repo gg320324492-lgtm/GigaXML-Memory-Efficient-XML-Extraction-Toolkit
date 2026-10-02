@@ -60,7 +60,7 @@ from gigaxml.errors import (
     WriterError,
 )
 
-__version__ = "1.2.1"
+__version__ = "2.0.0rc1"
 
 if TYPE_CHECKING:  # pragma: no cover - seen by type checkers, not at run time
     # ★ **The re-exports are declared twice on purpose, and the run-time half is the dict

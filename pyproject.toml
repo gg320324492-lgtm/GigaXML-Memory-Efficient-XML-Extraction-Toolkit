@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gigaxml"
-version = "1.2.1"
+version = "2.0.0rc1"
 description = "Extract structured data from multi-gigabyte XML files with bounded memory, as a command line tool and a desktop application."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -12,7 +12,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["xml", "streaming", "etl", "iterparse", "large-files", "cli", "gui", "memory-efficient", "parquet", "csv", "jsonl"]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Environment :: X11 Applications :: Qt",
   "Intended Audience :: Developers",

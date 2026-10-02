@@ -469,6 +469,7 @@ large sizes; for analysis of documents that fit, it is.**
 | [OUTPUT-DURABILITY.md](OUTPUT-DURABILITY.md) | what "atomically" covers, layer by layer — and the layer it does not |
 | [SECURITY.md](SECURITY.md) | the three boundaries: network, schema, filesystem |
 | [BENCHMARK-METHODOLOGY.md](BENCHMARK-METHODOLOGY.md) | how the performance numbers are taken, and what enforces the memory one |
+| [VERSIONING.md](VERSIONING.md) | what is stable from 2.0 — the CLI, three formats, the public API — and what checks each |
 | [REAL-WORLD-VALIDATION.md](REAL-WORLD-VALIDATION.md) | the same extraction run against Wikipedia, PubMed, an ERP export and FHIR |
 | [python-api.md](python-api.md) | driving the package from Python, and the one rule about what is public |
 
