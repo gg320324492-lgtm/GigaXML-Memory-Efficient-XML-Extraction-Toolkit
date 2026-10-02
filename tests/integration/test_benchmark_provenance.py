@@ -320,58 +320,153 @@ def test_the_perf_baseline_says_out_loud_that_it_was_not_written_by_its_own_scri
 
 
 def peak_looks_self_read(peak_mb: float) -> bool:
-    """Is this peak plausibly the worker's own reading rather than a parent's view?
+    """Is this reading large enough to be the work, rather than the apparatus around it?
 
-    The threshold is not a guess. Measured on this machine, 2026-10-02: a child that
-    allocated 800 MiB and self-read reported **817.9 MiB**, while a parent watching the
-    same live child read **4.1 MiB on every one of five samples** -- the frozen figure
-    ``run_comparison.py``'s own comment says a sweep once reported for every
-    implementation at every size. 200 MiB separates the two with room to spare and is
-    far below the allocation the probe makes.
+    The threshold is not a guess, and it is not "the point below which a parent sits"
+    either -- that was the belief this helper used to encode, and CI disproved it. A
+    parent watching a live child read **4.05 MiB on this machine** and **273.117 MiB on
+    the windows-latest runner**, both frozen, for a child that had allocated 256 MiB.
+    The level is a property of the runner (how big its interpreter is), not of the
+    method, so no single cutoff can separate them and none is claimed to.
+
+    What 200 MiB actually separates is **the work from the apparatus**, using the probe
+    below: a child that allocates 384 MiB and self-reads is above it; a process that
+    has finished and released everything is far below it. That is the question the
+    harness's numbers are actually at risk of failing, it is the same question on all
+    three platforms, and it is the one
+    :func:`test_the_comparison_harness_records_the_peak_the_worker_read` asks by
+    running the real harness against a child with a known allocation.
     """
     return peak_mb > 200.0
 
 
-def test_a_parents_view_of_a_live_child_is_a_frozen_figure() -> None:
-    """The measurement the threshold above rests on, re-taken so it cannot rot.
+#: The child of :func:`run_probe`. Two lines of protocol around one measurement: it says
+#: when the ballast is provably held, and it does not let go until told to, so the parent
+#: samples a child at a **known** point in its life rather than 0.15 s into a startup
+#: whose duration is a property of the runner.
+PROBE_SOURCE = """import json
+import sys
 
-    This is the whole basis for the threshold in :func:`peak_looks_self_read`, and it is
-    the failure the project already recorded once. If a future platform made the two
-    methods agree, the distinction would stop existing and this would go red rather than
-    leaving a guard that cannot fail.
+import psutil
+
+from gigaxml.run import peak_rss_mb, peak_rss_source
+
+me = psutil.Process()
+ballast = [bytearray(8 * 1024 * 1024) for _ in range(32)]
+for block in ballast:
+    block[::4096] = b"\x01" * len(block[::4096])
+print("HELD", flush=True)
+sys.stdin.read(1)
+ballast.clear()
+print(json.dumps({"child_peak": peak_rss_mb(), "child_source": peak_rss_source()}), flush=True)
+"""
+
+
+def run_probe() -> dict:
+    """Run :data:`PROBE_SOURCE`; return what the child read and what the parent saw.
+
+    The parent's samples are taken between the child's ``HELD`` line and its release, so
+    the child is certainly holding 256 MiB while they are taken -- which is the whole
+    reason the version of this probe that preceded it was unreliable. It sampled at a
+    fixed 0.15 s and called the answer "frozen"; the figure it got was however far the
+    child had got by then, and on a slow enough runner that is most of the allocation.
     """
-    probe = (
-        "import json, sys, time\n"
-        "import psutil\n"
-        "me = psutil.Process()\n"
-        "ballast = [bytearray(8 * 1024 * 1024) for _ in range(32)]\n"
-        "for block in ballast:\n"
-        "    block[::4096] = b'\\x01' * len(block[::4096])\n"
-        "time.sleep(0.3)\n"
-        "print(json.dumps({'self': me.memory_info().peak_wset / 1048576}))\n"
-    )
-    compile(probe, "<frozen-figure-probe>", "exec")
-    process = subprocess.Popen([sys.executable, "-c", probe], stdout=subprocess.PIPE, text=True)
-    import time
-
     import psutil
 
-    watcher = psutil.Process(process.pid)
-    time.sleep(0.15)
-    seen = [watcher.memory_info().rss / 1048576 for _ in range(3)]
-    out, _ = process.communicate()
-    child = json.loads(out.strip())["self"]
-
-    assert child > 190, f"the child did not allocate what the probe allocated ({child} MiB)"
-    assert max(seen) < 20, (
-        f"the parent's view was {seen} MiB, which is no longer the frozen figure this "
-        f"repository's guards assume. Re-measure before trusting them."
+    compile(PROBE_SOURCE, "<memory-probe>", "exec")
+    process = subprocess.Popen(
+        [sys.executable, "-c", PROBE_SOURCE],
+        stdout=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        text=True,
     )
-    # What this distinguishes, stated narrowly because it is what criterion F is about:
-    # **whose process read the counter.** The child's own ``peak_wset`` and its ``rss``
-    # coincide here, because the reading is taken while the allocation is still held --
-    # so this probe separates parent from child and does not separate peak from current.
-    # Both are worth knowing and only the first is what these guards rest on.
+    assert process.stdout is not None and process.stdin is not None
+    assert process.stdout.readline().strip() == "HELD", "the probe never reached its held state"
+    watcher = psutil.Process(process.pid)
+    seen = [watcher.memory_info().rss / 1048576 for _ in range(3)]
+    process.stdin.write("x")
+    process.stdin.flush()
+    out, _ = process.communicate(timeout=120)
+    measured = json.loads(out.strip())
+    measured["parent_saw"] = seen
+    return measured
+
+
+def test_a_current_rss_reading_is_not_the_peak_the_harness_needs() -> None:
+    """The measurement the threshold above rests on -- as a relation, not a constant.
+
+    One process, one moment, two counters. Measured here 2026-10-03, on a call that
+    allocated 256 MiB and returned, so the allocator had already been given it back by
+    the time the second number was taken::
+
+        peak_rss_mb()      281.2 MiB
+        memory_info().rss   25.8 MiB
+
+    **The 255.4 MiB between them is the size of the mistake this repository made once.**
+    The harness used to read ``info.rss`` in a ``finally`` block -- exactly the moment
+    the ballast is gone -- and file the result as a peak. On a Linux runner that produced
+    14.4 MiB for a child that had allocated 384, a number no interpreter could have
+    produced, which is the only reason anything noticed.
+
+    Asserted as a **relationship** rather than as a frozen figure, and that is the whole
+    difference from the guard it replaces. An absolute number here goes stale on every
+    new runner, and this one already had: a 0.15 s sampling race read 4.05 MiB on this
+    machine and 273.117 MiB on windows-latest, from identical code. The relationship
+    holds wherever the OS keeps a high-water mark at all, which is the claim worth
+    making -- and it is the one the harness actually depends on.
+    """
+    import psutil
+
+    from gigaxml.run import peak_rss_mb
+
+    me = psutil.Process()
+
+    def hold() -> None:
+        ballast = [bytearray(8 * 1024 * 1024) for _ in range(32)]
+        for block in ballast:
+            block[::4096] = b"\x01" * len(block[::4096])
+
+    peak = None
+    hold()
+    peak = peak_rss_mb()
+    hold()  # a second call, so the first one's blocks are unreferenced when this returns
+    current = me.memory_info().rss / (1024 * 1024)
+    assert peak is not None, "this platform has no high-water mark, so there is nothing to compare"
+    assert peak > 190, f"the probe did not allocate what it allocates ({peak} MiB)"
+    assert current < peak / 2, (
+        f"current RSS read {current:.1f} MiB against a peak of {peak:.1f} MiB. These are "
+        f"supposed to be different quantities: a reading taken after the work is finished "
+        f"is not a peak, and a harness that reports one as the other is the failure this "
+        f"repository has already shipped once."
+    )
+
+
+def test_a_parent_reads_the_childs_current_rss_and_the_harness_reads_its_peak() -> None:
+    """Whose process read the counter: the other half of criterion F, measured.
+
+    The child holds 256 MiB, says so, and waits to be released. The parent samples it
+    three times in that window. **The parent's figure is recorded, not asserted**, and
+    that is the point: it reads 4.05 MiB on this machine and 273.117 MiB on the
+    windows-latest runner, frozen in both cases, for a child that had allocated 256 MiB.
+    Which process the counter came from changes what the number *means*; how large the
+    number is changes with the runner. Freezing the second is what made the version of
+    this test that it replaces go red on every machine except the one that wrote it.
+
+    What is asserted is the half that does not move: on this platform the child can read
+    a real peak, and that peak reflects the allocation rather than the interpreter.
+    """
+    measured = run_probe()
+    child = measured["child_peak"]
+    assert child is not None, (
+        f"this platform has no high-water mark ({measured['child_source']}); a platform "
+        f"that cannot measure is not one whose measurement can be called wrong"
+    )
+    assert child > 190, f"the child did not allocate what the probe allocated ({child} MiB)"
+    assert measured["child_source"], "the child did not say which counter it read"
+    assert peak_looks_self_read(child), (
+        f"the child's own peak of {child} MiB failed the check that every harness reading "
+        f"has to pass, so the check is measuring the wrong thing"
+    )
 
 
 def test_the_comparison_harness_records_the_peak_the_worker_read(provenance: ModuleType) -> None:
@@ -389,7 +484,7 @@ def test_the_comparison_harness_records_the_peak_the_worker_read(provenance: Mod
     if provenance.MEMORY_METHOD_SELF_READ is None:  # pragma: no cover - defensive
         pytest.skip("no memory method recorded")
 
-    from gigaxml.run import peak_rss_mb
+    from gigaxml.run import peak_rss_mb, peak_rss_source
 
     if peak_rss_mb() is None:  # pragma: no cover - platform dependent
         pytest.skip("this platform cannot report a peak working set")
@@ -431,8 +526,107 @@ def test_the_comparison_harness_records_the_peak_the_worker_read(provenance: Mod
         f"reading itself."
     )
     assert "self-read" in payload["peak_rss_method"], payload["peak_rss_method"]
-    assert "peak_wset" in payload["peak_rss_method"], (
-        f"the child fell back to a counter that is not the peak: {payload['peak_rss_method']!r}"
+    # **The counter is checked against the one this platform actually uses**, not
+    # against a literal. The literal used to be "peak_wset", which is psutil's name for
+    # a field that only exists on Windows -- so on Linux and macOS this assertion could
+    # only ever have been satisfied by a string, and the number beside it was current
+    # RSS. Comparing against ``peak_rss_source()`` ties the recorded method to the
+    # function that produced it, and a harness that reverted to any fallback fails here
+    # on every platform rather than passing on the one with the field.
+    named = payload["peak_rss_method"]
+    assert named.startswith(peak_rss_source() or "nothing"), (
+        f"the recorded method names a counter this platform does not use: {named!r}"
+    )
+    assert "rss (" not in payload["peak_rss_method"], (
+        f"the child fell back to a counter that is not a peak: {payload['peak_rss_method']!r}"
+    )
+
+
+def test_the_harness_reads_the_childs_peak_and_supplies_no_number_of_its_own() -> None:
+    """Criterion F structurally: the parent measures nothing, so it cannot report wrong.
+
+    The runtime check above proves the number is right on the machine that ran it. This
+    proves the arrangement that makes it right, and it holds on every platform and every
+    machine, which is the property the old frozen-figure probe was reaching for and
+    could not reach through a constant.
+
+    Two halves, because either alone is a way to pass for the wrong reason:
+
+    * ``run_once`` -- the parent -- references no memory API at all. It parses a number
+      out of a line the child printed. A parent that measured the child would satisfy
+      the runtime check on a machine where the reading happened to be large, which is
+      exactly what windows-latest did.
+    * the wrapper calls ``gigaxml.run.peak_rss_mb`` and contains no ``or info.rss``-shaped
+      fallback. This is the line that produced 14.4 MiB for a 384 MiB child on a Linux
+      runner, under a comment that said it was "a different quantity wearing the same
+      label".
+    """
+    source = (BENCH / "compare" / "run_comparison.py").read_text(encoding="utf-8")
+    wrapper = source[source.index("WRAPPER = ") : source.index("PEAK_MARKER = ")]
+    # **The wrapper's comments are excluded, and that is the point of the filter.** The
+    # comments are where the fallback is *described* -- by name, so the next reader
+    # knows what it was -- and a check that grepped the whole string would fail on its
+    # own documentation. What has to be absent is the fallback as *code*.
+    code = "\n".join(line for line in wrapper.splitlines() if not line.strip().startswith("#"))
+
+    assert "peak_rss_mb()" in code, (
+        "the wrapper no longer reads the product's peak counter, so it has gone back to "
+        "reading something platform-dependent"
+    )
+    assert "peak_rss_source()" in code, (
+        "the wrapper does not report which counter answered, so peak_rss_method is "
+        "being written by something other than the measurement"
+    )
+    assert "__GIGAXML_PEAK__" in code, "the wrapper prints a marker the recorder does not look for"
+    for fallback in ("info.rss", "memory_info", "psutil", "import psutil"):
+        assert fallback not in code, (
+            f"the wrapper still runs {fallback!r}: a current-RSS reading filed under the "
+            f"name peak is the failure this file exists to prevent"
+        )
+
+    recorder = source[source.index("def run_once") : source.index("def summarise")]
+    for forbidden in ("psutil", "memory_info", "getrusage", "PeakWorkingSet", "VmHWM"):
+        assert forbidden not in recorder, (
+            f"run_once references {forbidden}, so the parent may be measuring the child "
+            f"rather than reading what the child reported"
+        )
+
+
+def test_the_named_counter_is_the_one_this_platform_documents() -> None:
+    """The counter's *name* is checked against the documentation, not against itself.
+
+    The check above -- the recorded method matches what ``peak_rss_source()`` reports --
+    is a consistency check, and a consistency check cannot catch both sides moving
+    together. Verified by mutation: renaming the counter to something this platform does
+    not have left that test green, because the recorder and the function agreed with
+    each other and both were wrong.
+
+    So the name is pinned to ``peak_rss_mb``'s own docstring, on whichever platform is
+    running. No table of platforms is written here: the module already documents which
+    counter it reads on each one, and a second copy in a test is the thing that drifts.
+    A rename that outruns the documentation fails here instead of being published in
+    ``results.json`` as the method that produced a number.
+    """
+    import inspect
+
+    from gigaxml.run import peak_rss_mb, peak_rss_source
+
+    source = peak_rss_source()
+    if source is None:  # pragma: no cover - platform dependent
+        pytest.skip("this platform has no high-water mark to name")
+    assert peak_rss_mb() is not None, "the counter is named but nothing reads it"
+    counter = source.split(" (")[0]
+    documented = inspect.getdoc(peak_rss_mb) or ""
+    assert counter in documented, (
+        f"peak_rss_source() reports {counter!r} and peak_rss_mb's own docstring never "
+        f"mentions it. The name a benchmark records as its method has to be the counter "
+        f"the module says it reads."
+    )
+    # And the other half of the same claim: a name that is only a platform's field, with
+    # no reader behind it, is the shape of the fallback this repository removed.
+    assert "psutil" not in source, (
+        f"the reported counter still names psutil ({source!r}); the product's reader does "
+        f"not go through psutil and a method string that says it does is wrong twice"
     )
 
 
@@ -450,6 +644,17 @@ def test_the_memory_method_check_rejects_a_parent_read() -> None:
         "criterion F guard in this file decorative"
     )
     assert peak_looks_self_read(24.4) is False, "the CI baseline's own peak must not pass"
+    # And the recorded shape of the harness's own bug on a Linux runner: 14.4 MiB for a
+    # child that had allocated 384, which is a number no interpreter could produce.
+    assert peak_looks_self_read(14.4) is False, (
+        "the fallback reading the runner reported must not pass"
+    )
+    # **What 273.117 is, and why it is here.** The parent-side probe read 4.05 MiB on
+    # this machine and 273.117 MiB on windows-latest for the same child. The second does
+    # pass, and that is not a hole in the check -- it is the check saying plainly that it
+    # separates *the work from the apparatus*, not parent from child. Asserted so the
+    # next reader learns it from a test rather than from a Windows-only red build.
+    assert peak_looks_self_read(273.117) is True
 
 
 def test_the_harness_names_the_counter_it_read_rather_than_asserting_it() -> None:

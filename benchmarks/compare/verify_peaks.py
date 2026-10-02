@@ -65,9 +65,18 @@ MIN_MEANINGFUL_GAP_MIB = 3.0
 def measure_idle_peaks(runs: int = FLOOR_RUNS) -> list[float]:
     """Peak RSS of an empty script through the runner's own wrapper, in MiB.
 
-    The wrapper imports psutil and executes an empty file with ``__name__ ==
-    "__main__"`` -- exactly the machinery around every measured implementation, minus
-    the work. Its peak is the floor no real implementation may fall below.
+    The wrapper imports ``gigaxml.run`` and executes an empty file with ``__name__ ==
+    "__main__"``. Its peak is the floor no real implementation may fall below.
+
+    **The empty file is the guard's weakest assumption and it is now visible.** The
+    wrapper used to import only psutil, so an empty target charged it 17.9 MiB. It now
+    imports the product's peak reader, and an empty target charges that 22.5 MiB --
+    while a target that does what a real run does (imports lxml and nothing else)
+    moves the floor only 21.7 -> 22.4. The +4.6 MiB is lxml being charged to the
+    wrapper instead of to the implementation, and a streaming implementation's recorded
+    peak now sits closer to the floor than it used to. That is reported, not hidden:
+    the threshold below is unchanged, and the answer to a reading it flags is to
+    re-measure it, never to move the number.
 
     Repeated, because a single run gives a number but not its error bar, and the
     near-floor test below needs to know how much of a difference is real.
@@ -88,7 +97,12 @@ def measure_idle_peaks(runs: int = FLOOR_RUNS) -> list[float]:
             )
             lines = [ln for ln in completed.stderr.splitlines() if ln.startswith(PEAK_MARKER)]
             assert lines, f"the idle-floor run produced no peak reading: {completed.stderr[-300:]}"
-            peaks.append(int(lines[-1][len(PEAK_MARKER) :]) / (1024 * 1024))
+            token = lines[-1][len(PEAK_MARKER) :].split(maxsplit=1)[0]
+            assert token != "none", (
+                "the child reported that this platform has no high-water mark, so there is "
+                "no floor to check against and nothing here can be called wrong"
+            )
+            peaks.append(int(token) / (1024 * 1024))
     finally:
         empty.unlink(missing_ok=True)
     return peaks

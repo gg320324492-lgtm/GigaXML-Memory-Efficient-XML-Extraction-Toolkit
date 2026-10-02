@@ -167,13 +167,27 @@ jobs:
             exit 1
           fi
           VERSION=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")
-          echo "installer version: $VERSION"
+          # The second number, for VersionInfoVersion only. Asked of the module that
+          # already reduces the version for the exe's resource rather than re-derived
+          # here: ISCC rejects anything but digits and dots in that field, measured at
+          # ISCC 6 on 2026-10-03 with "2.0.0rc1" -> rc=2, "Value of [Setup] section
+          # directive VersionInfoVersion is invalid." A shell one-liner doing the same
+          # reduction is a second copy of a rule with no test on it, and the copy that
+          # breaks is the one nobody can see until a release build fails.
+          VERINFO=$(python -m tools.make_version_info --print-version-info-version)
+          echo "installer version: $VERSION (version resource: $VERINFO)"
+          case "$VERINFO" in
+            *[!0-9.]*|'') echo "::error::the derived version resource number is not digits and dots: $VERINFO"; exit 1;;
+          esac
+          case "$VERINFO" in
+            *.*.*.*.*) echo "::error::more than four components: $VERINFO"; exit 1;;
+          esac
           # MSYS_NO_PATHCONV: this step's bash is Git Bash, and Git Bash rewrites a
           # leading-slash argument like /DAppVersion into a Windows path before ISCC sees
           # it -- measured locally, where ISCC then reported "You may not specify more
           # than one script filename" and built nothing. The macro has to survive as the
           # compiler-switch shape ISCC defines, not as a drive letter.
-          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/DAppVersion=$VERSION" packaging/gigaxml.iss
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/DAppVersion=$VERSION" "/DAppVerInfo=$VERINFO" packaging/gigaxml.iss
 
       # ------------------------------------------------------------------
       # The smoke test. This is the step that makes the matrix mean something.

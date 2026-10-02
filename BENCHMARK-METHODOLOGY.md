@@ -129,59 +129,118 @@ this is a documentation fix for M19.
 
 ## 4. How memory is measured, and how that is enforced
 
-**The rule: the peak is read inside the process that does the work.** A parent reading a
-live child does not get a slow reading, it gets a *wrong* one. Measured on this machine,
-2026-10-02, on a child that allocated 800 MiB and read its own high-water mark:
+**The rule: the peak is read inside the process that does the work, by that process's
+own OS high-water mark.** Both halves are load-bearing and they are separate failures.
+
+### Why the counter is the product's, and not psutil's
+
+The wrapper used to read `psutil.Process().memory_info().peak_wset`, and fall back to
+`info.rss` when that field was missing. `peak_wset` is a **Windows-only** field: on
+Linux and macOS `getattr(info, "peak_wset", None)` is `None`, so the fallback fired and
+filed *current* RSS under the name "peak". On a Linux runner that produced **14.4 MiB
+for a child that had allocated 384 MiB**. The comment beside that fallback said it was
+"a different quantity wearing the same label", and then used it anyway.
+
+The wrapper now calls `gigaxml.run.peak_rss_mb()` — the same function the CLI writes
+into its own run report, with a real implementation per platform (`PeakWorkingSetSize`
+via psapi on Windows, `VmHWM` from `/proc/self/status` on Linux, `ru_maxrss` via
+`getrusage(RUSAGE_SELF)` on macOS and the BSDs) — and `gigaxml.run.peak_rss_source()`,
+which names the counter that answered. One dispatch produces both, so the number and
+the name describing it cannot come from different platforms.
 
 ```
-child's own peak_wset   817.9 MiB
-parent's view, 5 samples   4.1, 4.1, 4.1, 4.1, 4.1 MiB
+__GIGAXML_PEAK__416555008 PeakWorkingSetSize (psapi GetProcessMemoryInfo)
 ```
 
-That 4.1 MiB is the frozen figure `run_comparison.py`'s own comment says a comparison
-sweep once reported *for every implementation at every size*. The two methods differ by
-813.8 MiB on an 800 MiB allocation, which is what makes it possible to write a check that
-distinguishes them.
+A platform with no high-water mark reports **no number** (`none <reason>`), and the
+recorder stores `peak_rss_mb: null` rather than `0.0`. That is the rule the run report
+already follows: a platform that cannot measure is not a platform whose measurement can
+be called wrong, and a missing measurement has to look missing.
 
-### The method is reported, not asserted
+### Why the peak is read *after* the work finished
 
-`run_comparison.py` used to write `"peak_rss_method": "peak_wset (self-read in child)"` as
-a **hardcoded string**. Its wrapper is:
+Because a high-water mark remembers an allocation the allocator has already handed
+back. Measured here 2026-10-03, on a call that allocated 256 MiB and returned:
 
-```python
-peak = getattr(info, "peak_wset", None) or info.rss
+| | |
+|---|---|
+| `peak_rss_mb()` | **281.2 MiB** |
+| `memory_info().rss` | **25.8 MiB** |
+
+That 255.4 MiB gap is the size of the mistake: reading a counter in a `finally` block
+is reading it at the moment the ballast is gone. It is the same shape as the old
+fallback, and the same number is why the reading looked impossible.
+
+### What the recorded numbers cost, measured
+
+The recorded `results.json` was produced on **Windows 11**, where `peak_wset` and
+`peak_rss_mb()` read the same OS quantity — the process's peak working set. Measured in
+one process on this machine, back to back after a 384 MiB allocation:
+
+```
+psutil memory_info().peak_wset   409.45 MiB
+gigaxml.run.peak_rss_mb()        409.45 MiB
 ```
 
-— a real fallback, for a platform whose psutil build has no `peak_wset`, that returns
-*current* RSS. A run that had quietly fallen back would have been filed as a peak
-measurement, and nothing would have noticed.
+Identical. (Read across two separate calls in a run that was allocating, they drift
+0.17% — 409.83 against 410.50 — which is the noise between two reads, not a difference
+between counters.) psutil's C source is not shipped in the wheel, so this equivalence
+is established by measurement rather than by reading it, and that is the claim made
+here. **The historical Windows peaks therefore remain comparable with what the new
+wrapper records**, to within that noise.
 
-The wrapper now has the child print **which counter answered**, and the recorder stores
-that. The measurement is unchanged — same counter, same process, same moment — but the
-record says which one it was:
+The second cost is the one that is not free. `verify_peaks.py` measures its idle floor
+by running an **empty** script through the runner's own wrapper, and the wrapper now
+imports `gigaxml.run`:
 
-```
-__GIGAXML_PEAK__421892096 peak_wset
-```
+| target | old psutil wrapper | new wrapper | change |
+|---|---|---|---|
+| empty script (what the guard measures) | 17.9 MiB | **22.5 MiB** | +4.6 |
+| imports lxml, does nothing (what a real run does) | 21.7 MiB | **22.4 MiB** | +0.7 |
+
+Most of the +4.6 MiB is lxml being charged to the wrapper instead of to the
+implementation, which every measured run loads anyway. The consequence is real and is
+**not** resolved by moving a threshold: `raw_lxml` at 100 MB and 4 GB records 24.7-25.1
+MiB, which is now 2.2-2.6 MiB above the floor, inside the guard's own 3 MiB noise
+band. `verify_peaks.py` reports those ten readings as "may not have measured the work"
+and exits 1.
+
+★ **The answer to that is to re-measure, never to move the number.** A streaming
+implementation's genuine peak *is* close to an idle interpreter's — that is what
+streaming means — and a threshold loosened to clear it would stop being a check. The
+`raw_lxml` points should be re-recorded under the new wrapper before anyone quotes them
+as current. The other nine data points are unaffected.
 
 ### What enforces it
 
-`test_the_comparison_harness_records_the_peak_the_worker_read` runs the real
-`run_once()` against a child that allocates 384 MiB and asserts the recorded peak exceeds
-200 MiB. A parent-read harness would report ~4 MiB and go red. The test's own mutation —
-feeding the threshold the recorded 4.1 MiB — is asserted to be rejected, so the threshold
-cannot be widened into meaninglessness unnoticed.
+* `test_the_comparison_harness_records_the_peak_the_worker_read` runs the real
+  `run_once()` against a child that allocates 384 MiB and asserts the recorded peak
+  exceeds **200 MiB** — the threshold is not lowered — and that `peak_rss_method` names
+  the counter `peak_rss_source()` reports on *this* platform, rather than a literal.
+* `test_a_current_rss_reading_is_not_the_peak_the_harness_needs` measures the peak /
+  current relationship above, as a **relation**. It replaced a guard that froze a
+  parent's view below 20 MiB, which is the only assertion in this file about a memory
+  *value* and the only one that ever went stale.
+* `test_a_parent_reads_the_childs_current_rss_and_the_harness_reads_its_peak` takes the
+  parent's reading with the child provably holding its allocation, and **records** it
+  rather than asserting it: **4.05 MiB on this machine, 273.117 MiB on the
+  windows-latest runner**, both frozen, for the same child. Which process read the
+  counter changes what the number means; how large it is changes with the runner.
+* `test_the_harness_reads_the_childs_peak_and_supplies_no_number_of_its_own` checks the
+  arrangement structurally, on every platform: `run_once` — the parent — references no
+  memory API at all, and the wrapper's *code* contains no `info.rss` and no psutil.
+* `test_the_named_counter_is_the_one_this_platform_documents` pins the counter's name
+  to `peak_rss_mb`'s own docstring, which is what a consistency check between the
+  recorder and the reader cannot do: both would move together.
+* `perf_baseline.py`'s claim is verified the same way — the `PROBE` is handed to
+  `python -c` and calls `peak_rss_mb()` there, and `run_once` references none of
+  `psutil`, `memory_info`, `getrusage`, `PeakWorkingSet` or `VmHWM`.
 
-`perf_baseline.py`'s claim is verified structurally instead: the `PROBE` is handed to
-`python -c` and calls `gigaxml.run.peak_rss_mb()` there, and the test asserts `run_once`
-references none of `psutil`, `memory_info`, `getrusage`, `PeakWorkingSet` or `VmHWM` — the
-parent must not touch a memory API at all.
-
-★ **What the frozen-figure probe does and does not separate.** It distinguishes *whose
-process read the counter*, which is what criterion F is about. It does **not** distinguish
-*peak* from *current*: in that probe the child's `peak_wset` and its `rss` coincide,
-because the reading is taken while the allocation is still held. Both distinctions are
-worth having; only the first is what these guards rest on.
+★ **Each of those was mutated, and each mutation was confirmed to land before the tests
+ran.** Reverting the wrapper to the `info.rss` fallback turns the first and fourth red;
+making `peak_rss_mb` return current RSS turns the first three red; renaming the counter
+on a platform that does not have it turns only the fifth red — which is what it is
+there for.
 
 ---
 

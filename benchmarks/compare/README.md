@@ -48,9 +48,16 @@ python benchmarks/compare/verify_outputs.py
 ## Verifying the memory numbers
 
 An output that is wrong is obvious; a peak that is wrong is not. This suite has been
-wrong about memory twice — once reporting a frozen 4.1 MB for every implementation,
-and once reporting a flat ~19 MB for GigaXML because the extraction ran in a
-grandchild process the sampler could not see. Both looked like good news.
+wrong about memory three times — once reporting a frozen 4.1 MB for every
+implementation, once reporting a flat ~19 MB for GigaXML because the extraction ran in
+a grandchild process the sampler could not see, and once reporting 14.4 MB for a child
+that had allocated 384 MB because `peak_wset` is a Windows-only field and the
+`or info.rss` fallback beside it quietly answered on every other platform. All three
+looked like good news. The first two were found by `verify_peaks.py`; the third by a
+CI runner, and it is why the wrapper now asks `gigaxml.run.peak_rss_mb()` — the
+product's own per-platform high-water mark — rather than a field that exists on one
+platform and a fallback that pretends to on the other two. `BENCHMARK-METHODOLOGY.md`
+section 4 has the measurements.
 
 ```bash
 python benchmarks/compare/verify_peaks.py

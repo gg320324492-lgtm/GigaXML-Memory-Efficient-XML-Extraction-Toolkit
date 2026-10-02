@@ -31,6 +31,27 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0-dev"
 #endif
+
+; A **second, different number**, for the one field that cannot hold the first.
+; VersionInfoVersion is the Windows version resource, whose four words are 16-bit
+; integers; there is nowhere in the format to put "rc1". Handing it 2.0.0rc1 does not
+; produce a lossy resource, it aborts the compile -- measured with ISCC 6 on 2026-10-03:
+;
+;     VersionInfoVersion=2.0.0rc1   ->  rc=2, "Value of [Setup] section directive
+;                                            VersionInfoVersion is invalid."
+;     VersionInfoVersion=2.0.0      ->  rc=0, Successful compile
+;     VersionInfoVersion=2.0.0.0    ->  rc=0, Successful compile
+;
+; So the packaging pipeline passes this one as /DAppVerInfo=<digits and dots only>,
+; derived from the same pyproject.toml by tools/make_version_info.py -- the function
+; that already reduces the version for the exe's own resource, so the two come from one
+; rule. Everything a person reads (AppVersion, AppVerName, the output file name) keeps
+; {#AppVersion} and still says 2.0.0rc1. The default is digits, so a bare ISCC run on
+; this file compiles; a literal pre-release version here would not, and that is the whole
+; reason this macro exists rather than a second read of AppVersion.
+#ifndef AppVerInfo
+  #define AppVerInfo "0.0.0.0"
+#endif
 #define AppPublisher "GigaXML"
 #define AppURL "https://github.com/gg320324492-lgtm/GigaXML-Memory-Efficient-XML-Extraction-Toolkit"
 
@@ -49,8 +70,9 @@ AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 ; Without this the file properties' "File version" field is blank while "Product version"
 ; carries the number -- measured on the first pipeline-built installer. Both fields come
-; from the same passed-in version, so they cannot disagree.
-VersionInfoVersion={#AppVersion}
+; from the same passed-in version, so they cannot disagree. **The same reduction, not the
+; same string**: see AppVerInfo above for why this cannot be {#AppVersion}.
+VersionInfoVersion={#AppVerInfo}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}

@@ -74,13 +74,9 @@ ROWS_PER_SIZE = {
 
 
 #: The child runs the implementation through this wrapper so **the child itself**
-#: reports its peak RSS. Cross-process readings are not usable on this machine:
-#: psutil's ``cpu_times()`` of a live foreign process freezes on its first sample,
-#: and ``memory_info()`` of a live foreign process returns a frozen ~4.1 MB for a
-#: working extraction (pinned down with three independent probes: ctypes
-#: ``GetProcessMemoryInfo`` fails outright, a child's own ``GetCurrentProcess``
-#: self-read returns zeros, while a child's self-read of ``peak_wset`` -- the
-#: mechanism below and the one ``bench_extraction.py`` uses -- returns sane values).
+#: reports its peak RSS. The parent supplies no number at all: cross-process readings
+#: are not a measurement (see ``BENCHMARK-METHODOLOGY.md`` section 4), so the recorder
+#: below parses a line the child printed and would have nothing to record without one.
 #: The wrapper executes the implementation's source with ``__name__ == "__main__"`` (so
 #: its module-level guard and ``sys.argv`` behave exactly as if run directly), prints
 #: the peak on a tagged stderr line, and re-raises the implementation's exit code
@@ -91,10 +87,8 @@ ROWS_PER_SIZE = {
 #: the extraction, and the allocator's high-water mark lands on that bookkeeping rather
 #: than on the work -- a harness that inflates one implementation by 13x is measuring
 #: itself.
-WRAPPER = """import psutil
-import sys
+WRAPPER = """import sys
 
-process = psutil.Process()
 script, *rest = sys.argv[1:]
 sys.argv = [script, *rest]
 code = 0
@@ -104,21 +98,30 @@ try:
 except SystemExit as exit_exc:
     code = exit_exc.code or 0
 finally:
-    info = process.memory_info()
-    # Which counter answered is **reported, not assumed**. The `or info.rss` below is a
-    # real fallback for a platform whose psutil build has no `peak_wset`, and a fallback
-    # that returns *current* RSS is a different quantity wearing the same label. Before
-    # this, the recorder wrote "peak_wset (self-read in child)" unconditionally, so a run
-    # that had quietly fallen back would have been filed as a peak measurement. The
-    # measurement is unchanged -- same counter, same process, same moment -- but the
-    # record now says which one it was, and `peak_rss_method` is read from this line
-    # rather than typed in next to it.
-    peak_wset = getattr(info, "peak_wset", None)
-    if peak_wset:
-        peak, counter = peak_wset, "peak_wset"
+    from gigaxml.run import peak_rss_mb, peak_rss_source
+    # The peak is read *after* the work finished, and that is the whole point: a
+    # high-water mark remembers an allocation the allocator has already handed back.
+    # Measured here, 2026-10-03, on a child that allocated 256 MiB and dropped the
+    # reference: this function read 281.2 MiB where current RSS read 25.8 MiB.
+    #
+    # It is not read through psutil. `memory_info().peak_wset` is a Windows-only
+    # field, so the `getattr(..., None) or info.rss` that used to stand here fell
+    # through to *current* RSS everywhere else -- 14.4 MiB reported for a child that
+    # allocated 384, on a Linux runner. The comment on that fallback said it was "a
+    # different quantity wearing the same label", and then used it anyway.
+    # `gigaxml.run.peak_rss_mb` is the same product code the CLI's own run report
+    # uses, with a real implementation per platform, and `peak_rss_source` names the
+    # counter it read so `peak_rss_method` is reported rather than assumed.
+    #
+    # Where there is no high-water mark at all, no number is reported. A platform that
+    # cannot measure is not a platform whose measurement can be called wrong, and a
+    # current-RSS figure filed under the name "peak" is the one thing worse.
+    peak, counter = peak_rss_mb(), peak_rss_source()
+    if peak is None:
+        print(f"__GIGAXML_PEAK__none {counter or 'no high-water mark on this platform'}",
+              file=sys.stderr)
     else:
-        peak, counter = info.rss, "rss (fallback: this platform has no peak_wset)"
-    print(f"__GIGAXML_PEAK__{peak} {counter}", file=sys.stderr)
+        print(f"__GIGAXML_PEAK__{int(peak * 1048576)} {counter}", file=sys.stderr)
 raise SystemExit(code)
 """
 
@@ -139,13 +142,21 @@ def run_once(script: Path, input_path: Path, output_path: Path) -> dict[str, obj
     stdout, stderr = process.communicate()
     elapsed = time.perf_counter() - started
     peak_lines = [line for line in stderr.splitlines() if line.startswith(PEAK_MARKER)]
-    peak_rss_mb = 0
-    peak_method = "unreadable: the child printed no peak line"
+    # **``None``, not ``0``.** A platform whose child reported no high-water mark has
+    # not been measured, and 0.0 would read downstream as a process that allocated
+    # nothing -- a large improvement over every reading ever taken. The same reasoning
+    # as ``gigaxml.run.peak_rss_mb`` returning ``None``, and the reason this is a
+    # three-state field rather than a number with a caveat in a comment.
+    peak_rss_mb: float | None = None
+    peak_method = "not measured: the child printed no peak line"
     if peak_lines:
         reported = peak_lines[-1][len(PEAK_MARKER) :].split(maxsplit=1)
-        peak_rss_mb = round(int(reported[0]) / (1024 * 1024), 1)
-        counter = reported[1] if len(reported) > 1 else "peak_wset (counter not named by the child)"
-        peak_method = f"{counter}, self-read in the process that did the work"
+        counter = reported[1] if len(reported) > 1 else "counter not named by the child"
+        if reported[0] == "none":
+            peak_method = f"not measured: {counter}"
+        else:
+            peak_rss_mb = round(int(reported[0]) / (1024 * 1024), 1)
+            peak_method = f"{counter}, self-read in the process that did the work"
     output_size = output_path.stat().st_size if output_path.is_file() else 0
     return {
         "wall_s": round(elapsed, 3),
@@ -158,16 +169,25 @@ def run_once(script: Path, input_path: Path, output_path: Path) -> dict[str, obj
     }
 
 
-def summarise(wall_times: list[float], peak_rss: list[float]) -> dict[str, object]:
+def summarise(wall_times: list[float], peak_rss: list[float | None]) -> dict[str, object]:
+    """Median wall clock and median peak, from the runs that succeeded.
+
+    ``None`` in ``peak_rss`` means the child could not report a high-water mark, and it
+    is dropped rather than counted as zero. A run with no measured peak gets
+    ``peak_rss_median_mb: None`` -- the same three-state rule as the per-run field, and
+    the same reason: a median over "the ones that happened to work" would otherwise
+    describe a subset as if it were the sweep.
+    """
     ordered = sorted(wall_times)
     p95_index = min(len(ordered) - 1, round(0.95 * (len(ordered) - 1)))
+    measured = [value for value in peak_rss if value is not None]
     return {
         "median_s": round(statistics.median(wall_times), 3),
         "min_s": round(min(wall_times), 3),
         "max_s": round(max(wall_times), 3),
         "stdev_s": round(statistics.stdev(wall_times), 3) if len(wall_times) > 1 else 0.0,
         "p95_s": round(ordered[p95_index], 3),
-        "peak_rss_median_mb": round(statistics.median(peak_rss), 1),
+        "peak_rss_median_mb": round(statistics.median(measured), 1) if measured else None,
     }
 
 
@@ -325,7 +345,9 @@ def main() -> int:
             ok_runs = [r for r in runs if r["exit_code"] == 0]
             if ok_runs:
                 wall = [float(r["wall_s"]) for r in ok_runs]
-                rss = [float(r["peak_rss_mb"]) for r in ok_runs]
+                rss: list[float | None] = [
+                    None if r["peak_rss_mb"] is None else float(r["peak_rss_mb"]) for r in ok_runs
+                ]
                 rows_written = int(ok_runs[0]["rows_written"])
                 summary = summarise(wall, rss)
                 summary.update(
