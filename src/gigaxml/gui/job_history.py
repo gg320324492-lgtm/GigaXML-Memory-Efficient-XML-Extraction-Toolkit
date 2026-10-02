@@ -119,12 +119,11 @@ class HistoryEntry:
     records_consumed: int | None = None
     #: Whether the run consumed the whole source, and **which file says so**.
     #:
-    #: ``"report"`` -- the run reached its end and wrote a report, which says it did not
-    #: finish. ``"manifest"`` -- the run was stopped and wrote no report, so only the
-    #: checkpoint knows. ``None`` -- neither file says, which is the case where nothing can
-    #: be claimed. The distinction is kept because the two mean different things to a user:
-    #: a run that *failed* partway and a run that was *stopped* partway both leave a
-    #: checkpoint saying ``complete: false``, and only one of them had anything to say.
+    #: ``"report"`` -- it reached its end and wrote a report, which says it did not finish.
+    #: ``"manifest"`` -- it was stopped and wrote no report, so only the checkpoint knows.
+    #: ``None`` -- neither says, and nothing can be claimed. A run that *failed* partway
+    #: and one that was *stopped* partway both leave ``complete: false``, and only one had
+    #: anything to say, which is why the two are kept apart.
     complete: bool | None = None
     complete_source: str | None = None
 

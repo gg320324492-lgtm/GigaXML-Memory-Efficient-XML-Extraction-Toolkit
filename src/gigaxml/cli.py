@@ -391,38 +391,28 @@ def _positive_int(text: str) -> int:
 def _install_interrupt_handlers() -> Callable[[], None]:
     """Make a stop signal unwind like any other error, and return how to undo it.
 
-    **The signal handler does nothing but raise.** That is deliberate and it is the whole
-    design: a handler that tried to write the report itself would be interrupted at any
-    point, and what it left behind would be a half-written report -- worse than none,
-    because a truncated ``run-report.json`` is not JSON and every reader has to cope with
-    it. Raising instead unwinds through the ``except`` clauses the library already has, so
-    the report is written on the ordinary way out with the ordinary code, where a second
-    signal arriving finds the process already committing to its end.
+    **The signal handler does nothing but raise.** A handler that tried to write the report
+    itself would be interrupted at any point, and a truncated ``run-report.json`` is worse
+    than none -- it is not JSON, and every reader has to cope with it. Raising instead
+    unwinds through the ``except`` clauses the library already has, so the report is written
+    on the ordinary way out, where a second signal finds the process already committing to
+    its end. ★ Measured: with no handler, :class:`KeyboardInterrupt` landed inside
+    ``os.replace`` in one run and inside ``elem.itertext()`` in another -- ``BaseException``,
+    which none of them catch, so both left no report at all. A stop has to arrive as the
+    kind of exception the way out already knows how to finish work for.
 
-    **Measured, and it is why the raise is not a nicety.** With no handler installed,
-    Python's own :class:`KeyboardInterrupt` lands wherever the signal happens to arrive.
-    Two runs of the same test, the same document, the same moment in the extraction:
-    one put it inside ``os.replace`` in :func:`gigaxml.checkpoint.write_checkpoint`, the
-    other inside ``elem.itertext()`` in :func:`gigaxml.fields.normalize_text`. Neither is
-    catchable by the ``except`` clauses the library has -- ``KeyboardInterrupt`` descends
-    from ``BaseException`` -- so both left no report at all. A stop is not something to be
-    met halfway down a call stack: it has to arrive as the kind of exception the code on the
-    way out already knows how to finish work for.
-
-    **Both signals, and only both.** ``SIGINT`` is what Ctrl-C sends, on every platform,
-    and Python would raise :class:`KeyboardInterrupt` for it anyway -- installing a handler
-    for it is what makes the stop take the same path as everything else instead of a
-    ``BaseException`` that none of the library's ``except`` clauses name.
-    ``SIGTERM`` has no such default: it terminates the process outright, so without a
-    handler there is nothing to catch.
+    **Both signals, and only both.** ``SIGINT`` is what Ctrl-C sends, on every platform, and
+    Python would raise :class:`KeyboardInterrupt` for it anyway -- installing a handler is
+    what makes the stop take the same path as everything else instead of a ``BaseException``
+    that none of the library's ``except`` clauses name. ``SIGTERM`` has no such default: it
+    terminates the process outright, so without a handler there is nothing to catch.
 
     **What this does not reach.** ``TerminateProcess`` -- the Windows task manager, and
-    ``os.kill(pid, SIGTERM)`` on Windows, which is the same call -- gives the process no
-    code to run, so no handler in any language could fire. On POSIX ``kill`` is covered;
-    on Windows there is no signal that reaches a handler from outside, and a stopped run
-    there leaves parts and a manifest and no report. See
-    :class:`gigaxml.errors.RunInterruptedError`, which says so where a reader of the
-    report format will meet it.
+    ``os.kill(pid, SIGTERM)`` on Windows, which is the same call -- gives the process no code
+    to run, so no handler in any language could fire. On POSIX ``kill`` is covered; on
+    Windows there is no signal that reaches a handler from outside, and a stopped run there
+    leaves parts and a manifest and no report. See :class:`gigaxml.errors.RunInterruptedError`,
+    which says so where a reader of the report format will meet it.
 
     Returns:
         A callable that puts the previous handlers back. **Restored on the way out of

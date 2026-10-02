@@ -57,7 +57,8 @@ EXEMPTIONS = pathlib.Path("tools") / "comment_exemptions.json"
 #: ``docs/STAGE3-M18-REPORT.md`` §2 for the numbers this came from.
 MAX_COMMENT_LINES = 7
 
-#: Characters across a whole comment block, independently of how it is wrapped. A block
+#: Characters of prose across a whole comment block -- the ``#`` markers are not
+#: counted -- independently of how it is wrapped. A block
 #: can obey MAX_COMMENT_LINES and still be a wall of text, and this is the limit that
 #: catches that: it measures the reading, not the shape.
 MAX_COMMENT_CHARS = 480
@@ -92,6 +93,12 @@ def python_files(root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in base.rglob("*.py") if p.is_file())
 
 
+def _prose(comment_line: str) -> str:
+    """A comment line's text without its ``#`` markers."""
+    body = comment_line.lstrip("#")
+    return body[1:] if body.startswith(" ") else body
+
+
 def read_blocks(text: str) -> list[dict[str, Any]]:
     """Comment blocks, read from ``tokenize``.
 
@@ -118,7 +125,12 @@ def read_blocks(text: str) -> list[dict[str, Any]]:
         }
         blocks.append(current)
     for block in blocks:
-        block["chars"] = sum(len(line) for line in block["lines"])
+        # Prose, not markup. ``#: `` is three of the characters on an attribute-style
+        # comment line and one on a plain one, so counting the token as written would
+        # make the character limit a second, accidental comment-style limit -- a `#:`
+        # block would trip it while an identical `#` block did not. The line limit below
+        # already measures shape; this one measures reading, and reading is the prose.
+        block["chars"] = sum(len(_prose(line)) for line in block["lines"])
         block["fingerprint"] = fingerprint("comment", block["lines"])
     return blocks
 
@@ -267,6 +279,82 @@ def check(root: pathlib.Path) -> tuple[list[str], list[str]]:
     return problems, grandfathered
 
 
+def strip_comments_and_docstrings(source: str) -> str:
+    """Reduce a module to what Python actually executes.
+
+    Comparing the text would not show that a comment change moved no behaviour --
+    comments *are* text. So both sides lose their comments (``tokenize``) and their
+    docstrings (``ast``), and what remains is the code. ``Lambda.body`` is a single
+    expression rather than a list of statements, which is the one shape here that a
+    ``body[0]`` would trip over.
+    """
+    lines = source.splitlines(keepends=True)
+    drop: set[int] = set()
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            drop.update(range(token.start[0], token.end[0] + 1))
+    for node in ast.walk(ast.parse(source)):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            drop.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    kept = [line if number not in drop else "\n" for number, line in enumerate(lines, 1)]
+    return "\n".join(line for line in "".join(kept).splitlines() if line.strip())
+
+
+def behaviour_unchanged(root: pathlib.Path, revision: str) -> int:
+    """Every file changed since ``revision`` must be identical once the prose is gone.
+
+    A comment-convergence milestone claims that not one byte of behaviour moved. This is
+    the check that makes the claim falsifiable instead of asserted: run it against the
+    commit the work started from and it either agrees or names the file that disagrees.
+    """
+    import subprocess
+
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", revision, "--", SOURCE_DIR],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    if not changed:
+        print(f"no source file differs from {revision}")
+        return 0
+    differing: list[str] = []
+    for relative in changed:
+        head = subprocess.run(
+            ["git", "show", f"{revision}:{relative}"],
+            cwd=root,
+            capture_output=True,
+            check=True,
+        ).stdout.decode("utf-8")
+        if strip_comments_and_docstrings(head) != strip_comments_and_docstrings(
+            (root / relative).read_text(encoding="utf-8")
+        ):
+            differing.append(relative)
+    print(f"files compared since {revision:<12} {len(changed)}")
+    print(f"identical without their prose             {len(changed) - len(differing)}")
+    print(f"files whose executable content changed    {len(differing)}")
+    for relative in differing:
+        print(f"  - {relative}")
+    if differing:
+        print(
+            "\nA comment milestone must not move behaviour. These files do, and the "
+            "difference is not in a comment.",
+            file=sys.stderr,
+        )
+        return 1
+    print("\nbehaviour unchanged: every difference is a comment or a docstring.")
+    return 0
+
+
 def print_report(root: pathlib.Path) -> int:
     """The measured distribution, which is where the limits come from."""
     report = scan(root)
@@ -381,10 +469,12 @@ def print_report(root: pathlib.Path) -> int:
     over_docs = sum(1 for d in all_docstrings if docstring_over_limit(d))
     print(f"{'comment blocks over the comment limits:':<50}{over_comments} of {len(all_comments)}")
     print(f"{'docstrings over the docstring limit:':<50}{over_docs} of {len(all_docstrings)}")
-    print(
-        f"{'grandfathered in comment_exemptions.json:':<50}"
-        f"{sum(len(v) for v in load_exemptions(root).values())}"
+    exempted = sum(
+        len(entry[kind])
+        for entry in load_exemptions(root).values()
+        for kind in ("comments", "docstrings")
     )
+    print(f"{'grandfathered in comment_exemptions.json:':<50}{exempted}")
     return 0
 
 
@@ -428,6 +518,7 @@ def verify(root: pathlib.Path) -> int:
         # Optional, because the check is meant to be runnable before they exist -- that
         # is how the limit was first shown to be red on a tree nobody had edited.
         if (root / EXEMPTIONS).is_file():
+            (sandbox / EXEMPTIONS).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / EXEMPTIONS, sandbox / EXEMPTIONS)
         subject = sandbox / SOURCE_DIR / "gigaxml" / "run.py"
         relative = subject.relative_to(sandbox).as_posix()
@@ -520,6 +611,8 @@ def verify(root: pathlib.Path) -> int:
 def prune(root: pathlib.Path) -> int:
     """Drop exemptions whose block is no longer over a limit."""
     exemptions = load_exemptions(root)
+    loaded = json.loads((root / EXEMPTIONS).read_text(encoding="utf-8"))
+    loaded_reasons: dict[str, str] = loaded.get("reasons", {})
     drafts = {(rel, kind, value) for rel, kind, value, _ in build_exemption_drafts(root)}
     kept: dict[str, dict[str, list[str]]] = {}
     dropped = 0
@@ -541,6 +634,13 @@ def prune(root: pathlib.Path) -> int:
             "MAX_DOCSTRING_LINES": MAX_DOCSTRING_LINES,
         },
         "files": kept,
+        # A reason is the point of an exemption, so pruning a stale fingerprint must not
+        # take the surviving ones' reasons with it.
+        "reasons": {
+            key: value
+            for key, value in loaded_reasons.items()
+            if any(entry.get(key) for entry in kept.values())
+        },
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"pruned {dropped} stale exemption(s); {len(kept)} file(s) still have any")
@@ -565,6 +665,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verify", action="store_true", help="mutate a copy, prove it fails")
     parser.add_argument("--prune", action="store_true", help="drop exemptions that are stale")
     parser.add_argument(
+        "--no-behaviour-change",
+        metavar="REV",
+        help="require every file changed since REV to be identical once its comments "
+        "and docstrings are removed",
+    )
+    parser.add_argument(
         "--list-exemptable", action="store_true", help="print fingerprints over the limit"
     )
     args = parser.parse_args(argv)
@@ -576,6 +682,8 @@ def main(argv: list[str] | None = None) -> int:
             return verify(args.root)
         if args.prune:
             return prune(args.root)
+        if args.no_behaviour_change:
+            return behaviour_unchanged(args.root, args.no_behaviour_change)
         if args.list_exemptable:
             for relative, kind, value, reason in build_exemption_drafts(args.root):
                 print(f"{relative}\t{kind}\t{value}\t{reason}")

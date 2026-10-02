@@ -30,18 +30,12 @@ would be worse than refusing it.
     ``"".join(elem.itertext())`` -> collapse whitespace runs -> strip
 
 ``itertext()`` includes the indentation of every nested element, so a price
-element written as ``<price>\\n  49.90\\n</price>`` would otherwise coerce with
-leading and trailing whitespace. That trap cost time in Phase 1; the rule is
-defined once here and pinned by tests.
+element written as ``<price>\n  49.90\n</price>`` would otherwise coerce with
+leading and trailing whitespace. The rule is defined once here and pinned by tests.
 
-**Cost.** Descent finds children with C-level ``findall``, memoized per
-``(node, tag)`` for the duration of one :func:`extract_record` call. The memo is
-what stops a config that reads several fields out of the same wrapper --
-``manufacturer/name`` plus ``manufacturer/country`` -- from rescanning the
-record's children once per field: on a 5 004-child record with 50 such fields it
-is a 7.2x win, and it costs ~3% when the fields' first segments are all distinct.
-Bucketing every child by tag in one Python pass was measured and rejected as
-~50x more expensive per child than ``findall``; see :func:`_matches_for`.
+**Cost.** Descent uses C-level ``findall``, memoized per ``(node, tag)`` for the
+duration of one :func:`extract_record` call, so a config reading several fields out
+of the same wrapper does not rescan the record's children once per field.
 """
 
 from __future__ import annotations

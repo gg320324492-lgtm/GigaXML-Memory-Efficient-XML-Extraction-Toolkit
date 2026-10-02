@@ -55,12 +55,10 @@ __all__ = [
 
 #: Keys allowed at the top level of a config document.
 #:
-#: ``version`` is optional and only ever ``1``: a config without it is this project's
-#: own format from before versioning, and must keep loading forever. The value is
-#: checked separately by :func:`_parse_version` rather than merely allowed here --
-#: admitting the key without checking it would mean ``version: 2`` loaded as version 1,
-#: which is worse than a refusal, because a file declaring a format this build does not
-#: understand would be read as one it does.
+#: ``version`` is optional and only ever ``1``: a config without it is this project's own
+#: format from before versioning, and must keep loading forever. It is checked separately
+#: by :func:`_parse_version` rather than merely allowed here -- admitting the key without
+#: checking it would let ``version: 2`` load as version 1. See ``CONFIG-FORMAT.md``.
 _TOP_LEVEL_KEYS: Final = frozenset(
     {"record", "namespaces", "fields", "on_error", "schema", "version"}
 )

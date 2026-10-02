@@ -87,11 +87,9 @@ class SettingsPanel(QWidget):
 
         # Every combo below carries its value in the item's data and every read goes
         # through ``currentData``: these values are written into the settings file and
-        # handed to the CLI, so they are data, while the labels are the part translation
-        # may rewrite. Reading them back through the label -- the way the theme used to be
-        # recovered by matching against ``_THEME_LABELS`` -- would go silently wrong the
-        # moment a label was translated, which is the same trap the execution panel's
-        # ``currentText`` reads were.
+        # handed to the CLI, so they are data, while the labels are what translation may
+        # rewrite. Reading them back through the label would go silently wrong the moment
+        # one was translated -- the trap the execution panel's ``currentText`` reads were in.
         self._format = QComboBox(self)
         for value in FORMATS:
             self._format.addItem(tr(value), value)

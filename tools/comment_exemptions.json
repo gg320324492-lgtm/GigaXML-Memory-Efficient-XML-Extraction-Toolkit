@@ -1,0 +1,33 @@
+{
+  "_comment": "Comments that were already over the limit when it was introduced, each with the reason it stays. Keyed by a hash of the block's text, never by line number: an exemption keyed to a line stops matching the moment anyone edits above it, and one that silently stops matching is worse than none. Editing a listed comment makes it a new comment and it must be justified afresh. Run `python tools/check_comments.py --prune` after deleting one.",
+  "limits": {
+    "MAX_COMMENT_LINES": 7,
+    "MAX_COMMENT_CHARS": 480,
+    "MAX_DOCSTRING_LINES": 40
+  },
+  "files": {
+    "src/gigaxml/errors.py": {
+      "comments": [],
+      "docstrings": [
+        "aee59f30e4e2302f"
+      ]
+    },
+    "src/gigaxml/gui/run_state.py": {
+      "comments": [
+        "bca723588e9e1e5a"
+      ],
+      "docstrings": []
+    },
+    "src/gigaxml/parser/streaming.py": {
+      "comments": [],
+      "docstrings": [
+        "63e62b21ac10c831"
+      ]
+    }
+  },
+  "reasons": {
+    "src/gigaxml/errors.py aee59f30e4e2302f": "RunInterruptedError's docstring is part of the public contract M6 established, and is the document's own entry for the one error a reader cannot infer from its name. Criterion E of the convergence milestone puts it out of scope for editing, and it is the only place the stop-report/temp-path/exit-code relationship is written as prose. Every line of it is a statement about what a caller may rely on, not a note about how the behaviour was arrived at.",
+    "src/gigaxml/gui/run_state.py bca723588e9e1e5a": "_TRANSITIONS carries four decisions rather than one, and each of them is a place where a well-meaning edit silently changes behaviour: CANCELLING reaches only CANCELLED; STARTING->FAILED has no CANCELLING; CANCELLED->STARTING exists but CANCELLED->CANCELLING does not; and CANCELLING->FINISHED is absent on purpose, pending review. Compressing further would cost the reasoning on at least one of them, and the fourth is explicitly a decision left open -- dropping it would turn an open question into an apparent settled one.",
+    "src/gigaxml/parser/streaming.py 63e62b21ac10c831": "The module docstring carries the iterparse(tag=) invariant that criterion E protects byte for byte, in numbered form with points 2, 3 and 4 woven into it. Trimming only the unlisted points would leave a numbered list reading 1, 2, 4, which is worse than either leaving it whole or rewriting all of it -- and rewriting all of it would edit the protected invariant. The second invariant the criterion names lives in _release's docstring, which is 13 lines and never needed an exemption."
+  }
+}

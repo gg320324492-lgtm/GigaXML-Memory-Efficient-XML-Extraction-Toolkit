@@ -129,12 +129,10 @@ DEFUSE: Final = "always"
 
 #: Explaining the policy where a user will read it, in the same shape as the refusal
 #: above, so the error is actionable rather than a library name nobody can search for.
-#: The wording is what tells a refusal apart from a schema that is merely broken; see
-#: :func:`_refuse_by_policy`.
 #:
-#: The path named here has to be a file a user can actually open. ``SECURITY.md`` sits at
-#: the repository root and is tracked; a reference to ``docs/`` would point at a directory
-#: this repository deliberately never commits, so anyone reading the error and following it
+#: ★ The path named here has to be a file a user can actually open. ``SECURITY.md`` sits
+#: at the repository root and is tracked; a reference to ``docs/`` would point at a
+#: directory this repository never commits, so anyone reading the error and following it
 #: -- from a wheel, from a clone -- would find nothing.
 _POLICY_NOTE: Final = (
     "A schema may include files from its own directory only; it cannot reach outside "

@@ -254,31 +254,22 @@ class CliProcess:
         methods in the structure and field panels used to do.
         """
         process = self._process
-        # ★ **A stop aimed at a run that does not exist is not recorded at all.** Returning
-        # here rather than merely skipping the transition is the fix for a bug this
-        # milestone's own tests found: setting ``_killed`` unconditionally left the flag
-        # standing, so a later ``start()`` on the same object produced a run that ended
-        # believing it had been cancelled. ``_read`` then read ``killed=True`` and tried to
-        # move a RUNNING run to CANCELLED, which the table forbids -- and it raised **on
-        # the reader thread**, so the callback was never delivered and the panel waiting on
-        # it hung. A flag set by a request that had no subject outliving the request is
-        # the same defect as the pile of booleans, one level down.
-        #
-        # Reachable rather than theoretical: every panel's ``shutdown()`` kills whatever it
-        # holds, and a panel holds its ``CliProcess`` from the line before ``start()``.
+        # ★ **A stop aimed at a run that does not exist is not recorded.** Returning here
+        # rather than skipping the transition fixes a bug these tests found: setting
+        # ``_killed`` unconditionally left the flag standing, so a later ``start()`` ended
+        # believing it had been cancelled and ``_read`` raised on the reader thread trying
+        # to move RUNNING to CANCELLED, hanging the panel waiting on it. Every panel's
+        # ``shutdown()`` reaches this, so a flag set by a request with no subject outlives it.
         if process is None:
             return
 
         self._killed.set()
         # **The request, recorded as a state, and conditional on being legal.** A stop is
         # an *ask*, and an ask can arrive after the answer: ``shutdown()`` reaches every
-        # child it is holding, including one that finished a moment earlier. Rewriting that
-        # run's ending would have the window disagree with the complete report sitting
-        # beside the output, so the move is skipped and the state stays what it was. This
-        # is the one transition in this class guarded by ``may_become`` rather than raising,
-        # and the difference is what the two calls mean: a redundant cleanup request is a
-        # supported thing to make, while every other transition asserts something the caller
-        # believes and a wrong one is a bug.
+        # child it holds, including one that finished a moment earlier. Rewriting that
+        # ending would have the window disagree with the report beside the output. This is
+        # the one transition guarded by ``may_become`` rather than raising: a redundant
+        # cleanup request is supported, every other one asserts what the caller believes.
         if self._machine.may_become(RunState.CANCELLING):
             self._machine.move_to(RunState.CANCELLING)
         if process.poll() is None:

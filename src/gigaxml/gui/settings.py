@@ -43,11 +43,9 @@ FORMATS = ("csv", "jsonl", "parquet")
 ON_ERROR = ("abort", "quarantine")
 
 #: The interface languages. These are the *values* the settings file holds; the labels a
-#: user sees live in the settings panel, and each is written in the language it names --
-#: the standard way to let a reader who cannot read the current language find their own.
-#: ``en`` is the default because the interface has always been English: a new setting that
-#: changed what every existing user saw on first launch would be this project's "the
-#: suffix and the error policy decided by accident" bug wearing a feature's clothes.
+#: user sees live in the settings panel, each written in the language it names -- so a
+#: reader who cannot read the current language can still find their own. ``en`` is the
+#: default because the interface has always been English.
 LANGUAGES = ("en", "zh")
 
 #: The value every setting has before the user touches anything. One mapping, so a caller

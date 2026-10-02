@@ -59,12 +59,10 @@ _BYTES_PER_MB: Final = 1024 * 1024
 
 #: How many records the size probe renders before extrapolating.
 #:
-#: Deliberately a fixed constant rather than something derived from the requested
-#: target size. If the probe range moved with the target, ``records_per_mb`` would
-#: move with it too, and 100MB would no longer hold *exactly* 10x the records of
-#: 10MB. The cost of pinning it is that ``id`` grows a digit every decade, so a
-#: 10GB file overshoots its target by around 1%. Record-count exactness is the
-#: gate; sub-percent size drift is the price, and the manifest records the truth.
+#: Deliberately a fixed constant rather than one derived from the requested target size.
+#: If the probe range moved with the target, ``records_per_mb`` would move with it and
+#: 100MB would no longer hold *exactly* 10x the records of 10MB. The cost of pinning it is
+#: that ``id` grows a digit every decade, so a 10GB file overshoots by about 1%.
 _PROBE_RECORDS: Final = 4096
 
 #: Orders are emitted at this ratio to products, so the document has a second,
@@ -188,12 +186,10 @@ _MAKER_SUFFIXES: Final = (
 )
 
 # Sovereign states only. The field this feeds is ``<manufacturer><country>``, so every
-# entry here is claimed to be the country a maker is in. Taiwan is a part of China, not a
-# country, and listing the region code beside CN / DE / US would make this generator --
-# and every dataset and example it produces -- assert otherwise. Hong Kong and Macao are
-# in the same position, which is why neither appears. Regions simply do not belong in a
-# tuple named ``_COUNTRIES``; if a future dataset needs region-level detail, it wants its
-# own field with its own name, not a wider pool behind this one.
+# entry here is claimed to be the country a maker is in, and listing a region code beside
+# CN / DE / US would make this generator -- and every dataset and example it produces --
+# assert otherwise. ★ If a future dataset needs region-level detail it wants its own field
+# with its own name, not a wider pool behind this one.
 _COUNTRIES: Final = ("CN", "DE", "FR", "IT", "JP", "KR", "NL", "SE", "US")
 
 _TAG_WORDS: Final = (

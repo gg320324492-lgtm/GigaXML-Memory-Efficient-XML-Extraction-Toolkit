@@ -113,17 +113,12 @@ def _extract_checkpointed(
         initial=0 if checkpoint is None else checkpoint.rejected,
     )
 
-    # **This block is slow, and that is why a stopped run needs it handled.**
-    # `validate_resume` hashes the source, `require_intact_parts` reads every part back,
-    # and `source_identity` hashes the source again for the manifest -- so on a 4 GiB
-    # document this is several seconds in which a Ctrl-C has somewhere to land. Measured
-    # on that document: without this, interrupting at 2.5 s left 0 parts, no report, and
-    # only the words `error: the run was interrupted by SIGINT` on stderr.
-    #
-    # **Only RunInterruptedError is caught here.** Every other failure keeps the path it
-    # had, including the one that matters most: a refusal such as "a checkpoint already
-    # exists" must not write a report, because the one on disk is the record of the run
-    # that *did* finish, and overwriting it with a `failed` summary loses it.
+    # **This block is slow, and that is why a stopped run needs it handled:** it hashes the
+    # source, reads every part back and hashes the source again -- seconds on a large document,
+    # which is where a Ctrl-C has somewhere to land. **Only RunInterruptedError is caught
+    # here**, and every other failure keeps the path it had: that matters most for a refusal
+    # such as "a checkpoint already exists", which must not write a report, because the one on
+    # disk records the run that *did* finish.
     try:
         if args.resume:
             validate_resume(checkpoint, args.source, config)
@@ -283,26 +278,12 @@ def _extract_checkpointed(
                 if stats.records_processed < args.checkpoint_every:
                     complete = True
 
-                # --- the order here is deliberate: part first, manifest second ---
-                #
-                # By this point `with writer:` has already renamed the part into place,
-                # and only now does the manifest that names it get written. Reversing the
-                # two would be worse than it looks: the manifest would briefly list a part
-                # that does not exist, and `verify_parts` -- which refuses a resume when a
-                # part the manifest names is missing -- would then reject that resume. A
-                # run interrupted in that window could not be continued at all.
-                #
-                # The cost of the order chosen is that a kill *here* leaves one part on
-                # disk that the manifest does not mention. That side is safe. `verify_parts`
-                # only ever checks manifest -> disk, so an extra part is invisible to it,
-                # and a resume starts writing at `part-{len(parts)}` -- which is exactly
-                # the unnamed one -- and overwrites it with the same bytes, because the
-                # fast-forward is deterministic and lands in the same place.
-                #
-                # So the invariant is "the manifest is never ahead of the disk", not "the
-                # two agree". Closing the window entirely is not possible across two files
-                # without a journal, and would not be worth it: the direction it fails in
-                # is the recoverable one.
+                # --- part first, manifest second: `with writer:` has already renamed the part
+                # before the manifest naming it is written. Reversed, the manifest would briefly
+                # name a part that does not exist and `verify_parts` would reject the resume it
+                # names, so a run interrupted in that window could not be continued. ★ The
+                # invariant is "the manifest is never ahead of the disk", not "the two agree":
+                # a kill here leaves one unnamed part, which the resume overwrites in place.
                 write_checkpoint(
                     manifest,
                     Checkpoint(

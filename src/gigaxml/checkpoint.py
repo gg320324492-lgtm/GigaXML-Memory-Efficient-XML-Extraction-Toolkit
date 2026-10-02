@@ -340,17 +340,13 @@ def require_intact_parts(
     )
 
 
-#: The only shape a part name may have: exactly what :func:`part_name` writes, no
-#: separators and no traversal. Every other spelling -- ``../``, a drive letter, an
-#: absolute path, a plain other filename -- is rejected rather than joined onto the
-#: parts directory, because a manifest chooses that name and a manifest is not ours.
+#: The only shape a part name may have: what :func:`part_name` writes, no
+#: separators and no traversal -- a manifest chooses that name, and is not ours.
 #:
-#: **Five digits or more**, because ``part_name`` pads to five and does not cap there:
-#: ``f"part-{index:05d}"`` gives ``part-100000.csv`` at the hundred-thousandth part, and a
-#: reader that only took five would refuse a file this tool had just written. Exactly five
-#: would be the same bug facing the other way -- ``part-0000.csv`` is a name no run
-#: produces, so the width is a floor and not a ceiling. See
-#: ``tests/security/test_checkpoint_manifest.py``, which asserts both ends of that.
+#: **Five digits or more**: ``part_name` pads to five and does not cap there, so a
+#: reader taking only five would refuse a file this tool had just written at part
+#: 100,000, and exactly five is the same bug the other way -- ``part-0000.csv`` is a
+#: name no run produces. A floor, not a ceiling; the security tests assert both ends.
 PART_NAME_PATTERN: Final = re.compile(r"^part-\d{5,}\.(?:csv|jsonl|parquet)$")
 
 #: A sha256 as :meth:`hashlib.sha256().hexdigest` writes one: 64 **lowercase** hex
@@ -597,16 +593,13 @@ def validate_resume(
         problems.append(
             f"  config:\n    checkpoint: {checkpoint.config}\n    now:        {current_config}"
         )
-        # A schema that changed is the least obvious reason for this mismatch: the
-        # config file is byte-identical, the command line is the same, and the only
-        # edit was to a document the config merely *points at*. Naming it is the
-        # difference between "the config changed, go and diff two YAML files that are
-        # the same" and knowing where to look.
+        # A schema that changed is the least obvious reason for this mismatch: the config
+        # file is byte-identical, the command line is the same, and the only edit was to a
+        # document the config merely *points at*. Naming it is the difference between "go and
+        # diff two YAML files that are the same" and knowing where to look.
         #
-        # Only the current schema can be named. The manifest stores a single config
-        # digest and not the schema's, so what the previous run used is not recoverable
-        # from the checkpoint -- the message says what the schema is *now* and that it
-        # is part of the identity, which is what a reader needs in order to suspect it.
+        # Only the current schema can be named: the manifest stores one config digest and not
+        # the schema's, so what the previous run used is not recoverable from here.
         if config.schema:
             fingerprint = _schema_fingerprint(config)
             problems.append(
