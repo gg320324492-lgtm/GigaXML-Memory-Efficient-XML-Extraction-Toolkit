@@ -98,12 +98,9 @@ class ExecutionPanel(QWidget):
     #: Emitted when a run could not be started at all, with the reason and its kind.
     #:
     #: This is the config that will not load. There is no child process and no run report,
-    #: so it never reaches :attr:`finished` -- and it is still a failure the user has to be
-    #: told about, with the same treatment as any other.
-    #:
-    #: The second argument is the exception's class name, and it is what the window
-    #: dispatches on. It is available here and nowhere else: there is no report to read it
-    #: from, so without passing it along the advice would have to guess from the wording.
+    #: so it never reaches :attr:`finished` -- and it is still a failure the user must be
+    #: told about, with the same treatment as any other. The second argument is the
+    #: exception's class name, which the window dispatches on: nothing else carries it.
     start_failed = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -509,13 +506,10 @@ class ExecutionPanel(QWidget):
             args = self.build_args()
         except GigaXMLError as exc:
             # **``GigaXMLError``, not ``ConfigError``.** The loader raises more than one
-            # kind and they do not share that parent: a field path with a namespace prefix
-            # the map does not declare raises ``FieldPathError``, which is a sibling of
-            # ``ConfigError`` rather than a child of it. Catching only ``ConfigError`` let
-            # that one escape from a button press into the event loop.
-            #
-            # The project's own loader produced this, so it already says what is wrong and
-            # where. Rewording it here would only make it less precise.
+            # kind and they do not share that parent: an undeclared namespace prefix raises
+            # ``FieldPathError``, a *sibling* of ``ConfigError``, so catching only the
+            # latter let it escape from a button press into the event loop. The project's
+            # own loader produced it, so it already says what is wrong and where.
             self._counts.setText(tr("config error: {}").format(exc))
             # And said again where the user can act on it. The panel that owns the run is
             # not the place to explain a config -- there is no run to explain.
@@ -1005,14 +999,10 @@ class ExecutionPanel(QWidget):
     def _show(self, progress: Progress) -> None:
         # **Recorded here, inside the call that draws the bar, and not by anything outside.**
         # "The bar moved" and "the run was still going" are one statement only at this point;
-        # a caller that polls for the first and then checks the second is observing two
-        # different moments, and on a fast machine the run is over in between. That is not a
-        # theoretical gap -- it is why the first version of the test for this was green here
-        # and red on all three CI platforms, failing with "the run finished before any
-        # progress could be observed" on a document with four records in it.
-        #
-        # `is_running()` reads the child's exit status, so a count above zero says the bar
-        # was drawn while the child was alive. See `progress_while_running`.
+        # a caller that polls for the first and then checks the second observes two
+        # different moments, and on a fast machine the run is over in between -- which is
+        # why the first test for this was green here and red on all three CI platforms.
+        # `is_running()` reads the child's exit status; see `progress_while_running`.
         if self.is_running():
             self._progress_while_running += 1
         self._last_progress = progress

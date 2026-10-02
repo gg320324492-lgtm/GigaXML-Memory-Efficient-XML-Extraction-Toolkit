@@ -171,25 +171,13 @@ def _windows_peak_working_set_mb() -> float | None:  # pragma: no cover - Window
     return counters.PeakWorkingSetSize / _MB
 
 
-#: Rejections written between explicit flushes.
+#: Rejections written between explicit flushes. Flushing each write was measured at
+#: **+17.29%** on 1,164,800 rejections -- over the 10% the design allows -- so the log
+#: flushes every :data:`_REJECTION_FLUSH_LINES` lines, bounding a crash's loss to 255.
 #:
-#: **Why not flush every line.** Flushing after each write would hand every rejection to
-#: the operating system before the run ended, and it was measured before choosing: on
-#: 1,164,800 rejections it cost **+17.29%** (20.599s against 17.563s, best of three,
-#: alternating between the two variants). That is over the 10% the design allows for it, so
-#: the log flushes every :data:`_REJECTION_FLUSH_LINES` lines instead, which bounds what a
-#: crash can lose to 255 lines out of a million.
-#:
-#: ★ **"Flushed" is not "durable", and the difference is layer 3 of
-#: ``OUTPUT-DURABILITY.md``.** :meth:`flush` hands bytes to the operating system and asks
-#: nothing of the device, so a power cut can still lose what a flush already promised. That
-#: boundary is not this module's to close; what it *is* this module's to guarantee is that
-#: the count never overstates what the operating system has, which is what the next
-#: paragraph is about.
-#:
-#: The counter follows the flush, not the write -- see :meth:`RejectionLog.count` --
-#: so the number in the run summary is always the number of lines actually in the
-#: file, whether the run ended cleanly or died.
+#: ★ **"Flushed" is not "durable"**: layer 3 of ``OUTPUT-DURABILITY.md``, not this
+#: module's to close. Its guarantee is that the count never overstates what the OS has:
+#: the counter follows the flush, not the write.
 _REJECTION_FLUSH_LINES: Final = 256
 
 #: Bytes written between explicit flushes, kept well under the handle's own buffer so

@@ -630,12 +630,10 @@ class StructurePanel(QWidget):
         self._example_steps.clear()
         process = self._example_process
         # ★ **Released before the kill, and that ordering now does the work on its own.**
-        # The line used to be here only because the flag below had to be cleared after
-        # ``kill()`` -- ``kill`` waits for the callback, and the callback was what set the
-        # flag, so clearing it first would have been undone by the step it meant to forget.
-        # With no flag there is nothing to undo: once ``_example_process`` is ``None`` the
-        # chain's state reads ``IDLE``, and :meth:`_drain_examples` stops looking at it
-        # whether or not the callback lands afterwards.
+        # The line existed only because a flag had to be cleared after ``kill()``, which
+        # waits for the callback that set it. With no flag there is nothing to undo: once
+        # ``_example_process`` is ``None`` the chain reads ``IDLE`` and
+        # :meth:`_drain_examples` stops looking at it whatever the callback does.
         self._example_process = None
         if process is not None:
             process.kill()

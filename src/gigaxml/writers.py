@@ -1,63 +1,42 @@
 """Batch writers for CSV, JSONL and Parquet.
 
-This is the output-side half of the bounded-memory story. The reader keeps memory
-flat on the way in; these writers keep it flat on the way out by holding at most
-``batch_size`` rows and flushing each batch as it fills. Nothing here accumulates
-across a whole run, and Parquet writes one row group per batch rather than
-collecting a table and writing it at the end -- collecting would put the entire
-output in memory and undo Phase 1.
+This is the output-side half of the bounded-memory story: the reader keeps memory flat
+on the way in, and these writers keep it flat on the way out by holding at most
+``batch_size`` rows and flushing each batch as it fills. Nothing here accumulates across
+a whole run, and Parquet writes one row group per batch rather than collecting a table
+at the end -- collecting would put the entire output in memory.
 
-**Parquet's schema comes from the config, never from the data.** Inferring it from
-the first batch would let a single ``None`` decide the column type for the whole
-file, and a first batch of integers followed by a float would fail halfway
-through. The schema is built once from the configured field types, and every batch
-is written against it.
+**Parquet's schema comes from the config, never from the data.** Inferring it from the
+first batch would let a single ``None`` decide the column type for the whole file. The
+schema is built once from the configured field types, and every batch is written
+against it.
 
 **``decimal`` is written as a Parquet string.** A price converted to ``float`` has
-already lost the value -- that is the whole reason :class:`~gigaxml.fields.FieldType`
-has a ``decimal`` member -- so a lossy Parquet encoding would throw the guarantee
-away at the last step. ``decimal128`` is the other defensible choice, but it
-requires picking a precision and scale up front, and a value that does not fit
-would then have to be rounded (silently wrong) or rejected (a run that dies on
-data). A string is exact for every value, needs no guess, and round-trips through
-:class:`decimal.Decimal` unchanged, trailing zeros included.
+already lost the value -- that is what :class:`~gigaxml.fields.FieldType` has a
+``decimal` member for -- so a lossy Parquet encoding would throw the guarantee away at
+the last step. A string is exact for every value, needs no precision guess, and
+round-trips through :class:`decimal.Decimal` unchanged, trailing zeros included.
 
-``pyarrow`` is imported lazily, inside the Parquet writer, so that
-``import gigaxml.writers`` and the CSV/JSONL paths keep working with only the two
-required dependencies installed.
+``pyarrow`` is imported lazily, inside the Parquet writer, so ``import gigaxml.writers``
+and the CSV/JSONL paths keep working with only the two required dependencies installed.
 
-**Output is written atomically** -- and the word has a boundary, stated in full in
-``OUTPUT-DURABILITY.md`` at the repository root, which is where the reader who means
-something stronger by "atomic" will find out they are wrong. Every writer opens
-``<target>.tmp`` in the target's own directory and only renames it onto the target once
-the last batch is flushed, which buys two layers and stops short of a third.
+**Output is published atomically** -- and the word has a boundary, stated in full in
+``OUTPUT-DURABILITY.md`` at the repository root, which is where a reader who means
+something stronger by "atomic" finds out they are wrong. Every writer opens
+``<target>.tmp`` in the target's own directory and renames it onto the target once the
+last batch is flushed. Two consequences of that are code rather than documentation:
 
-* **A run that fails publishes nothing.** The target keeps the previous file -- and on a
-  first run, where there was none, **it is left with no file at all**. There is no state
-  in which the target exists but came from a run that did not finish. Before this, a run
-  killed halfway through left a file indistinguishable from a finished one, and a *failed*
-  re-run destroyed the previous run's output on its way to producing nothing. A
-  half-written output is worse than no output, because nothing about it says so.
-* **The target is never a mixture.** It is the previous complete file or the new complete
-  one, for a reader that opens it at any moment, including mid-publish.
-* **★ Losing power is not promised.** Nothing here is fsynced, so the bytes may still be
-  in the operating system's cache when the power goes. That is a different failure from a
-  half-written file -- the file was never half-written -- and it is the reason the boundary
-  is written down instead of left for the reader to assume.
+* **A run that fails publishes nothing**, and on a first run the target is left with no
+  file at all. The ``.tmp`` is **left on disk** rather than deleted: six hours of partial
+  output is worth keeping, and the run summary names the path.
+* On Windows ``os.replace`` fails with ``WinError 5`` if the target is open in another
+  program. That is reported as one line naming the partial file, not a traceback from
+  deep inside a writer.
 
 **★ None of that says the output is *right*.** A config whose field paths do not match
 the document produces a complete, well-formed, empty file. Completeness is a property of
 the file's shape; correctness is what the run report's ``output_complete`` field and its
 ``status`` report, and neither is implied by the publish being atomic.
-
-Two consequences worth knowing:
-
-* On failure the ``.tmp`` file is **left on disk**, not deleted. Six hours of partial
-  output is worth keeping, and the name says what it is. The run summary names it, so
-  a caller that reads the summary can find it.
-* On Windows, ``os.replace`` fails with ``WinError 5`` if the target is open in
-  another program -- POSIX allows it. That is reported as one clear line naming the
-  partial file, rather than as a traceback from deep inside a writer.
 """
 
 from __future__ import annotations
@@ -94,15 +73,11 @@ DEFAULT_BATCH_SIZE: Final = 5_000
 
 #: Rows per batch above which a warning is worth printing.
 #:
-#: Output-side memory is **linear in the batch size**: a buffered row costs about
-#: **0.95 KB** for a six-field config (measured against ``tests/_mem.py``'s RSS
-#: probe: 5 000 rows ~ 4.2 MiB, 100 000 ~ 89.8 MiB, 500 000 ~ 452.8 MiB). The
-#: project's output-side budget is 32 MiB, which is reached at roughly 34 500
-#: rows; this threshold fires earlier so that wider rows are still covered.
-#:
-#: Exceeding it is *warned about, never refused*: a config with very wide rows may
-#: legitimately need a large batch, and what the user needs is to be told, not
-#: blocked.
+#: Output-side memory is **linear in the batch size** -- about **0.95 KB** per buffered
+#: row for a six-field config, so the project's 32 MiB budget is reached near 34 500 rows
+#: and this fires earlier than that, to cover wider rows too. Exceeding it is *warned
+#: about, never refused*: a config with very wide rows may legitimately need a large
+#: batch, and what the user needs is to be told, not blocked.
 BATCH_SIZE_WARN_THRESHOLD: Final = 20_000
 
 #: Measured resident memory per buffered row, in KB, for a six-field config.

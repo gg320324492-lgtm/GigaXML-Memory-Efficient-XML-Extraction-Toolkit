@@ -144,11 +144,9 @@ class MainWindow(QMainWindow):
         self._job_history = JobHistory(self._state_dir / HISTORY_FILE_NAME)
         # The language is read before anything is built, because every panel writes its
         # labels during construction and :mod:`gigaxml.gui.i18n` has no retranslate pass:
-        # a window built first and translated after would come up in whichever language the
-        # last launch used, with this launch's choice silently ignored until the next one.
-        # Deliberately NOT applied again from `_apply_settings`: mid-session that would
-        # mix two languages on screen, since only strings built from then on would follow.
-        # The settings panel says the change takes effect after a restart.
+        # a window built first and translated after comes up in the last launch's language.
+        # Deliberately NOT applied again from `_apply_settings` -- mid-session that mixes
+        # two languages, since only strings built from then on would follow.
         set_language(self._settings_store.read().language)
 
         self._tabs = QTabWidget(self)
@@ -277,24 +275,15 @@ class MainWindow(QMainWindow):
         # It failed. **Whether this run said anything decides where to look next**, because
         # everything on disk can belong to an earlier run: a report is only overwritten by a
         # run that reaches the end, and a stopped checkpointed run leaves a manifest that
-        # nothing removes.
-        #
-        # A run that failed on its own printed its error to stderr, so ``warnings`` -- stderr
-        # without the progress events -- is non-empty and the report beside the output is
-        # this run's. A run killed from outside says nothing at all, so a report that is
-        # there belongs to an earlier one. Measured: a WriterError followed by a hard kill to
-        # the same output was reported as the WriterError again, advice and all, with this
-        # run's ``.tmp`` sitting there unmentioned.
+        # nothing removes. A run that failed on its own printed to stderr, so ``warnings``
+        # is non-empty and the report beside the output is this run's; a run killed from
+        # outside says nothing, so a report that is there belongs to an earlier one.
         if run.warnings:
-            # Whether this run wrote that report is asked rather than assumed, because a run
-            # refused before it starts never gets to write one. ``validate_resume`` on a
-            # changed source, and a second run over a directory that already holds a
-            # checkpoint, both exit with words on stderr and nothing on disk -- and reading
-            # the report there anyway explains this failure with an earlier run's.
-            # Measured before this was asked: a checkpointed run that failed on a bad value,
-            # then a resume against a source changed since, showed the **first** run's
-            # ``FieldTypeError`` while the child had printed ``cannot resume`` with both
-            # source hashes immediately before it.
+            # Whether this run wrote that report is asked, not assumed: a run refused
+            # before it starts never gets to write one. ``validate_resume`` on a changed
+            # source, and a second run over a directory that already holds a checkpoint,
+            # both exit with words on stderr and nothing on disk -- and reading the report
+            # there anyway explains this failure with an earlier run's.
             failure = None
             if self._execution.report_was_rewritten():
                 failure = read_failure(output, checkpointing=checkpointing)

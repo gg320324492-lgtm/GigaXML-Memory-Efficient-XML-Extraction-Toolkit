@@ -64,12 +64,10 @@ __version__ = "1.2.1"
 
 if TYPE_CHECKING:  # pragma: no cover - seen by type checkers, not at run time
     # ★ **The re-exports are declared twice on purpose, and the run-time half is the dict
-    # below.** A type checker reads this block and resolves ``from gigaxml import
-    #: StreamingRecordReader`` statically; at run time the same name arrives through
-    # ``__getattr__``. One spelling for both was not available: an ``if TYPE_CHECKING``
-    #: block and an eager import are the same statement, and the eager one is exactly what
-    # costs 54 ms. :mod:`tests.unit.test_public_api` asserts the two halves agree, so a name
-    #: added to one and not the other fails rather than being silently untyped.
+    # below.** One spelling for both was not available -- an ``if TYPE_CHECKING`` block and an
+    # eager import are the same statement, and the eager one is what costs 54 ms at import.
+    # ``tests.unit.test_public_api`` asserts the two halves agree, so a name added to one and
+    # not the other fails rather than shipping untyped.
     from gigaxml.config import ExtractionConfig, load_config, parse_config
     from gigaxml.fields import (
         ExtractionResult,
@@ -102,12 +100,11 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
 
 #: The public API, grouped by tier rather than sorted.
 #:
-#: ★ **The grouping is the point, and it is why this one list opts out of ``RUF022``.
-#: Every other ``__all__`` in this package is sorted, because in those the order carries no
-#: meaning. Here it carries the single most important fact in the file -- which names are
-#: promised across a minor version and which are not -- and a reader who has to reconstruct
-#: that by looking names up in ``python-api.md`` has been handed the work this list exists to
-#: do. The rule is not suppressed globally, and no other list is affected.
+#: ★ **The grouping is the point, and it is why this one list opts out of ``RUF022``.**
+#: Elsewhere the order carries no meaning, so those lists are sorted; here it carries the
+#: one fact the file cannot state any other way -- which names are promised across a minor
+#: version -- and a reader left to get that from ``python-api.md`` has been handed the work
+#: this list exists to do. Suppressed on this list only.
 __all__ = [  # noqa: RUF022 -- tier order is meaningful here; see the note above
     # -- stable ---------------------------------------------------------------
     "CheckpointError",

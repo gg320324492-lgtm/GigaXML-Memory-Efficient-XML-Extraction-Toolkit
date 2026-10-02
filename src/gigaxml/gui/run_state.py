@@ -1,51 +1,39 @@
 """What a run is doing, as one value instead of several booleans.
 
 **The problem this replaces.** Four panels each kept their own ``_finished`` flag next to
-their own ``_process`` reference, and each decided on its own what those two booleans
-meant. That is four answers to one question, and a question with four answers has
-combinations nobody checked: a panel could hold ``_finished=True`` with ``_process`` set to
-``None`` by a ``shutdown()`` that ran while the reader was mid-delivery, and every one of
-the two flags would read true while the panel displayed a state that had never happened.
-The state could not contradict itself, because it was never a state -- it was a pile.
+their own ``_process`` reference, and each decided on its own what those two booleans meant.
+That is four answers to one question, and a question with four answers has combinations
+nobody checked: a panel could hold ``_finished=True`` with ``_process`` set to ``None`` by a
+``shutdown()`` that ran while the reader was mid-delivery. The state could not contradict
+itself, because it was never a state -- it was a pile.
 
 **A single value cannot hold two answers at once, and that is the whole point.**
-:meth:`RunStateMachine.move_to` refuses a transition that is not in
-:data:`_TRANSITIONS`, so a run that has finished cannot be re-marked as running, and a run
-the user stopped cannot be re-marked as either finished or failed. The refusal is raised
-rather than logged-and-ignored: a caller that reaches an illegal transition has a bug, and
-swallowing it would restore exactly the ambiguity this module exists to remove.
+:meth:`RunStateMachine.move_to` refuses a transition that is not in :data:`_TRANSITIONS`, so
+a run that has finished cannot be re-marked as running, and a run the user stopped cannot be
+re-marked as either finished or failed. The refusal is raised rather than logged: a caller
+that reaches an illegal transition has a bug, and swallowing it would restore exactly the
+ambiguity this module exists to remove.
 
 **``CANCELLING`` and ``CANCELLED`` are two states, and that is not a nicety.** They are the
-two halves of one question -- *did the user ask this run to stop, or did something else
-end it?* -- and answering it needs both the moment the stop was requested and the moment
-the child was actually gone, because those are different instants and only the first one is
-a decision anybody made. A user-stopped run and a run a signal ended are the same shape on
-disk and completely different events; collapsing them into one flag is what let
-``RunResult.killed`` stand in for a user's intent.
+two halves of one question -- *did the user ask this run to stop, or did something else end
+it?* -- and answering it needs both the moment the stop was requested and the moment the
+child was actually gone. A user-stopped run and a signal-ended one are the same shape on disk
+and completely different events; collapsing them is what let ``RunResult.killed`` stand in
+for a user's intent.
 
 **Nothing here imports PySide6, on purpose.** :mod:`gigaxml.gui.cli_process` uses this
-module, and *that* module is Qt-free so its plumbing can be tested without a display --
-the same reason :mod:`gigaxml.gui.i18n` and :mod:`gigaxml.gui.settings` avoid it. A state
-machine that dragged a widget library in could not be reached from either side.
+module, and *that* module is Qt-free so its plumbing can be tested without a display.
 
-**And it does not import :mod:`gigaxml.cli` to get the interrupted exit code, which is
-worth stating because the obvious way to write it is wrong -- though not for the reason it
-first looks.** Importing one constant out of ``gigaxml.cli`` loads :mod:`gigaxml.inspect`
-and :mod:`gigaxml.sample` into the process, and **both of those are modules the existing
-AST guard bans by name.** So the guard cannot see the line that breaks its own rule: no
-banned module is spelled, and no banned name appears.
-
-The subtlety, and the reason this is stated at length: ``gigaxml.gui`` **already** imports
-``gigaxml.run`` -- for ``QUARANTINABLE`` and the report file name -- and that pulls in
-``lxml`` and :mod:`gigaxml.parser` with it. That is an accepted boundary decision, stated
-as such in ``test_gui_no_parsing.py``, and it is not what this module is avoiding. What it
-avoids is *reaching a module the guard bans*: ``gigaxml.run`` was allowed on purpose, and
-the two commands ``gigaxml.cli`` dispatches on top of it were not.
-
-So the number is written out here and pinned against the CLI's own by a test, which may
-import the CLI because a test is not the interface. Renaming it to an import is not a
-cleanup -- it would route a forbidden module into the window through a door the guard
-cannot see, and every existing test would stay green.
+**And it does not import :mod:`gigaxml.cli` to get the interrupted exit code, which is worth
+stating at length because the obvious way to write it is wrong for a non-obvious reason.**
+One constant out of ``gigaxml.cli`` loads :mod:`gigaxml.inspect` and :mod:`gigaxml.sample`,
+and **both are modules the existing AST guard bans by name** -- so the guard cannot see the
+line that breaks its own rule: no banned module is spelled, and no banned name appears.
+:mod:`gigaxml.gui` already imports :mod:`gigaxml.run`, an accepted boundary stated in
+``test_gui_no_parsing.py``; what this avoids is *reaching a module the guard bans*. The
+number is written out here and pinned against the CLI's own by a test. Renaming it to an
+import is not a cleanup -- it would route a forbidden module into the window through a door
+the guard cannot see, and every existing test would stay green.
 """
 
 from __future__ import annotations
@@ -110,18 +98,11 @@ class RunState(enum.Enum):
     FAILED = "failed"
     INTERRUPTED = "interrupted"
 
-    # ★ **The classification lives on the member, not only on the machine.** The first
-    # version put ``is_active``/``is_terminal`` on :class:`RunStateMachine`, and every panel
-    # that reads a state through a property therefore wrote ``self.state in TERMINAL`` --
-    # which is the same question asked in a different place four times over, and the sort of
-    # thing that is right in three panels and a typo in the fourth. It also failed loudly
-    # the first time it was tried: ``self.state.is_terminal`` raised inside a Qt timer
-    # callback, once every 50 ms, forever, because the pump that would have stopped it never
-    # got to run. **A member that knows what kind of state it is is the whole reason a
-    # panel can ask the question at all.**
-    #
-    # The bodies read the module-level sets below rather than restating the lists, so the
-    # enum and the sets cannot disagree and there is still one list per category.
+    # ★ **The classification lives on the member, not only on the machine.** With it only
+    # on :class:`RunStateMachine`, every panel asked the same question in its own place --
+    # ``self.state in TERMINAL`` -- which is right in three panels and a typo in the fourth.
+    # The bodies read the module-level sets below rather than restating them, so the enum
+    # and the sets cannot disagree.
 
     @property
     def is_no_run(self) -> bool:
@@ -156,14 +137,11 @@ TERMINAL: Final = frozenset(
     {RunState.CANCELLED, RunState.FINISHED, RunState.FAILED, RunState.INTERRUPTED}
 )
 
-#: **And the third category, which is neither.** The first version of this module had two
-#: sets and left :attr:`RunState.IDLE` in neither, on the assumption that "not running" was
-#: the negation of "running" and did not need saying. Its own test caught it: IDLE is the
-#: answer to *is there a run*, while the other two answer *has this run been decided* --
-#: questions a caller asks at different moments and must not be given the same reply. A
-#: panel that has just been handed a child asks the first; a caller waiting for a verdict
-#: asks the second, and folding IDLE into ``TERMINAL`` would have told it the run had
-#: finished.
+#: **And the third category, which is neither.** IDLE answers *is there a run*, while the
+#: other two answer *has this run been decided* -- questions asked at different moments and
+#: not to be given the same reply. A panel handed a child asks the first; a caller waiting
+#: for a verdict asks the second, and folding IDLE into ``TERMINAL`` would have told it
+#: the run had finished.
 NO_RUN: Final = frozenset({RunState.IDLE})
 
 #: Every state a run may be in, and what it may become. The table is the state machine --

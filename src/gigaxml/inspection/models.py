@@ -24,16 +24,10 @@ from dataclasses import dataclass
 
 #: Which of a candidate's JSON fields are measurements and which are judgements.
 #:
-#: **This is the machine-readable half of the fact/inference separation.** The human
-#: output has always said "score" and "occurrences" in different words, so a person
-#: reading it is not misled; a program reading ``--json`` had no way to tell, because
-#: ``count`` and ``score`` sat in the same object with nothing saying which was which.
-#: A consumer that ranks candidates by ``count`` and one that trusts ``score`` are
-#: making different claims about the document, and only one of them is a measurement.
-#:
-#: The mapping is exhaustive over the candidate fields and total: every key of
-#: :meth:`Candidate.to_dict` appears here exactly once, so a field added later without
-#: a classification fails the test that checks this rather than shipping unlabelled.
+#: **This is the machine-readable half of the fact/inference separation.** Nothing else
+#: tells a consumer which is which: ``count`` and ``score`` sat in one object, and ranking
+#: by ``count`` while trusting ``score`` makes two claims about the document -- only one of
+#: them a measurement. ★ Exhaustive and total over :meth:`Candidate.to_dict`.
 FIELD_KINDS: dict[str, str] = {
     # --- measured: the document says so ---
     "path": "fact",

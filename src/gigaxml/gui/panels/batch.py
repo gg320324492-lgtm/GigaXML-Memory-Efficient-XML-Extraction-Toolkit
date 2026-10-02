@@ -52,17 +52,13 @@ PUMP_INTERVAL_MS = 50
 #: identity the tests and this file know.
 _COLUMNS = ("Source", "State", "Detail")
 
-#: The file extension each output format implies, so ``-o`` and ``--format`` agree. The CLI
-#: is explicit about the pair, and a mismatch fails the run for a reason a user cannot act
-#: on from the screen.
+#: The file extension each output format implies, so ``-o`` and ``--format`` agree; a
+#: mismatch fails the run for a reason the user cannot act on from the screen.
 #:
-#: **Derived from :data:`gigaxml.gui.settings.FORMATS`, and looked up with ``get`` rather
-#: than ``[]``.** Both are load-bearing. The list used to be a literal here *and* another
-#: literal in ``addItems`` *and* a third in ``settings.FORMATS``, which meant "add a format"
-#: was a three-place edit and forgetting one produced a ``KeyError`` on a user's machine
-#: rather than a test failure. The ``get`` is the second half: a stored preference from a
-#: newer version of the settings file must not be able to crash this panel, and the value
-#: that reaches ``build_args`` is a widget's selection, not a validated setting.
+#: ★ **Derived from :data:`gigaxml.gui.settings.FORMATS`, and looked up with ``get`` rather
+#: than ``[]``.** It was a literal here *and* in ``addItems`` *and* in ``FORMATS``, so adding
+#: a format was a three-place edit; and a newer settings file must not crash a panel, so the
+#: lookup cannot raise.
 _SUFFIXES = {fmt: f".{fmt}" for fmt in FORMATS}
 
 
@@ -202,17 +198,12 @@ class BatchPanel(QWidget):
         """
         job = self._queue.next_job()
         if job is None:
-            # ★ **``next_job()`` returns ``None`` for two different reasons, and M9 made
-            # the difference matter.** It returns ``None`` when there is nothing left to do
-            # *and* when a job is already in flight, because it hands out at most one at a
-            # time. The old code treated both as "the batch is over": it stopped the pump
-            # and dropped the child reference either way. That was invisible while the panel
-            # held a ``_finished`` flag -- the flag was what the pump asked, so losing the
-            # reference cost nothing -- and it is a real defect once the child is the
-            # authority: calling this while a job is working now erases the run the panel
-            # has not settled yet, and the queue stays stuck on that job forever. So the two
-            # are separated, and the in-flight case does nothing at all: that run's own
-            # :meth:`_drain` comes back here for the job after it.
+            # ★ **``next_job()`` returns ``None`` for two different reasons.** Nothing left
+            # to do, and a job already in flight -- it hands out at most one at a time.
+            # Treating both as "the batch is over" was invisible while a ``_finished`` flag
+            # was the authority and is a real defect once the child is: stopping the pump
+            # mid-job erases a run the panel has not settled and leaves the queue stuck.
+            # The in-flight case does nothing; that run's own :meth:`_drain` returns here.
             if self._queue.running is not None:
                 return
             self._pump.stop()
