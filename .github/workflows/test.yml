@@ -351,6 +351,32 @@ jobs:
         shell: bash
         run: python tools/check_comments.py
 
+      # ★ The packaging job runs only on a tag, so a build input that does not parse was
+      # invisible to every pull request in between. On the first tag this repository ever
+      # built, all three platforms failed with "ValueError: invalid literal for int()
+      # with base 10: '0rc1'", raised while PyInstaller was *reading*
+      # packaging/gigaxml.spec -- and the whole test suite was green, because nothing in
+      # it ever executed the spec. A version bump is an ordinary pull request here; only
+      # the artifact build was ever able to notice one.
+      #
+      # This executes the spec without building anything: PyInstaller is stubbed and its
+      # four build calls are recorders, so what runs is the spec's own Python -- its
+      # imports, its path arithmetic, and the reduction from a version to the four
+      # integers a Windows version number is made of. It reads the version
+      # pyproject.toml declares and then the same reduction against a fixed set of
+      # pre-release shapes, so the next bump to 3.0.0rc2 goes red here rather than at a
+      # tag. The shapes are fixed rather than taken from pyproject.toml on purpose: a
+      # check that only exercises today's version stops covering the case it exists for
+      # the day today's version stops being a pre-release.
+      #
+      # It installs nothing. This job already has the package with --no-deps, and
+      # tools/spec_check.py imports nothing outside the standard library -- the point of
+      # stubbing PyInstaller is that neither the check nor a laptop without it has to
+      # have it.
+      - name: The PyInstaller spec parses and reduces the version
+        shell: bash
+        run: python -m tools.spec_check
+
       # ★ M19. `docs/` is gitignored on purpose -- the comment in .gitignore says the
       # friction of `git add -f` is the point -- and three milestone reports were added
       # with exactly that command, so anyone opening the repository could read the

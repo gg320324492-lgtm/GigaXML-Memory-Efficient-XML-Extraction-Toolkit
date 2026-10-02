@@ -84,6 +84,18 @@ def version_info_version(version: str) -> str:
     return ".".join(str(part) for part in parts[:4])
 
 
+def version_quad(version: str) -> tuple[int, int, int, int]:
+    """``version`` as the four integers the Windows resource block wants.
+
+    Unpacked out of :func:`version_info_version` rather than recomputed, so the spec
+    that builds the frozen executable and this generator ask the same function for the
+    same number. There is no rule in here to keep in step with anything: which parts
+    survive the pre-release suffix has already been decided by the time this runs.
+    """
+    first, second, third, fourth = version_info_version(version).split(".")
+    return int(first), int(second), int(third), int(fourth)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     # The packaging workflow needs the digits-only form to hand ISCC, and it must not
@@ -104,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # Four parts, because the resource block wants a quad. "0.9.0" becomes 0.9.0.0.
-    quad = tuple(int(part) for part in version_info_version(version).split("."))
+    quad = version_quad(version)
 
     ASSETS.mkdir(parents=True, exist_ok=True)
     TARGET.write_text(TEMPLATE.format(quad=quad, version=version), encoding="utf-8")

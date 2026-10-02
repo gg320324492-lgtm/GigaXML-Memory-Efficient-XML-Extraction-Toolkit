@@ -22,6 +22,7 @@ Two hand-kept copies of a version number is one too many, and the one that would
 one nobody looks at.
 """
 
+import sys
 import tomllib
 from pathlib import Path
 
@@ -30,6 +31,8 @@ from PyInstaller.utils.hooks import collect_submodules
 #: ``SPECPATH`` is the directory holding *this spec file*, not the repository root -- it is
 #: ``packaging/``. Walking up one level is the whole of the difference, and getting it wrong
 #: fails as a confusing ``G:\pyproject.toml`` rather than as an obvious complaint.
+#: It is also why the import below cannot sit at the top with the others: a spec is
+#: executed rather than imported, and ``tools`` lives one level up from here, under ROOT.
 ROOT = Path(SPECPATH).resolve().parent
 ASSETS = ROOT / "assets"
 
@@ -39,9 +42,18 @@ _version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 VERSION = str(_version["project"]["version"])
 
 # A four-part number, which is what the resource block needs. "0.1.0" becomes 0.1.0.0.
-VERSION_TUPLE = tuple(int(part) for part in VERSION.split(".")[:4]) + (0,) * (
-    4 - len(VERSION.split("."))
-)
+#
+# **Asked of the module that already reduces the version** -- the same one the
+# installer's ``AppVerInfo`` comes from, and the one ``tools/spec_check.py`` runs this
+# file through on every pull request. Splitting the string apart here was a second,
+# untested copy of that rule, and the copy that breaks is the one nobody can see until
+# a release build fails: at 2.0.0rc1 ``int("0rc1")`` raised on all three packaging
+# platforms on the first tag this pipeline ever built, with the whole test suite green.
+sys.path.insert(0, str(ROOT))
+
+from tools.make_version_info import version_quad  # noqa: E402
+
+VERSION_TUPLE = version_quad(VERSION)
 
 block_cipher = None
 

@@ -144,6 +144,62 @@ def test_the_version_reduction_keeps_the_numbers_and_drops_only_the_pre_release(
         )
 
 
+def test_the_pyinstaller_spec_asks_for_the_quad_instead_of_reimplementing_it() -> None:
+    """The second copy of the rule is gone, and the file that held it still executes.
+
+    ★ ``packaging/gigaxml.spec`` carried its own four lines of a reduction that already
+    lived in :func:`tools.make_version_info.version_info_version`, and nothing in the
+    suite ever executed the spec. So on the first tag this repository built, all three
+    packaging platforms failed with ``ValueError: invalid literal for int() with base
+    10: '0rc1'`` while every test here was green -- which is the failure mode the
+    installer's own comment warns about, now with the evidence attached.
+
+    Two halves, and the second is the one that matters. The first reads the text and
+    refuses a second implementation. The second **executes the file**: PyInstaller is
+    stubbed and its four build calls are recorders, so what runs is the spec's own
+    Python, at ``2.0.0rc1``, with the version supplied rather than read from
+    ``pyproject.toml`` -- so this keeps testing the pre-release case after the next
+    bump, instead of quietly testing whatever the repository says today.
+    """
+    sys.path.insert(0, str(REPO_ROOT))
+    from tools.spec_check import load_spec
+
+    spec = (REPO_ROOT / "packaging" / "gigaxml.spec").read_text(encoding="utf-8")
+
+    assert "int(part)" not in spec, (
+        "packaging/gigaxml.spec reduces the version itself again -- a second copy of a "
+        "rule that already lives in tools.make_version_info, and the copy that breaks "
+        "is the one no test executes"
+    )
+    assert "VERSION.split" not in spec, (
+        "packaging/gigaxml.spec splits the version string again instead of asking for "
+        "the quad; that split is what raised on 0rc1"
+    )
+    assert "tools.make_version_info" in spec, (
+        "the spec no longer asks the module that already reduces the version"
+    )
+
+    for version in ("2.0.0rc1", "2.0.0", "2.0.0.1"):
+        namespace = load_spec(version=version)
+        assert str(namespace["VERSION"]) == version
+        quad = namespace["VERSION_TUPLE"]
+        assert isinstance(quad, tuple) and len(quad) == 4, quad
+        assert all(isinstance(part, int) for part in quad), quad
+        rendered = ".".join(str(part) for part in quad)
+        assert iscc_accepts(rendered), f"{version} produced {rendered!r}"
+
+    # The whole point of the case that broke: 2.0.0rc1 must come out as four numbers.
+    pre_release = load_spec(version="2.0.0rc1")["VERSION_TUPLE"]
+    assert ".".join(str(part) for part in pre_release) == "2.0.0.0"
+
+    # And the version this checkout declares, with no override involved at all.
+    live = load_spec()
+    rendered = ".".join(str(part) for part in live["VERSION_TUPLE"])
+    assert iscc_accepts(rendered), (
+        f"pyproject.toml says {live['VERSION']} and the spec built {rendered!r}"
+    )
+
+
 def test_the_release_notes_do_not_claim_a_version_the_build_does_not_have() -> None:
     """The notes must not describe a different build from the one being shipped.
 
