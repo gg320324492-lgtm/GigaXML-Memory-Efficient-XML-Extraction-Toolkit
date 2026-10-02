@@ -103,7 +103,7 @@ def peak_rss_mb() -> float | None:
         return None
     # macOS reports bytes; the BSDs report kilobytes.
     scale = _MB if sys.platform == "darwin" else 1024
-    return resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / scale
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale
 
 
 def _vmhwm_mib(status_text: str) -> float | None:
