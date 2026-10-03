@@ -89,9 +89,10 @@ rest, and `git grep` afterwards to see that the history is still there.
 ## Release candidates
 
 The candidates `2.0.0rc1` through `2.0.0rc4` are the versions 2.0 was rehearsed under,
-and the classifier still says `Development Status :: 4 - Beta`. That changes nothing in
-the table above: the promises are the promises, and they hold for every build that has
-carried the 2.0 number. What the candidates were for is the artefacts — the installer,
+and the classifier is restored to `Development Status :: 5 - Production/Stable` now that
+2.0.0 has shipped — a classifier is written by hand, never recomputed from the version,
+so it is a step of its own. That changes nothing in the table above: the promises are
+the promises, and they hold for every build that has carried the 2.0 number. What the candidates were for is the artefacts — the installer,
 the `.dmg`, the AppImage — which are the one thing a checkout cannot stand in for.
 
 **`2.0.0` is where the classifier was moved to match the table.** The release is what the
