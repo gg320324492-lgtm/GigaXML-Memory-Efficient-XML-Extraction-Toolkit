@@ -11,7 +11,7 @@ including — mostly — the measurements that were never taken.
 | `true` | A sweep ran. The entry carries the identity and the headline figures, and says which file holds the numbers. |
 | `false` | **No measurement was taken at this version.** The entry says so, with the evidence. |
 
-The `false` entries are the point. Six of the seven versions in this repository have no
+The `false` entries are the point. Seven of the eight versions in this repository have no
 benchmark record, and four of them shipped *after* the last measurement was taken:
 
 ```
@@ -21,11 +21,15 @@ benchmark record, and four of them shipped *after* the last measurement was take
 1.2.0  2026-09-30   no record — the last measurement was 1 day 20 min earlier
 1.2.1  2026-10-01   no record — the last measurement was 2 days earlier
 2.0.0rc1 2026-10-03   no record — the build failed on all three platforms, so nothing was measured
-2.0.0rc2 (not yet tagged)   no record — the build succeeded on all three platforms, and no sweep was run at it
+2.0.0rc2 2026-10-03   no record — the build succeeded on all three platforms, and no sweep was run at it
+2.0.0rc3 (not yet tagged)   no record — the build is expected to succeed and the release assembly to run through, and no sweep is planned at it
 ```
 
-The last row carries no date because its tag does not exist yet: `2.0.0rc2.json` records
+The last row carries no date because its tag does not exist yet: `2.0.0rc3.json` records
 `released` and `released_as` as `not yet`, and both are filled in when the tag is cut.
+`2.0.0rc2` was in the same state one entry ago and is now dated, its tag having been cut at
+`1ef96be`; its own run built on all three platforms and then failed a job later, in the
+release assembly, which is why rc3 exists — see **Why there are three rc entries** below.
 
 Each `false` entry carries the commit dates that establish the absence, so the claim is
 checkable rather than an assurance. **No entry in this directory contains a number that was
@@ -45,6 +49,30 @@ This is the same defect as the one `results.json` shipped with, one level up: th
 records `gigaxml: "0.1.0"` for a run whose tree was at 1.1.0, because the version was
 read from the installed distribution rather than from the package. **A version string is
 a label that moves when somebody remembers; a commit does not move.**
+
+## Why there are three rc entries, and what each one records
+
+A release candidate is a rehearsal, and these three rehearsed different things. They are
+kept separately because their `recorded: false` is not the same absence three times, and an
+entry that only said "no record" would let a reader assume the wrong one.
+
+* `2.0.0rc1` — **the build failed.** All three platform jobs died on the same line of
+  `packaging/gigaxml.spec`, `int("0rc1")`. No artifact was produced at all, so a
+  measurement was impossible in principle. `2.0.0rc1.json` says so with the evidence.
+* `2.0.0rc2` — **the build succeeded and a later job failed.** Linux, Windows and macOS all
+  built and uploaded an artifact, downloadable from the run; the `release` job (assembly,
+  SBOM, checksums, the Release page) died on `ModuleNotFoundError: No module named 'yaml'`
+  from `tools/release_checksums.py`, a job that declared an interpreter and no
+  dependencies. The tag therefore has artifacts and **no Release page**. The measurement
+  was still not taken.
+* `2.0.0rc3` — **the build and the release assembly are both expected to complete**, so
+  that the whole path from tag to Release page is proven in a single run. The `yaml` defect
+  is repaired (the `release` job installs `pyyaml`) and guarded on every pull request by
+  `tools/ci_selfcheck.py deps`, which checks that each job installs what its `tools/*.py`
+  steps import. No measurement is planned here either.
+
+Nothing is measured at any candidate, for the reason `1.2.1.json` gives: the figures that
+belong in this directory are taken at a version somebody installs.
 
 ## Nothing is copied
 
