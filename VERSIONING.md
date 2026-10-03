@@ -94,12 +94,11 @@ the table above: the promises are the promises, and they hold for every build th
 carried the 2.0 number. What the candidates were for is the artefacts — the installer,
 the `.dmg`, the AppImage — which are the one thing a checkout cannot stand in for.
 
-**`2.0.0` itself is a release candidate in everything but the spelling, until the
-classifier moves.** It ships the same promises on the same numbered interfaces, with the
-same `4 - Beta` classifier: the classifier is not recomputed from the version, and moving
-it to a stable `Development Status` is a separate change that has not happened yet. So a
-reader should take the table's `stable from 2.0` as the promise it is, and the classifier
-as a label that has not yet been updated to match it.
+**`2.0.0` is where the classifier was moved to match the table.** The release is what the
+promises were waiting for, and its classifier now reads
+`Development Status :: 5 - Production/Stable`. That move was made by hand, for the reason
+above: the classifier is not recomputed from the version, so a reader should treat it as a
+label someone maintains deliberately rather than as something derived from the number.
 
 `package.yml` takes its version from `pyproject.toml` rather than from the tag, so a tag
 builds the version in the tree. The tag itself, the merge, and the upload are a person's
