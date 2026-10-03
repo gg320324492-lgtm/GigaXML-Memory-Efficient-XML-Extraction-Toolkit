@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 2.0.0rc2 — the version in this build's file properties, and the one the package reports |
+| **Version** | 2.0.0rc4 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -33,6 +33,27 @@ The window does the same things: **GigaXML**
   the packaged application is the same program.
 - The interface runs in English or Chinese, chosen in the settings panel — see
   [Languages](#languages).
+
+### What changed in 2.0.0rc4
+
+**The program does what it did in 2.0.0rc3. This release exists to make the build's own
+version agree with the tag it ships under.**
+
+- **2.0.0rc3 built and released correctly, and its binary reported `2.0.0rc2`.** All three
+  packaging platforms built, the `release` job assembled the archives, wrote the SBOM,
+  hashed what ships and created the Release page — the whole path from tag to Release page
+  ran through for the first time. The version a binary reports is read from
+  `pyproject.toml`, not from the tag, and `pyproject.toml` still said `2.0.0rc2` when the
+  tag was cut: the tree was not bumped in the same step. The tag and the Release page
+  announced one release and the binary inside them announced the previous one.
+- **The guard that exists for that accident caught its own releaser, the first time it
+  ran.** The tag check added for 2.0.0rc2 compares the tags pointing at `HEAD` against the
+  version the tree declares, and it failed on `v2.0.0rc3` on every platform with the two
+  strings side by side. This is not a bug that was fixed — it is the check doing exactly
+  what it was built to do, on the release that first exercised it.
+- **rc4 is the first candidate whose version is consistent.** The version reads `2.0.0rc4`
+  in `pyproject.toml`, in `gigaxml.__version__`, in the release notes and in the tag it
+  will be cut under.
 
 ### What changed in 2.0.0rc2
 

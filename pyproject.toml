@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gigaxml"
-version = "2.0.0rc2"
+version = "2.0.0rc4"
 description = "Extract structured data from multi-gigabyte XML files with bounded memory, as a command line tool and a desktop application."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

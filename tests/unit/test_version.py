@@ -34,7 +34,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: This release's version, spelled the way the tag spells it. The tag itself is pushed by
 #: a human step outside the test suite, but everything the tag names has to match this
 #: string, and this constant is where "what are we releasing" is written down once.
-RELEASE_VERSION = "2.0.0rc2"
+RELEASE_VERSION = "2.0.0rc4"
 
 
 def test_the_package_version_and_the_import_version_agree() -> None:

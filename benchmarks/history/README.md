@@ -11,8 +11,8 @@ including — mostly — the measurements that were never taken.
 | `true` | A sweep ran. The entry carries the identity and the headline figures, and says which file holds the numbers. |
 | `false` | **No measurement was taken at this version.** The entry says so, with the evidence. |
 
-The `false` entries are the point. Seven of the eight versions in this repository have no
-benchmark record, and four of them shipped *after* the last measurement was taken:
+The `false` entries are the point. Eight of the nine versions in this repository have no
+benchmark record, and five of them shipped *after* the last measurement was taken:
 
 ```
 0.9.0  2026-09-27   no record — no benchmark result existed yet
@@ -22,14 +22,16 @@ benchmark record, and four of them shipped *after* the last measurement was take
 1.2.1  2026-10-01   no record — the last measurement was 2 days earlier
 2.0.0rc1 2026-10-03   no record — the build failed on all three platforms, so nothing was measured
 2.0.0rc2 2026-10-03   no record — the build succeeded on all three platforms, and no sweep was run at it
-2.0.0rc3 (not yet tagged)   no record — the build is expected to succeed and the release assembly to run through, and no sweep is planned at it
+2.0.0rc3 2026-10-03   no record — the build and the release assembly both completed, but the binary shipped under the previous version, and no sweep was run at it
+2.0.0rc4 (not yet tagged)   no record — this is the first candidate whose tree and tag name the same version, and no sweep is planned at it
 ```
 
-The last row carries no date because its tag does not exist yet: `2.0.0rc3.json` records
+The last row carries no date because its tag does not exist yet: `2.0.0rc4.json` records
 `released` and `released_as` as `not yet`, and both are filled in when the tag is cut.
-`2.0.0rc2` was in the same state one entry ago and is now dated, its tag having been cut at
-`1ef96be`; its own run built on all three platforms and then failed a job later, in the
-release assembly, which is why rc3 exists — see **Why there are three rc entries** below.
+`2.0.0rc3` was in the same state one entry ago and is now dated, its tag having been cut at
+`5f3ce63`; its own run built on all three platforms and completed the release assembly,
+and the binary it shipped reported `2.0.0rc2` — the tree had not been bumped, which is why
+rc4 exists — see **Why there are more than three rc entries** below.
 
 Each `false` entry carries the commit dates that establish the absence, so the claim is
 checkable rather than an assurance. **No entry in this directory contains a number that was
@@ -50,10 +52,10 @@ records `gigaxml: "0.1.0"` for a run whose tree was at 1.1.0, because the versio
 read from the installed distribution rather than from the package. **A version string is
 a label that moves when somebody remembers; a commit does not move.**
 
-## Why there are three rc entries, and what each one records
+## Why there are more than three rc entries, and what each one records
 
-A release candidate is a rehearsal, and these three rehearsed different things. They are
-kept separately because their `recorded: false` is not the same absence three times, and an
+A release candidate is a rehearsal, and these four rehearsed different things. They are
+kept separately because their `recorded: false` is not the same absence four times, and an
 entry that only said "no record" would let a reader assume the wrong one.
 
 * `2.0.0rc1` — **the build failed.** All three platform jobs died on the same line of
@@ -65,11 +67,20 @@ entry that only said "no record" would let a reader assume the wrong one.
   from `tools/release_checksums.py`, a job that declared an interpreter and no
   dependencies. The tag therefore has artifacts and **no Release page**. The measurement
   was still not taken.
-* `2.0.0rc3` — **the build and the release assembly are both expected to complete**, so
-  that the whole path from tag to Release page is proven in a single run. The `yaml` defect
-  is repaired (the `release` job installs `pyyaml`) and guarded on every pull request by
-  `tools/ci_selfcheck.py deps`, which checks that each job installs what its `tools/*.py`
-  steps import. No measurement is planned here either.
+* `2.0.0rc3` — **the build and the release assembly both completed, and the version was
+  wrong.** The `yaml` defect is repaired (the `release` job installs `pyyaml`) and guarded
+  on every pull request by `tools/ci_selfcheck.py deps`, which checks that each job installs
+  what its `tools/*.py` steps import; the whole path from tag to Release page ran through
+  for the first time and the Release page exists. But a build reads its version from
+  `pyproject.toml`, not from the tag, and the tree was not bumped when the tag was cut, so
+  the tag and the Release page announced `2.0.0rc3` while the binary inside them reported
+  `2.0.0rc2`. The measurement was again not taken. The tag guard added for rc2
+  (`test_the_tag_at_head_names_the_version_this_build_reports`) failed on this tag on all
+  five legs of `test.yml` — the first time it ran, on the release that exercised it.
+* `2.0.0rc4` — **the first candidate whose tree and tag name the same version.** Each of
+  the four version sources (`pyproject.toml`, `gigaxml.__version__`, the release notes and
+  the tag) reads `2.0.0rc4`, so the tag guard passes on the tree rather than catching it.
+  No measurement is planned here either.
 
 Nothing is measured at any candidate, for the reason `1.2.1.json` gives: the figures that
 belong in this directory are taken at a version somebody installs.
