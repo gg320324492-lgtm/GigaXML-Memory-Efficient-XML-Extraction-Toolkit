@@ -624,7 +624,7 @@ jobs:
         # and it is deliberately NOT made here. Criterion G says this milestone adds checks
         # and artifacts and does not touch the release chain. "Pinned" and "current" are two
         # different properties, and only the first is claimed.
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           # Both archive shapes, named: the Windows onedir ships as a zip, the other two
           # as tar.gz, and the installer is attached by its own name. The first rehearsal
