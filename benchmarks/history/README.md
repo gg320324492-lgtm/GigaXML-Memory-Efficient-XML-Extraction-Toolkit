@@ -12,7 +12,7 @@ including — mostly — the measurements that were never taken.
 | `false` | **No measurement was taken at this version.** The entry says so, with the evidence. |
 
 The `false` entries are the point. Eight of the nine versions in this repository have no
-benchmark record, and five of them shipped *after* the last measurement was taken:
+benchmark record, and six of them shipped *after* the last measurement was taken:
 
 ```
 0.9.0  2026-09-27   no record — no benchmark result existed yet
@@ -23,15 +23,14 @@ benchmark record, and five of them shipped *after* the last measurement was take
 2.0.0rc1 2026-10-03   no record — the build failed on all three platforms, so nothing was measured
 2.0.0rc2 2026-10-03   no record — the build succeeded on all three platforms, and no sweep was run at it
 2.0.0rc3 2026-10-03   no record — the build and the release assembly both completed, but the binary shipped under the previous version, and no sweep was run at it
-2.0.0rc4 (not yet tagged)   no record — this is the first candidate whose tree and tag name the same version, and no sweep is planned at it
+2.0.0rc4 2026-10-03   no record — this is the first candidate whose tree and tag name the same version, and no sweep is planned at it
 ```
 
-The last row carries no date because its tag does not exist yet: `2.0.0rc4.json` records
-`released` and `released_as` as `not yet`, and both are filled in when the tag is cut.
-`2.0.0rc3` was in the same state one entry ago and is now dated, its tag having been cut at
-`5f3ce63`; its own run built on all three platforms and completed the release assembly,
-and the binary it shipped reported `2.0.0rc2` — the tree had not been bumped, which is why
-rc4 exists — see **Why there are more than three rc entries** below.
+The last row is dated now that its tag is cut, at `7ac99e9`. `2.0.0rc4.json` records
+`released` as the tag's own creation date and `released_as` as the commit it points at.
+That tag built on all three platforms and created a Release page, and the binary it
+shipped reported `2.0.0rc4` — the version agreement rc3 lacked, which is why rc4 exists;
+see **Why there are more than three rc entries** below.
 
 Each `false` entry carries the commit dates that establish the absence, so the claim is
 checkable rather than an assurance. **No entry in this directory contains a number that was
@@ -80,7 +79,8 @@ entry that only said "no record" would let a reader assume the wrong one.
 * `2.0.0rc4` — **the first candidate whose tree and tag name the same version.** Each of
   the four version sources (`pyproject.toml`, `gigaxml.__version__`, the release notes and
   the tag) reads `2.0.0rc4`, so the tag guard passes on the tree rather than catching it.
-  No measurement is planned here either.
+  The tag, cut at `7ac99e9`, built on all three platforms, created a Release page, and the
+  binary it shipped reported `2.0.0rc4`. No measurement is planned here either.
 
 Nothing is measured at any candidate, for the reason `1.2.1.json` gives: the figures that
 belong in this directory are taken at a version somebody installs.
