@@ -1,0 +1,91 @@
+name: nightly
+
+# ★ M13: the mutation run. Nightly, and the reason is cost rather than doubt.
+#
+# `tools/mutation.py` rewrites a tracked source file 28 times, runs the suites that own
+# each property after every rewrite, and puts the file back byte for byte. Measured on a
+# Windows checkout: 170 s for the full set, of which ~123 s is the seven streaming
+# mutants (their target suites include the memory measurements) and ~66 s is the five
+# writer mutants. On a cold ubuntu runner that is a few minutes -- affordable nightly,
+# not affordable on every push, and not affordable three times over for the 3.11/3.12/
+# 3.13 matrix. One interpreter is enough: what this proves is that a *property* is
+# guarded, and that answer does not change between 3.11 and 3.13. A mutation that only
+# kills on one interpreter is a question about interpreters, which the matrix in
+# `test.yml` already answers.
+#
+# The two invariants that make the number mean anything, and both are enforced by the
+# tool rather than by this file:
+#
+# 1. **A surviving mutant fails the job.** Not "is reported", not "is logged" -- exits
+#    non-zero and names the mutant. A mutation nobody caught is a guard that is not
+#    guarding, and a nightly job that went green over one would be worse than no job:
+#    it would convert an open hole into a reassuring number once a day.
+# 2. **The tree is left clean.** Each rewrite is restored from a byte copy and checked
+#    against the sha256 that copy was taken with, and the tool refuses to start if
+#    `src/` is already dirty. A mutation run that leaves a mutated parser behind would
+#    poison every later job on that runner in ways nothing would name.
+#
+# `--self-test` runs first and is a precondition, not a report: it plants a known-bad
+# edit (which must be caught) and an equivalent one (which must not be). If the harness
+# cannot see a real defect, nothing it says about 28 kills is evidence of anything.
+#
+# `workflow_dispatch` is kept so this can be run by hand before a change lands that
+# touches the core subset -- a mutation run after the fact is a post-mortem, and this is
+# cheap enough to be a pre-flight.
+
+on:
+  schedule:
+    # 03:17 UTC. An off-the-hour minute is deliberate: the whole point of a nightly
+    # batch is that nothing is queued behind it, and `0 3 * * *` is the minute every
+    # other scheduled workflow on earth picks.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    name: mutation (core subset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Whole clone, for the same reason `test.yml`'s first job says.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        # `.[dev]` only. The mutation targets are the core subset -- parser, config,
+        # fields, checkpoint, writers -- which is exactly the part that runs on two
+        # runtime dependencies. The GUI is not a target, and installing Qt to not mutate
+        # it would make a nightly slower for nothing.
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: The harness can tell a real defect from an equivalent edit
+        shell: bash
+        run: python tools/mutation.py --self-test
+
+      - name: Every mutation is caught
+        # `--keep-going` so one survivor does not hide the other twenty-seven. The first
+        # one is the finding; the rest is a re-run waiting to be read, and a nightly
+        # batch that stops early reports a smaller number than it measured.
+        shell: bash
+        run: python tools/mutation.py --keep-going
+
+      - name: The tree is clean afterwards
+        # Redundant with the sha256 check inside the tool, and kept anyway. The tool
+        # checks the bytes it wrote; this checks the thing a reader actually cares
+        # about, which is what `git` would ship. A restored file and a clean tree are
+        # the same claim until they are checked by two different tools.
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain -- src)" ]; then
+            echo "the mutation run left src/ modified:"
+            git status --porcelain -- src
+            exit 1
+          fi
+          echo "src/ is byte-for-byte as it was checked out."
