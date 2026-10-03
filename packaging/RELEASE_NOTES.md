@@ -18,7 +18,7 @@ The window does the same things: **GigaXML**
 
 | | |
 |---|---|
-| **Version** | 2.0.0rc4 — the version in this build's file properties, and the one the package reports |
+| **Version** | 2.0.0 — the version in this build's file properties, and the one the package reports |
 | **Platforms** | Windows x64 · **macOS Apple Silicon** · Linux x86_64 — see [the macOS note](#macos) before you download |
 | **Licence** | MIT |
 | **Signed** | **No Developer ID certificate — read [Unsigned binaries](#unsigned-binaries) before you install** |
@@ -33,6 +33,24 @@ The window does the same things: **GigaXML**
   the packaged application is the same program.
 - The interface runs in English or Chinese, chosen in the settings panel — see
   [Languages](#languages).
+
+### What changed in 2.0.0
+
+**This is the release the four candidates before it were rehearsing.** If you are coming
+from 1.2.1, the 2.0.0rc4 section below is the one to read for what this build does: no
+code changed between it and this one. What 2.0.0 is, as opposed to any of the candidates,
+is the release that states what will not change — the table in
+[What changed in 2.0.0rc1](#what-changed-in-200rc1) below is the promise itself, and all
+of it holds for this release.
+
+- **The binary and the release agree.** `pyproject.toml`, `gigaxml.__version__`, these
+  notes and the tag `v2.0.0` all name the same version. That agreement is the one thing
+  all four candidates were built to reach: rc1 failed to build at all, rc2 built but
+  assembled no Release page, rc3 released a binary that announced `2.0.0rc2`, and rc4
+  was the first tree and tag that named the same version.
+- **The 2.0 promises are no longer a candidate's.** rc1 stated them while the classifier
+  still read `Development Status :: 4 - Beta`; those promises are what a `2.0.0` download
+  is being asked to rely on, and this is the version that carries them.
 
 ### What changed in 2.0.0rc4
 
@@ -89,11 +107,11 @@ around it.**
 
 ### What changed in 2.0.0rc1
 
-**This is a release candidate, and 2.0 is the release that says what will not change.**
-The interfaces below are stable within 2.0.x, so this is the build to try and to report
-against. The final `2.0.0` follows once this build's **downloaded artefacts** — the
-installer, the `.dmg`, the AppImage, not a checkout — have been through their own smoke
-tests.
+**This was a release candidate, and 2.0 is the release that says what will not change.**
+The interfaces below are stable within 2.0.x, so this was the build to try and to report
+against. The first four candidates reached the final `2.0.0` that follows this one —
+this section says `was` and `follows` because it is the record of the candidate that
+first stated the promise, not of the release that kept it.
 
 | | |
 |---|---|
@@ -290,7 +308,7 @@ are. The other fifty readings are unaffected.
    `%APPDATA%\GigaXML`.
 3. Run `gigaxml-gui\gigaxml-gui.exe`.
 
-There is also an installer, `GigaXML-Setup-1.1.0.exe`, built by the same pipeline as the
+There is also an installer, `GigaXML-Setup-2.0.0.exe`, built by the same pipeline as the
 zip — its version comes from the package, not from a hand-typed file. It installs per
 user, so there is no administrator prompt: no services, no drivers, just the application
 into a folder you own, with a Start-menu shortcut and an optional desktop one. Its

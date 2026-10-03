@@ -88,11 +88,18 @@ rest, and `git grep` afterwards to see that the history is still there.
 
 ## Release candidates
 
-`2.0.0rc1` is the version 2.0 is being released as, and while it is out the classifier
-says `Development Status :: 4 - Beta`. That changes nothing in the table above: the
-promises are the promises, and they hold for the release candidate. What the candidate
-is for is the artefacts — the installer, the `.dmg`, the AppImage — which are the one
-thing a checkout cannot stand in for.
+The candidates `2.0.0rc1` through `2.0.0rc4` are the versions 2.0 was rehearsed under,
+and the classifier still says `Development Status :: 4 - Beta`. That changes nothing in
+the table above: the promises are the promises, and they hold for every build that has
+carried the 2.0 number. What the candidates were for is the artefacts — the installer,
+the `.dmg`, the AppImage — which are the one thing a checkout cannot stand in for.
+
+**`2.0.0` itself is a release candidate in everything but the spelling, until the
+classifier moves.** It ships the same promises on the same numbered interfaces, with the
+same `4 - Beta` classifier: the classifier is not recomputed from the version, and moving
+it to a stable `Development Status` is a separate change that has not happened yet. So a
+reader should take the table's `stable from 2.0` as the promise it is, and the classifier
+as a label that has not yet been updated to match it.
 
 `package.yml` takes its version from `pyproject.toml` rather than from the tag, so a tag
 builds the version in the tree. The tag itself, the merge, and the upload are a person's
