@@ -163,6 +163,44 @@ WINDOWS_ONLY_TESTS = (
     "tests/integration/test_atomic_output.py::test_the_held_open_error_names_the_partial_file",
 )
 
+#: Skips that are correct by construction, keyed by test id, mapped to the reason the run
+#: must give. A skip is excused from the ceiling only when it is named here **and** the
+#: reason pytest recorded for it begins with the string given, so the excuse is one
+#: specific line of one specific test rather than a licence for that test -- or any other --
+#: to stop running.
+#:
+#: ★ **Why this exists rather than a lower ceiling on one leg.** The Windows leg's
+#: ``--max-skips 0`` is the strongest claim this repository makes about a platform, and it
+#: has caught real defects: a suite narrowed to a file, a test that quietly stopped
+#: collecting, a platform guard that was never there. Lowering the number would keep the
+#: shape of the claim and throw away the claim -- the exact edit this milestone is written
+#: to refuse. The conflict is narrower than "one skip is allowed": it is that *this* test
+#: is a guard which has nothing to say off a tag, and there is no run in CI that would
+#: change that, so the ceiling counted a legitimate silence as a hole forever.
+#:
+#: ★ A named skip and an unexpected skip are different facts and are now counted
+#: differently. Everything not listed here still counts against ``max_skips`` on every leg;
+#: the ``--max-skips 0`` leg is unchanged and still fails on the first unnamed skip. This
+#: list can only ever excuse a skip a human has read the reason for and written down; it
+#: cannot make a test pass, and it cannot hide a test that failed or never ran.
+#:
+#: ★ An entry is a claim to be argued, like every name in ``WINDOWS_ONLY_TESTS``. It is
+#: added for a guard whose *trigger* is a condition CI does not meet on a branch -- here a
+#: release tag -- and never to make a red leg green. If the reason a test skips is a
+#: capability the platform should have, the entry is wrong and the leg should be red.
+DESIGNED_SKIPS: dict[str, str] = {
+    # The tag guard in tests/unit/test_version.py. It compares the tag at HEAD against the
+    # version the build reports, and HEAD carries a release tag only in the moment between
+    # `git tag` and the next commit -- so on every pull request, and on every leg, it skips.
+    # It is a test rather than a static check precisely so that its silence off a tag is
+    # ordinary; making it fail there would make it a check that cries wolf on work that is
+    # not a release, which is how a guard gets deleted. The reason is stable up to the tag
+    # list it prints, so the entry matches on that stable prefix.
+    "tests/unit/test_version.py::test_the_tag_at_head_names_the_version_this_build_reports": (
+        "HEAD is not a release tag:"
+    ),
+}
+
 #: The test directories every job runs. Asserted identical everywhere, so a platform leg
 #: cannot quietly end up covering less than the ubuntu leg.
 TEST_DIRECTORIES = (
@@ -1106,6 +1144,30 @@ def dotted_to_id(path_and_name: str) -> str:
     return f"{module}::{name}"
 
 
+def designed_skip(case: dict[str, Any]) -> bool:
+    """Is this skipped case named in ``DESIGNED_SKIPS``, with the reason it was named for?
+
+    Both halves are required. The id alone would excuse the test whatever it next decides
+    to skip on -- including a capability that went missing, which is the failure the ceiling
+    exists to catch. The reason alone would excuse *any* test that happened to skip for the
+    same stated cause. Together they name one line of one test, and a change to either the
+    name or the reason puts the case straight back under the ceiling, where it belongs.
+
+    The comparison is on the reason's first line and is a prefix match, because the reasons
+    here can end in data pytest interpolates rather than prose the author chose -- the tag
+    list HEAD does not have. The declared string carries the whole fixed sentence, so a
+    different skip in the same test does not match it.
+    """
+    declared = next(
+        (reason for target, reason in DESIGNED_SKIPS.items() if dotted_to_id(target) == case["id"]),
+        None,
+    )
+    if declared is None:
+        return False
+    observed = (case["reason"] or "(no message)").splitlines()[0]
+    return observed.startswith(declared)
+
+
 def check_report(report: pathlib.Path, min_tests: int, max_skips: int) -> None:
     cases = parse_junit(report)
     counts = Counter(case["outcome"] for case in cases)
@@ -1131,6 +1193,24 @@ def check_report(report: pathlib.Path, min_tests: int, max_skips: int) -> None:
             print(f"    {count:>4}  {reason}")
     print("----------------------------------------------------------------")
 
+    # ★ The ceiling counts *unexpected* skips, and the split is the whole point of
+    # DESIGNED_SKIPS: a skip a human has named and read the reason for is a different fact
+    # from a skip nobody expected, and only the second is a hole in the platform claim. An
+    # unattributed skip still counts against `max_skips` on every leg, so the Windows leg's
+    # `--max-skips 0` remains a claim that the *rest* of the suite runs; what it no longer
+    # does is count a guard's silence off a tag as that guard having stopped working.
+    designed, unexpected = [], []
+    for case in cases:
+        if case["outcome"] != "skipped":
+            continue
+        (designed if designed_skip(case) else unexpected).append(case)
+
+    if designed:
+        print("  designed skips (named in DESIGNED_SKIPS, and excluded from the ceiling):")
+        for case in designed:
+            print(f"    {case['id']}  --  {(case['reason'] or '(no message)').splitlines()[0]}")
+        print("----------------------------------------------------------------")
+
     problems: list[str] = []
     if len(cases) < min_tests:
         problems.append(
@@ -1139,10 +1219,10 @@ def check_report(report: pathlib.Path, min_tests: int, max_skips: int) -> None:
         )
     if failed:
         problems.append(f"{failed} test cases failed; this check does not hide that")
-    if skipped > max_skips:
+    if len(unexpected) > max_skips:
         problems.append(
-            f"{skipped} tests skipped, ceiling is {max_skips}. Every skip is a place the "
-            f"platform is not being checked; the reasons are printed above."
+            f"{len(unexpected)} tests skipped, ceiling is {max_skips}. Every skip is a "
+            f"place the platform is not being checked; the reasons are printed above."
         )
 
     by_id = {case["id"]: case["outcome"] for case in cases}

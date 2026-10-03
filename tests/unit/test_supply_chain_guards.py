@@ -471,3 +471,144 @@ def test_dependabot_and_the_pin_check_agree_about_what_a_pin_is() -> None:
     # Dependabot bump of `softprops/action-gh-release@v2` -> a newer release land green
     # with its comment rewritten.
     assert check_pins(verify_remote=False) is None
+
+
+# --- tools/ci_selfcheck.py report: designed skips vs unexpected ones ----------------
+
+
+def _windows_only_cases() -> list[tuple[str, str, str]]:
+    """``WINDOWS_ONLY_TESTS`` in the state this platform's report would carry them.
+
+    ``check_report`` requires both of these to be present, so a synthetic report that left
+    them out would fail on a different rule than the one under test. Off Windows they skip;
+    on Windows they pass.
+    """
+    from tools.ci_selfcheck import WINDOWS_ONLY_TESTS
+
+    state = "skipped" if sys.platform != "win32" else ""
+    return [
+        (
+            target.partition("::")[0].replace("/", ".").removesuffix(".py"),
+            target.partition("::")[2],
+            state,
+        )
+        for target in WINDOWS_ONLY_TESTS
+    ]
+
+
+def _junit(tmp_path: pathlib.Path, cases: list[tuple[str, str, str]]) -> pathlib.Path:
+    """A junit report holding ``(classname, name, skipped-reason)`` cases; reason '' = pass.
+
+    Written out rather than captured from a real pytest run so the two cases can be put in
+    one report on purpose: the point of this check is that it tells a named skip apart from
+    an unnamed one, and a report where only one of them is present cannot show that.
+    """
+    rows = []
+    for classname, name, reason in cases:
+        skipped = f'<skipped message="{reason}"/>' if reason else ""
+        rows.append(f'<testcase classname="{classname}" name="{name}">{skipped}</testcase>')
+    path = tmp_path / "ci-report.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        f'<testsuites><testsuite name="pytest" tests="{len(cases)}">'
+        + "".join(rows)
+        + "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_a_designed_skip_is_excused_and_an_unexpected_one_is_not(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """★ The contract of the ``--max-skips 0`` leg, pinned as a test rather than a memory.
+
+    The Windows leg runs ``report ... --max-skips 0`` because a skip there is a hole in the
+    platform claim. The tag guard skips on every pull request by design -- it has nothing to
+    say off a tag -- so the ceiling counted a legitimate silence as a hole. ``DESIGNED_SKIPS``
+    separates the two, and the separation is only real if BOTH halves hold: the named skip is
+    excused, and a skip nobody named still fails at a ceiling of zero. A test that asserted
+    only the first half would stay green if the whole ceiling had been deleted.
+
+    The synthetic report is used rather than the real run because the real run cannot hold
+    an unexpected skip without the tree being broken; the two must be seen side by side.
+
+    ``WINDOWS_ONLY_TESTS`` is added in the state this platform would produce it, because
+    ``check_report`` also insists those two are present -- leaving them out would fail on a
+    different rule than the one under test, which is how a contract test comes to assert
+    the wrong thing.
+    """
+    from tools.ci_selfcheck import SelfCheckError, check_report
+
+    named = (
+        "tests.unit.test_version",
+        "test_the_tag_at_head_names_the_version_this_build_reports",
+        "HEAD is not a release tag: no tags point at it",
+    )
+    windows_only = _windows_only_cases()
+
+    # Only the designed skip: at a ceiling of zero, the report passes.
+    only_named = _junit(tmp_path, [named, *windows_only])
+    check_report(only_named, min_tests=1, max_skips=0)
+    assert "designed skips" in capsys.readouterr().out
+
+    # ★ The mutation that must still be red: a skip that is NOT named. Because the two
+    # sit in one report, the ceiling is proven to count this one and not the other.
+    with_unexpected = _junit(
+        tmp_path,
+        [named, ("tests.unit.test_version", "test_probe", "temporary probe"), *windows_only],
+    )
+    with pytest.raises(SelfCheckError) as caught:
+        check_report(with_unexpected, min_tests=1, max_skips=0)
+    message = str(caught.value)
+    assert "1 tests skipped, ceiling is 0" in message, message
+    assert "temporary probe" not in message, (
+        "the ceiling must not name the designed skip; it counted the unexpected one"
+    )
+
+
+def test_the_designed_skip_is_matched_on_its_reason_not_only_its_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    """★ A named test that skips for a *different* reason is not excused.
+
+    An id alone would be a licence for that test to skip on anything, including a capability
+    that went missing -- the exact failure the ceiling exists to catch. The reason is what
+    keeps the entry pinned to one line of one test.
+    """
+    from tools.ci_selfcheck import SelfCheckError, check_report
+
+    drifted = _junit(
+        tmp_path,
+        [
+            (
+                "tests.unit.test_version",
+                "test_the_tag_at_head_names_the_version_this_build_reports",
+                "some other reason entirely",
+            ),
+            *_windows_only_cases(),
+        ],
+    )
+    with pytest.raises(SelfCheckError) as caught:
+        check_report(drifted, min_tests=1, max_skips=0)
+    assert "ceiling is 0" in str(caught.value)
+
+
+def test_every_named_skip_points_at_a_test_that_exists() -> None:
+    """A name that matches nothing is a stale excuse waiting to excuse the wrong skip.
+
+    ``DESIGNED_SKIPS`` keys are path-and-name, the same spelling ``WINDOWS_ONLY_TESTS``
+    uses, and a rename that forgot this list would leave an entry that can never fire. The
+    file is read here the same way pytest collects it, so the check is about the tree and
+    not about a copy of the names.
+    """
+    from tools.ci_selfcheck import DESIGNED_SKIPS
+
+    for target in DESIGNED_SKIPS:
+        path, _, name = target.partition("::")
+        module = REPO / path
+        assert module.is_file(), f"{target}: {path} is not in the tree"
+        assert f"def {name}(" in module.read_text(encoding="utf-8"), (
+            f"{target}: no test of that name is defined in {path}, so the excuse can never "
+            f"match -- either the test was renamed, or the entry is stale"
+        )
