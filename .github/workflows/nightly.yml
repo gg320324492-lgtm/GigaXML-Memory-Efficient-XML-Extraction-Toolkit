@@ -51,7 +51,7 @@ jobs:
           # Whole clone, for the same reason `test.yml`'s first job says.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 

@@ -25,7 +25,7 @@ jobs:
           # `fetch-depth: 0` is the whole of the fix: every commit and every tag.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -194,7 +194,7 @@ jobs:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -260,7 +260,7 @@ jobs:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -323,7 +323,7 @@ jobs:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -456,7 +456,7 @@ jobs:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -510,7 +510,7 @@ jobs:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 

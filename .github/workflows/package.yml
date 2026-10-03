@@ -83,7 +83,7 @@ jobs:
           # a guard go quietly hollow.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -458,7 +458,7 @@ jobs:
       # to be reachable, because the SBOM is generated from a real install rather than
       # written by hand. That failure is deliberate -- see the SBOM step -- but it is new,
       # and it should not arrive as a surprise.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -692,7 +692,7 @@ jobs:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
