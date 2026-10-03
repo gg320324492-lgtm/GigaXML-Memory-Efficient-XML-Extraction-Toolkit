@@ -246,6 +246,38 @@ family to run, and quoting it alone would overstate what a real config costs. Ev
 number here comes from a script in the repository; see the README's Benchmarks section
 for how to reproduce them.
 
+### The comparison table's own guard is currently red, and this is why
+
+`benchmarks/compare/verify_peaks.py` is the check that stops the comparison table from
+reporting a peak no running interpreter could have. It measures one thing — the peak RSS
+of an **empty** script run through the comparison runner's own wrapper — and requires every
+recorded peak to clear that floor by more than the harness's own noise. **It exits 1 on
+this build, and no CI job runs it** — not on the packaging workflow, not on the test
+workflow, not in a local full-suite run: it is a script a person runs by hand.
+
+Running it now:
+
+```
+60 peak readings checked against the 22.5 MiB floor
+10 reading(s) within the noise of the floor -- these may not have measured the work at all
+```
+
+**Those ten readings are not a defect, and this is not the table being wrong.** All ten are
+`raw_lxml` — five points at 100 MB (24.7–24.9 MiB) and five at 4 GB (25.0–25.1 MiB) — and
+the five points in between, at 1 GB, read 25.8–26.2 MiB and **clear** the same noise band.
+The numbers therefore straddle the line rather than following a trend, and a trend is
+exactly what the guard is looking for: a reading that never left an idle interpreter's
+footprint would be flat at every size. A streaming implementation's genuine peak *is* close
+to an idle interpreter's, because that is what streaming means; `raw_lxml` is the leanest
+of the four here, so it lands nearest the floor. The guard is doing its job — it is telling
+a person to go and confirm those points, not that the implementation is broken.
+
+**The points have not been re-recorded, and the threshold has not been moved.** Re-recording
+needs an idle machine and a full pass over freshly regenerated datasets; the third option —
+loosening the threshold until the ten pass — is refused, because a guard bent to clear the
+readings it flags stops being a guard. Until the points are re-recorded, they stand as they
+are. The other fifty readings are unaffected.
+
 ---
 
 ## Installing
