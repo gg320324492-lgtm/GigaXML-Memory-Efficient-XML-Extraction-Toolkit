@@ -12,7 +12,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # A shallow clone has no history and, by default, no tags, and three of the
           # benchmark provenance tests ask git questions a depth-1 clone cannot answer:
@@ -189,7 +189,7 @@ jobs:
     name: test (windows-latest, 3.13)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
@@ -255,7 +255,7 @@ jobs:
     name: test (macos-15, 3.13)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
@@ -318,7 +318,7 @@ jobs:
     name: the workflow's own claims
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
@@ -451,7 +451,7 @@ jobs:
     name: runtime dependency vulnerabilities
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
@@ -505,7 +505,7 @@ jobs:
     # measuring the interpreter, not the code.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0

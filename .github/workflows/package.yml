@@ -72,7 +72,7 @@ jobs:
             artifact: gigaxml-gui-linux
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone -- history and tags -- for the reason the test workflow sets out
           # at its own first checkout: a depth-1 clone answers "was this released?" and
@@ -441,7 +441,7 @@ jobs:
       # wanted" and the job still goes green. Four releases (v0.9.0, v1.0.0, v1.1.0 and
       # v1.2.0rc1) went out that way, and nothing caught it: the run was green, the
       # assets were attached, the tag existed. Only reading the published page found it.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
@@ -687,7 +687,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Whole clone: history and tags. The first checkout in this file says why.
           fetch-depth: 0
