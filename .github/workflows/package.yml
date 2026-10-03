@@ -462,6 +462,39 @@ jobs:
         with:
           python-version: "3.13"
 
+      # ★ M20. The line above declares an interpreter; it was read as though it declared a
+      # *dependencies* declaration too, and it does not. Two steps below are Python and
+      # `release_checksums.py` imports `yaml`, so the release job ran setup-python and then
+      # died on `ModuleNotFoundError: No module named 'yaml'` -- the first time any of this
+      # had run on a real tag, because that is the only ref this job runs on.
+      #
+      # PyYAML and nothing else, and the reason is not that the others are unavailable but
+      # that this job does not run any of them. It does not build a GUI or a binary, so it
+      # needs no Qt and no PyInstaller; it does not run pytest, so it needs no pytest; and
+      # the four tools it does invoke split cleanly. `release_checksums.py` reads the
+      # release's `files:` globs with PyYAML -- functional, not convenience, as its own
+      # docstring says. `check_sbom.py`, `make_version_info.py` and `spec_check.py` are
+      # standard library only. So `.[dev]`, or `.[dev,gui]` as the build job installs, would
+      # be the CI-that-only-one-machine-can-run mistake in the expensive direction: it would
+      # work, and it would fetch a 150-200 MB wheel this job never opens. The dev extra is
+      # what a contributor installs to run the suite, not what a release needs to ship.
+      #
+      # ★ Named here rather than inherited from the build job's install, because there is no
+      # inheritance between jobs: a dependency that arrives through "some earlier job
+      # installed it" is the same accident as a person's laptop happening to have it, one
+      # step removed. `tools/ci_selfcheck.py shape` now checks this the other way -- that
+      # every third-party import on a job's Python path is declared in that job -- so the
+      # next such step is a red pull request rather than the next tag.
+      - name: Install the release job's dependencies
+        # Declared rather than left to the runner default, like every other step here whose
+        # script is bash. `python -m pip` for the same reason the build job uses it: the
+        # bare `pip` on a runner is not guaranteed to be the one the declared interpreter
+        # installed.
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml
+
       # The guard for the line above, because "the job went green" is not the claim
       # being made here -- "the release page carries these notes" is. A missing or
       # empty file is the exact condition that produced four blank release pages, and

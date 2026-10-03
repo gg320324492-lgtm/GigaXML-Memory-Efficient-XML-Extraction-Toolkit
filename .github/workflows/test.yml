@@ -341,6 +341,20 @@ jobs:
         shell: bash
         run: python tools/ci_selfcheck.py shape --verbose
 
+      # ★ M20. The release job runs only on a tag, so what IT needs installed is
+      # invisible to a pull request -- until the tag, which is exactly how the second 2.0
+      # release candidate died on `ModuleNotFoundError: No module named 'yaml'` from a
+      # tools/ script that every developer's machine already had PyYAML for.
+      #
+      # `shape` above already runs this check (it is part of the same function), so this
+      # step adds no coverage. What it adds is the log: `deps` prints every job's
+      # tools/*.py imports beside what that job installs, so a reader of a green run can
+      # see what was checked rather than being told nothing was wrong. Same shape as
+      # `pins` and `pins --verify-remote` being separate steps.
+      - name: Every job installs what its tools/*.py steps import
+        shell: bash
+        run: python tools/ci_selfcheck.py deps
+
       # ★ A comment that grew into an essay costs nothing to write and is
       # never paid for. This job is where that belongs: `check_comments.py` reads
       # src/ with `tokenize` and `ast` and imports nothing outside the standard

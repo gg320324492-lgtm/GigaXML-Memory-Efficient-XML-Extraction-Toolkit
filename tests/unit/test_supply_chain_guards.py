@@ -114,6 +114,138 @@ def test_the_release_job_produces_and_attaches_both_new_files() -> None:
     assert "check_sbom.py" in scripts
 
 
+# --- tools/ci_selfcheck.py shape: a job installs what its tools import --------------
+
+
+def test_every_workflow_job_satisfies_its_tools_imports(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The real tree: every job in package.yml and test.yml installs what it runs.
+
+    This is the M20 defect as an assertion. ``package.yml``'s release job declared
+    ``setup-python`` and no ``pip install``, so the first tag that reached it died on
+    ``ModuleNotFoundError: No module named 'yaml'``. The check is on the real workflows
+    rather than a fixture, because a fixture would be a copy of the bug rather than the
+    repository's own shape.
+    """
+    from tools.ci_selfcheck import check_python_dependencies
+    from tools.ci_selfcheck import main as selfcheck_main
+
+    assert check_python_dependencies() == []
+    assert selfcheck_main(["deps"]) == 0, capsys.readouterr().out
+
+
+def test_a_python_step_with_no_install_is_caught() -> None:
+    """Remove the release job's install and the check names the script and the module.
+
+    ★ This is the mutation that was rehearsed against the real workflow: the
+    ``python -m pip install pyyaml`` line deleted from ``package.yml`` while the
+    interpreter declaration stays. The check must go red, and it must say *which script*
+    and *which module* -- a bare "a job is missing a dependency" is not actionable.
+    """
+    from tools.ci_selfcheck import WORKFLOW_DIR, check_python_dependencies
+
+    workflow = WORKFLOW_DIR / "package.yml"
+    original = workflow.read_text(encoding="utf-8")
+    mutated = original.replace(
+        "          python -m pip install --upgrade pip\n          python -m pip install pyyaml\n",
+        "",
+    )
+    assert mutated != original, "the install step this test reverts is no longer in the workflow"
+    try:
+        workflow.write_text(mutated, encoding="utf-8", newline="\n")
+        problems = check_python_dependencies()
+    finally:
+        workflow.write_text(original, encoding="utf-8", newline="\n")
+    assert problems, "removing the only PyYAML install must be caught"
+    joined = "\n".join(problems)
+    assert "release_checksums.py" in joined
+    assert "yaml" in joined
+    assert "package.yml:release" in joined
+
+
+def test_a_sibling_venv_install_does_not_satisfy_the_jobs_own_interpreter() -> None:
+    """★ The failure of the naive version, pinned so it cannot come back.
+
+    The release job installs PyYAML with ``python -m pip install pyyaml`` AND runs
+    ``"$RUNNER_TEMP/sbomenv/bin/python" -m pip install .`` in a throwaway venv. A version
+    of the check that merged every ``pip install`` in the job read that second line as
+    satisfying PyYAML -- the project's runtime dependencies include it -- and stayed green
+    on the tree where the first line had been deleted. ``installed_requirements`` is
+    asserted directly so the distinction is a fact about the check, not a property that
+    happens to hold because of what the current workflow contains.
+    """
+    from tools.ci_selfcheck import installed_requirements
+
+    job = {
+        "steps": [
+            {"name": "Install", "run": "python -m pip install pyyaml\n"},
+            {
+                "name": "SBOM",
+                "run": 'set -euo pipefail\n"$RUNNER_TEMP/sbomenv/bin/python" -m pip '
+                "install --quiet .\n",
+            },
+        ]
+    }
+    requirements = installed_requirements(job)
+    assert "pyyaml" in requirements
+    # `pip install .` in the venv pulls `lxml` and `pyyaml` from pyproject's runtime
+    # dependencies. If the sibling env is (wrongly) counted, they appear here; if it is
+    # correctly skipped, they do not -- which is the whole point, because their absence is
+    # what makes deleting the real install line fail this check.
+    assert "lxml" not in requirements, (
+        "a venv's `pip install .` was read as installing into the job's interpreter; the "
+        "check would then pass on a job that can no longer import its own tools"
+    )
+
+
+def test_a_guarded_import_is_not_a_requirement_but_an_exiting_one_is() -> None:
+    """★ Two scripts, both guarding a third-party import, judged differently -- on purpose.
+
+    ``ci_selfcheck.py`` imports PySide6 inside ``try/except Exception`` and returns a facts
+    dict; the ``ci-shape`` job installs no Qt and must not be asked to, or the check is red
+    on a healthy repository. ``make_icon.py`` imports Pillow inside ``try/except
+    ImportError`` and exits 2; the build job installs Pillow and that must stay required, or
+    deleting ``pillow`` from the ``dev`` extra stops being visible here. The difference is
+    what the handler does, and this pins it in both directions.
+    """
+    from tools.ci_selfcheck import REPO_ROOT, third_party_imports
+
+    required, optional = third_party_imports(REPO_ROOT / "tools" / "ci_selfcheck.py")
+    assert "yaml" in required
+    assert "PySide6" in optional
+    assert "PySide6" not in required
+
+    required, optional = third_party_imports(REPO_ROOT / "tools" / "make_icon.py")
+    assert "PIL" in required, "make_icon exits when Pillow is absent, so Pillow is required"
+    assert "PIL" not in optional
+
+
+def test_a_comment_in_a_run_block_is_not_a_requirement() -> None:
+    """Reading prose as pip arguments produced a requirement set of English words.
+
+    The release job's SBOM step is mostly a paragraph of explanation. A check whose evidence
+    is nonsense cannot be argued with, whichever way its verdict falls.
+    """
+    from tools.ci_selfcheck import installed_requirements
+
+    job = {
+        "steps": [
+            {
+                "run": (
+                    "python -m pip install --quiet cyclonedx-bom\n"
+                    "# `pip install .` is what the README tells a CLI user to run, so it\n"
+                    "# is the set of packages this release's library actually pulls.\n"
+                )
+            }
+        ]
+    }
+    requirements = installed_requirements(job)
+    assert "cyclonedx-bom" in requirements
+    for word in ("it", "is", "the", "so", "a", "user"):
+        assert word not in requirements, f"{word!r} was read out of a comment as a package"
+
+
 # --- tools/release_checksums.py ----------------------------------------------------
 
 

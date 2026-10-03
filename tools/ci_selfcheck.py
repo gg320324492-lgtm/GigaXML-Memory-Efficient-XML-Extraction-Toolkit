@@ -8,7 +8,7 @@ project's eight "green here, red in CI" incidents were of exactly that shape -- 
 suspicion, an environment difference, and a suite that never ran -- so this milestone
 adds the machine checks that make the claim falsifiable.
 
-Five subcommands, and each answers a different way the claim could be false:
+Six subcommands, and each answers a different way the claim could be false:
 
 ``shape``
     Static. Reads ``.github/workflows/*.yml`` and asserts the properties a matrix is not
@@ -59,6 +59,14 @@ Five subcommands, and each answers a different way the claim could be false:
     a detail: see the note in ``check_tracked`` for why the naive form of this check is red
     on a healthy repository.
 
+``deps``
+    Static, and the newest. Every job that runs a ``tools/*.py`` script must install what
+    that script imports -- the defect that killed the second 2.0 release candidate, because
+    the ``release`` job runs only on a tag and nothing in a pull request could see what it
+    needed. It is a subset of ``shape`` (which calls the same function) with a readable
+    table in front of the verdict, so a green run shows what was checked. See
+    ``check_python_dependencies`` for exactly what it does and does not cover.
+
 None of this replaces pytest's exit code, and none of it makes a failure quieter. It adds
 the two things an exit code cannot say: *how much* ran, and *on what*.
 """
@@ -66,6 +74,7 @@ the two things an exit code cannot say: *how much* ran, and *on what*.
 from __future__ import annotations
 
 import argparse
+import ast
 import locale
 import os
 import pathlib
@@ -75,6 +84,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import xml.etree.ElementTree as ET
 from collections import Counter
 from typing import Any
@@ -486,8 +496,387 @@ def check_workflow_shape() -> tuple[list[str], list[tuple[str, str, dict[str, An
         problems.append("no job runs on macos-latest: the platform is claimed nowhere")
 
     problems.extend(check_release_artifacts())
+    problems.extend(check_python_dependencies())
 
     return problems, listing
+
+
+# --- third-party imports, per job --------------------------------------------------
+
+#: ``pip install`` requirement name -> the module name it puts on ``sys.path``.
+#:
+#: ★ This table exists because the two names are genuinely different and nothing derives
+#: one from the other: ``pip install pyyaml`` gives ``import yaml``, ``pip install pillow``
+#: gives ``import PIL``, and a check that compared requirement names to import names
+#: without knowing this would call every one of them missing. It is written out rather
+#: than read from installed metadata (``top_level.txt``) because this check runs in the
+#: ``ci-shape`` job, which installs almost nothing on purpose -- asking the machine what a
+#: package is called would make the check depend on the very thing it is checking for.
+#:
+#: Only distributions this repository installs appear here. A requirement that is not in
+#: the table is not silently assumed to provide nothing: it contributes its own normalised
+#: name as a candidate module name, so ``pip install foo`` covers ``import foo`` and the
+#: check stays useful for a dependency added tomorrow without a table edit. What it cannot
+#: do is know that ``foo`` also provides ``bar`` -- and that is reported, not guessed at.
+DISTRIBUTION_MODULES: dict[str, tuple[str, ...]] = {
+    "pyyaml": ("yaml",),
+    "pillow": ("PIL",),
+    "pyside6": ("PySide6",),
+    "pytest-qt": ("pytestqt",),
+    "pytest-cov": ("pytest_cov",),
+    "pyinstaller": ("PyInstaller",),
+    "pyarrow": ("pyarrow",),
+    "cyclonedx-bom": ("cyclonedx", "cyclonedx_py"),
+}
+
+
+def normalise_requirement(requirement: str) -> str:
+    """``PyYAML>=6.0`` -> ``pyyaml``; the comparison key for a requirement name.
+
+    PEP 503, the same reduction ``check_sbom.normalise`` makes. Written out for the reason
+    that one gives: a check whose correctness depends on a shared helper breaks when the
+    helper moves, and this is four characters of ``re``.
+    """
+    name = re.split(r"[<>=!~\[;]", requirement.strip(), maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def third_party_imports(path: pathlib.Path) -> tuple[set[str], set[str]]:
+    """The modules ``path`` imports that are neither the standard library nor this project.
+
+    Returns ``(required, optional)``. A module is *optional* when every import of it sits
+    inside a ``try:`` whose handler recovers rather than giving up -- the PySide6 import in
+    ``qt_facts``, which ``ci-shape`` must not be required to install. See
+    ``_guarded_import_lines`` for why "guarded" alone is not enough.
+
+    ★ Parse, not grep. A string search for ``import`` finds the word in a docstring, which
+    is how ``check_comments.py``'s prose about ``import`` would be read as a dependency on
+    a module called ``(``. ``ast`` sees imports and only imports, and it sees an import
+    written inside a function as well as one at the top -- which matters here, because
+    ``ci_selfcheck.py`` imports PySide6 inside ``qt_facts`` and a top-level-only scan would
+    miss exactly the optional dependency most likely to be dropped by accident.
+
+    What it does *not* see: ``importlib.import_module("x")`` and anything else computed at
+    run time. That gap is stated in ``check_python_dependencies`` rather than closed,
+    because closing it would need a name this check cannot resolve statically.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    stdlib = sys.stdlib_module_names
+    guarded = _guarded_import_lines(tree)
+    required: set[str] = set()
+    optional: set[str] = set()
+    for node in ast.walk(tree):
+        names: set[str] = set()
+        if isinstance(node, ast.Import):
+            names = {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            # ``from . import x`` and ``from .foo import x`` are this package's own;
+            # ``node.level`` is how many dots, and a relative import has no module name to
+            # look up.
+            names = {node.module.split(".")[0]}
+        ignore = {"__future__", "tools", "tests", "gigaxml"} | set(stdlib)
+        for name in names:
+            if name in ignore:
+                continue
+            (optional if node.lineno in guarded else required).add(name)
+    return required, optional
+
+
+def _guarded_import_lines(tree: ast.AST) -> set[int]:
+    """The line numbers of imports a script has agreed it can run *without*.
+
+    ★ Without this the check is red on a healthy repository, and a guard that is always red
+    is a guard that gets deleted. ``ci_selfcheck.py`` imports PySide6 inside a
+    ``try: ... except Exception:`` -- deliberately, because ``qt_facts`` runs on the
+    ``ci-shape`` job, which installs no Qt and must not need to. An import the script has
+    already agreed may fail is not a dependency the job has to satisfy; reporting it as one
+    would make the check demand a 200 MB wheel for a static YAML check.
+
+    ★ **But "guarded" is not the same as "optional", and conflating the two is how this
+    check would have gone blind.** ``make_icon.py`` guards its Pillow import the same way --
+    ``except ImportError:`` -- and then *exits 2*. It is a hard requirement wearing a
+    guard's clothes, and a rule that read any guard as "optional" would stop watching the
+    one build input whose absence the build job is set up to catch. So the two cases are
+    told apart by what the handler does: a handler that raises, or calls ``sys.exit``, has
+    decided the absence is fatal and the import is required; a handler that does anything
+    else has decided to carry on.
+
+    The test is deliberately narrow. It does not try to decide whether the *script* later
+    fails for want of the module, only whether the handler itself gives up. Where it cannot
+    tell, it errs towards required -- a false positive a reader can see and argue with,
+    never a false negative that lets the release job die on a tag.
+    """
+    import_failure = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            if not (
+                handler.type is None
+                or (isinstance(handler.type, ast.Name) and handler.type.id in import_failure)
+                or (
+                    isinstance(handler.type, ast.Tuple)
+                    and any(
+                        isinstance(elt, ast.Name) and elt.id in import_failure
+                        for elt in handler.type.elts
+                    )
+                )
+            ):
+                continue
+            if _gives_up(handler):
+                continue  # the absence is fatal: this import is a requirement
+            for child in ast.walk(node):
+                if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    lines.add(child.lineno)
+    return lines
+
+
+def _gives_up(handler: ast.ExceptHandler) -> bool:
+    """Does this ``except`` body end the script rather than recover from it?
+
+    ``raise ...`` (including ``raise SystemExit``) and ``sys.exit(...)`` both count. A bare
+    ``return`` does not, because ``ci_selfcheck.qt_facts`` returns a facts dict with an
+    ``error`` key and its caller carries on -- and because a ``return`` that happens to be
+    the last statement of a required import is still a recoverable-looking shape, which is
+    the direction this errs.
+    """
+    for child in ast.walk(handler):
+        if isinstance(child, ast.Raise):
+            return True
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "exit"
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == "sys"
+        ):
+            return True
+    return False
+
+
+def python_scripts_in(step: dict[str, Any]) -> set[pathlib.Path]:
+    """Every repository Python file a step's ``run:`` names, resolved to a path.
+
+    Three shapes are recognised, and each is one this workflow really uses:
+    ``python -m tools.make_icon``, ``python tools/release_checksums.py`` and a bare
+    ``python -m tools.spec_check``. ``python -c "..."`` and a heredoc are not followed --
+    an inline program is not a file whose imports can be read, and pretending to check it
+    would be the vacuous check this one is written to avoid.
+
+    Returns ``tools/`` and ``src/`` files that exist. A name that does not resolve is
+    reported by the caller rather than dropped: a step that runs a script which is not
+    there is a failure this check should not be able to see past.
+    """
+    text = run_text(step)
+    names: set[str] = set()
+    for match in re.finditer(r"-m\s+tools\.([A-Za-z_][\w.]*)", text):
+        names.add("tools/" + match.group(1).replace(".", "/") + ".py")
+    for match in re.finditer(r"(?<![\w./-])(tools/[\w./-]+\.py)", text):
+        names.add(match.group(1))
+    return {REPO_ROOT / name for name in sorted(names)}
+
+
+def _installs_into_this_interpreter(line: str) -> bool:
+    """Is this ``pip install`` line aimed at the job's own interpreter?
+
+    ★ This is the whole of the environment model, and it is one rule rather than none. The
+    invocations that reach the job's interpreter are ``pip install ...`` and
+    ``python -m pip install ...``. An interpreter spelled with a directory in front of it
+    -- ``"$RUNNER_TEMP/sbomenv/bin/python" -m pip``, ``"$RUNNER_TEMP/auditenv/bin/python"``
+    -- is a venv's, and what it installs is not on the path of the step that runs
+    ``tools/release_checksums.py`` afterwards. A bare word ending in ``pip`` after a slash
+    (``.../bin/pip``) is the same situation.
+
+    Conservative in the direction that keeps the check awake: a line this cannot classify is
+    treated as *not* the job's environment, so an install it fails to recognise shows up as a
+    missing dependency rather than silently satisfying one.
+    """
+    prefix = line.split("-m pip", 1)[0].split("pip install", 1)[0]
+    tokens = [t.strip("\"'") for t in prefix.split() if t not in {"-", "|", "&&", ";"}]
+    # Drop the `-m`/`pip`-leading tokens if the prefix is `pip install` itself.
+    if not tokens:
+        return True
+    return all(token in {"python", "python3", "pip", "pip3", "-m"} for token in tokens)
+
+
+def installed_requirements(job: dict[str, Any]) -> set[str]:
+    """The normalised requirements a job installs **into the interpreter its steps run**.
+
+    ★ The environment matters, and getting it wrong made this check blind to the exact
+    defect it was written for. The release job has an ``Install`` step that runs
+    ``python -m pip install pyyaml``, and an SBOM step that creates a throwaway venv and
+    runs ``"$RUNNER_TEMP/sbomenv/bin/python" -m pip install .``. Both are ``pip install``
+    lines in the same job, and they install into *different interpreters* -- so merging
+    them let the venv's ``pip install .`` (which pulls PyYAML from ``pyproject.toml`` as a
+    runtime dependency) stand in for the job having PyYAML. Measured: with the ``install``
+    line deleted, a version of this function that merged everything still reported
+    ``release_checksums.py`` as satisfied. A check that answers "did anything in this job
+    install this" instead of "did *this interpreter* get this" passes on the broken tree.
+
+    So an install counts only when its pip is the job's own: ``pip``, ``python -m pip``, or
+    a bare ``python`` -- the last two being how every step in this repository invokes it.
+    A path-qualified interpreter (``$RUNNER_TEMP/...``, ``../venv/bin/python``) is a
+    different environment and is skipped, as is a ``venv``-relative ``bin/pip``.
+    """
+    requirements: set[str] = set()
+    for step in steps_of(job):
+        for line in run_text(step).splitlines():
+            # ★ Strip the shell comment first. A `run: |` block is full of prose -- the
+            # release job has a paragraph inside its SBOM step -- and reading it as pip
+            # arguments produced a requirement set containing the words "it", "is" and
+            # "user". A check whose evidence is nonsense cannot be argued with, whether or
+            # not its verdict happens to be right.
+            stripped = line.split("#", 1)[0].strip()
+            if "pip install" not in stripped and "pip3 install" not in stripped:
+                continue
+            if not _installs_into_this_interpreter(stripped):
+                continue
+            payload = stripped.split("pip install", 1)[1].split("pip3 install", 1)[-1]
+            # `-e` takes the next token as its argument; splitting it off keeps the `-e`
+            # flag from being read as a requirement named "-e".
+            payload = re.sub(r"(?<!\S)-e(?=\s)", "", payload)
+            for token in payload.split():
+                token = token.strip("\"'")  # `.[dev,gui]` is usually written quoted
+                if not token or token.startswith("-"):
+                    continue  # flags like --upgrade, --quiet, and a `grep` after a pipe
+                if token in {"|", ">", ">>", "&&", ";"}:
+                    continue
+                if token in {".", "./"}:
+                    # A plain local install: the runtime dependencies, no extras.
+                    requirements |= runtime_requirements()
+                    continue
+                if token.startswith("."):
+                    # `.[dev,gui]` -- the project itself with extras. Only the extras name
+                    # requirements; the leading `.` is the path to install and normalises
+                    # to `-`, which is not a package and must not be added as one.
+                    for extra in re.findall(r"\[([^\]]*)\]", token):
+                        requirements |= extras_of(extra)
+                    continue
+                for extra in re.findall(r"\[([^\]]*)\]", token):
+                    requirements |= extras_of(extra)
+                requirements.add(normalise_requirement(token))
+    return requirements
+
+
+def project_extras() -> dict[str, set[str]]:
+    """``pyproject.toml``'s ``[project.optional-dependencies]``, normalised.
+
+    Read rather than written down, for the reason the release globs are: a second copy of
+    what ``dev`` contains is a copy that is correct until somebody adds a dependency to it,
+    and the day it is wrong the check reports a package the job does install.
+    """
+    raw = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    extras: dict[str, set[str]] = {}
+    for name, requirements in (raw.get("project", {}).get("optional-dependencies") or {}).items():
+        extras[name] = {normalise_requirement(r) for r in requirements}
+    return extras
+
+
+def extras_of(extra_name: str) -> set[str]:
+    """``dev,gui`` -> every requirement those extras pull in, plus the base install.
+
+    ``.`` alone means the runtime dependencies, so ``-e ".[dev]"`` is the runtime set plus
+    ``dev``. The base set is added by the caller through the literal ``.`` token, which
+    normalises to ``.`` -- so it is spelled out here instead: an extras request always
+    brings the runtime dependencies with it, and leaving that implicit is how a check comes
+    to say a package is missing from a job that installs it.
+    """
+    extras = project_extras()
+    wanted: set[str] = set()
+    for name in (part.strip() for part in extra_name.split(",")):
+        if name:
+            wanted |= extras.get(name, set())
+    wanted |= runtime_requirements()
+    return wanted
+
+
+def runtime_requirements() -> set[str]:
+    """``pyproject.toml``'s ``[project.dependencies]``, normalised."""
+    raw = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return {normalise_requirement(r) for r in raw.get("project", {}).get("dependencies") or []}
+
+
+def modules_provided(requirement: str) -> set[str]:
+    """The module names a normalised requirement could put on ``sys.path``.
+
+    The table where one is known, and the requirement's own name otherwise. The fallback is
+    what keeps this from being a list of two packages that only knows about today: a script
+    that imports something whose distribution matches the module name -- the common case --
+    is covered without an edit here.
+    """
+    known = DISTRIBUTION_MODULES.get(requirement)
+    if known is not None:
+        return set(known)
+    return {requirement.replace("-", "_"), requirement}
+
+
+def check_python_dependencies() -> list[str]:
+    """Every third-party import on a job's Python path must be installed by that job.
+
+    ★ **The defect this exists for.** ``package.yml``'s ``release`` job ran only on a tag,
+    so nothing in an ordinary pull request could notice what it needed. It declared an
+    interpreter and no dependencies, and the second release candidate of 2.0 died on
+    ``ModuleNotFoundError: No module named 'yaml'`` -- from a script that had parsed fine in
+    every pull request, on every developer's machine, because every one of them had PyYAML
+    installed. The first milestone that added a Python step to that job declared the
+    interpreter and trusted the rest to be there. This is the check that would have been red.
+
+    ★ **What it covers.** Every job in every ``.github/workflows/*.yml``; every ``run:``
+    step that invokes a ``tools/*.py`` script by ``-m tools.x`` or by path; the third-party
+    modules that script imports, read with ``ast``; and whether the job's own ``run:`` steps
+    install a requirement that provides each of them -- resolving ``.[extra]`` against
+    ``pyproject.toml``.
+
+    ★ **What it does not cover, stated rather than left to be discovered.** It follows
+    imports in ``tools/`` and not in ``src/``: a job that runs ``gigaxml`` itself -- the CLI
+    or the GUI -- has its imports in the package, and checking those means deciding which
+    optional imports are required, which is the ``[project.optional-dependencies]`` question
+    and not this one. It does not see a dependency reached through ``importlib``, a
+    ``python -c`` program, or a script under a path other than ``tools/``. It is static: it
+    compares what the job says it installs against what the tree says the script imports,
+    so an install that fails at run time still passes here. Each of these is a gap in a
+    check that answers one real question, not a way the check passes without answering it.
+
+    A **guarded** import -- one inside a ``try:`` that catches ``ImportError`` -- is not
+    required, because the script has already agreed it can run without it. That is the
+    ``ci_selfcheck.py`` PySide6 import, and without this rule the check would fail the
+    ``ci-shape`` job for not installing Qt, which is a false positive on a healthy
+    repository. See ``_guarded_import_lines``.
+    """
+    problems: list[str] = []
+    for workflow_name, workflow in load_workflows().items():
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            steps = steps_of(job)
+            if not any(python_scripts_in(step) for step in steps):
+                continue
+            installed = installed_requirements(job)
+            provided: set[str] = set()
+            for requirement in installed:
+                provided |= modules_provided(requirement)
+            for step in steps:
+                for script in sorted(python_scripts_in(step)):
+                    if not script.is_file():
+                        problems.append(
+                            f"{workflow_name}:{job_name}: step {step.get('name', '')!r} runs "
+                            f"{script.relative_to(REPO_ROOT).as_posix()}, which is not in the "
+                            f"tree. A check that cannot find the script cannot check what it "
+                            f"imports."
+                        )
+                        continue
+                    required, _optional = third_party_imports(script)
+                    missing = sorted(required - provided)
+                    if missing:
+                        problems.append(
+                            f"{workflow_name}:{job_name}: step {step.get('name', '')!r} runs "
+                            f"{script.relative_to(REPO_ROOT).as_posix()}, which imports "
+                            f"{', '.join(missing)}, and this job installs nothing that "
+                            f"provides them (it installs: "
+                            f"{', '.join(sorted(installed)) or 'nothing'}). This job would "
+                            f"fail on the runner with ModuleNotFoundError -- and if it runs "
+                            f"only on a tag, not until then."
+                        )
+    return problems
 
 
 #: The two files M15 adds to every release, and the script that makes each.
@@ -1064,6 +1453,11 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("tracked", help="no tracked path may be excluded by a committed .gitignore")
 
+    sub.add_parser(
+        "deps",
+        help="every job installs what its tools/*.py steps import (a subset of `shape`)",
+    )
+
     args = parser.parse_args(argv)
     try:
         if args.command == "shape":
@@ -1119,6 +1513,41 @@ def main(argv: list[str] | None = None) -> int:
                     f"  {len(local)} are excluded only by a machine-local rule, which is "
                     f"this machine's business and not the repository's: {', '.join(local)}"
                 )
+            return 0
+        if args.command == "deps":
+            # Prints the whole table before the verdict, so a reader can see *what* was
+            # checked and not only that nothing was wrong. Same shape as `pins`: the
+            # evidence and the conclusion, in that order, in one log.
+            print("=" * 96)
+            print("what each job's tools/*.py steps import, and what that job installs")
+            print("=" * 96)
+            for workflow_name, workflow in load_workflows().items():
+                for job_name, job in (workflow.get("jobs") or {}).items():
+                    scripts: set[pathlib.Path] = set()
+                    for step in steps_of(job):
+                        scripts |= python_scripts_in(step)
+                    if not scripts:
+                        continue
+                    installed = ", ".join(sorted(installed_requirements(job))) or "nothing"
+                    print(f"{workflow_name}:{job_name}")
+                    print(f"    installs: {installed}")
+                    for script in sorted(scripts):
+                        name = script.relative_to(REPO_ROOT).as_posix()
+                        if not script.is_file():
+                            print(f"    {name}: NOT IN THE TREE")
+                            continue
+                        required, optional = third_party_imports(script)
+                        line = f"    {name}: requires {', '.join(sorted(required)) or 'none'}"
+                        if optional:
+                            line += f" (optional: {', '.join(sorted(optional))})"
+                        print(line)
+            problems = check_python_dependencies()
+            if problems:
+                print(f"\n{len(problems)} problem(s):")
+                for problem in problems:
+                    print(f"  - {problem}")
+                return 1
+            print("\ndeps: every job's tools/*.py steps import only what the job installs.")
             return 0
     except SelfCheckError as exc:
         # ★ stdout is flushed first, and that is not tidiness. Without it the verdict --
