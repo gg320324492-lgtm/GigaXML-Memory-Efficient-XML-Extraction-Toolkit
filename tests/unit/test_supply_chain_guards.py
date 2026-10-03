@@ -496,6 +496,18 @@ def _windows_only_cases() -> list[tuple[str, str, str]]:
     ]
 
 
+def _windows_only_ceiling() -> int:
+    """The ``max_skips`` that lets ``WINDOWS_ONLY_TESTS`` through on this platform.
+
+    Those two tests are a separate rule with its own platform logic -- off Windows they are
+    expected to skip, and the real non-Windows legs allow for them with a ceiling of 40. A
+    test about the designed/unexpected split has to give them their room, or it fails on the
+    wrong rule: on a Linux leg the two windows-only skips are the report's only *unexpected*
+    skips, and the ceiling under test would be counting them rather than the probe.
+    """
+    return 0 if sys.platform == "win32" else len(_windows_only_cases())
+
+
 def _junit(tmp_path: pathlib.Path, cases: list[tuple[str, str, str]]) -> pathlib.Path:
     """A junit report holding ``(classname, name, skipped-reason)`` cases; reason '' = pass.
 
@@ -536,7 +548,8 @@ def test_a_designed_skip_is_excused_and_an_unexpected_one_is_not(
     ``WINDOWS_ONLY_TESTS`` is added in the state this platform would produce it, because
     ``check_report`` also insists those two are present -- leaving them out would fail on a
     different rule than the one under test, which is how a contract test comes to assert
-    the wrong thing.
+    the wrong thing. The ceiling passed to the check is that baseline, so the only skip left
+    for the ceiling to judge is the designed one and the probe.
     """
     from tools.ci_selfcheck import SelfCheckError, check_report
 
@@ -546,10 +559,11 @@ def test_a_designed_skip_is_excused_and_an_unexpected_one_is_not(
         "HEAD is not a release tag: no tags point at it",
     )
     windows_only = _windows_only_cases()
+    ceiling = _windows_only_ceiling()
 
-    # Only the designed skip: at a ceiling of zero, the report passes.
+    # Only the designed skip: at the platform's own ceiling, the report passes.
     only_named = _junit(tmp_path, [named, *windows_only])
-    check_report(only_named, min_tests=1, max_skips=0)
+    check_report(only_named, min_tests=1, max_skips=ceiling)
     assert "designed skips" in capsys.readouterr().out
 
     # ★ The mutation that must still be red: a skip that is NOT named. Because the two
@@ -559,11 +573,14 @@ def test_a_designed_skip_is_excused_and_an_unexpected_one_is_not(
         [named, ("tests.unit.test_version", "test_probe", "temporary probe"), *windows_only],
     )
     with pytest.raises(SelfCheckError) as caught:
-        check_report(with_unexpected, min_tests=1, max_skips=0)
+        check_report(with_unexpected, min_tests=1, max_skips=ceiling)
     message = str(caught.value)
-    assert "1 tests skipped, ceiling is 0" in message, message
+    assert f"ceiling is {ceiling}" in message, message
+    assert "HEAD is not a release tag" not in message, (
+        "the ceiling must not be counting the designed skip; it counted the probe instead"
+    )
     assert "temporary probe" not in message, (
-        "the ceiling must not name the designed skip; it counted the unexpected one"
+        "the failure message is about the count, not a list of every reason"
     )
 
 
@@ -578,6 +595,7 @@ def test_the_designed_skip_is_matched_on_its_reason_not_only_its_name(
     """
     from tools.ci_selfcheck import SelfCheckError, check_report
 
+    ceiling = _windows_only_ceiling()
     drifted = _junit(
         tmp_path,
         [
@@ -590,8 +608,8 @@ def test_the_designed_skip_is_matched_on_its_reason_not_only_its_name(
         ],
     )
     with pytest.raises(SelfCheckError) as caught:
-        check_report(drifted, min_tests=1, max_skips=0)
-    assert "ceiling is 0" in str(caught.value)
+        check_report(drifted, min_tests=1, max_skips=ceiling)
+    assert f"ceiling is {ceiling}" in str(caught.value)
 
 
 def test_every_named_skip_points_at_a_test_that_exists() -> None:
