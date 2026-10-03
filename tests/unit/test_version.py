@@ -411,3 +411,194 @@ def test_the_typed_classifier_is_backed_by_a_py_typed_marker() -> None:
             f"{marker.relative_to(REPO_ROOT)} exists but no Typing classifier is declared, "
             "so the marker is dead weight no tool will look for"
         )
+
+
+# --------------------------------------------------------------------------
+# The classifier. The one version fact written by hand, in the wrong order.
+# --------------------------------------------------------------------------
+
+#: What a release carries once it is no longer a candidate.
+STABLE = "Development Status :: 5 - Production/Stable"
+
+#: What the candidates carried, and what v2.0.0 was published with.
+BETA = "Development Status :: 4 - Beta"
+
+#: A release spelling carrying no pre-release marker: three numeric parts and nothing
+#: after them. Dev and post releases never reach here, because :data:`RELEASE_SPELLING`
+#: refuses both -- which is why "carries no pre-release suffix" reduces to "carries no
+#: rc" rather than to a second list this file would have to keep in step with the first.
+FINAL_SPELLING = re.compile(r"\A\d+\.\d+\.\d+\Z")
+
+
+def declared_major(version: str) -> int | None:
+    """The major number of a release spelling, or ``None`` when it is not one.
+
+    ``None`` is the answer for every spelling :data:`RELEASE_SPELLING` refuses, because
+    those are not releases at all and the rule below has nothing to say about them. It
+    is read rather than guessed at, so widening the refusals list cannot silently widen
+    this one too.
+    """
+    if not RELEASE_SPELLING.match(version):
+        return None
+    return int(version.split(".")[0])
+
+
+def classifier_may_ship(version: str, classifiers: list[str]) -> bool:
+    """Whether ``version`` may be published carrying ``classifiers``.
+
+    Three answers, not two, and the middle one is the counter-example this rule has to
+    survive.
+
+    **A candidate may be Beta.** ``2.0.0rc4`` shipped as one, which is what a candidate
+    is for. This is the direction the guard has to leave alone: nothing here says a
+    stable classifier is wrong for a candidate.
+
+    **A 0.x may be Beta, and may be Alpha.** Under SemVer a ``0.x`` is a statement that
+    nothing about the interface is settled, so ``3 - Alpha`` is the honest label for it
+    rather than a defect -- and this repository shipped ``v0.9.0`` that way, from a
+    pyproject that read ``3 - Alpha`` for the whole of the 0.x line. A rule with no
+    exemption there would be red on its own past, and a guard red on its own history is
+    a guard somebody eventually deletes. The exemption costs this rule nothing: the
+    accident it exists for is a *1.x or later* final release carrying a candidate's
+    label, and that is what it refuses.
+
+    **A final release at 1.x or above may not be Beta.** This is the only refusal, and
+    it is one direction only. The classifier is still written by hand and never
+    recomputed from the version -- :data:`STABLE` says what *this* version must carry,
+    not what every version may.
+    """
+    major = declared_major(version)
+    if major is None or major == 0:
+        return True
+    if not FINAL_SPELLING.match(version):
+        return True
+    return STABLE in classifiers
+
+
+def test_a_declared_final_release_carries_the_stable_classifier() -> None:
+    """The order of two steps only one order works in, bound to the version declaration.
+
+    **The accident.** ``pyproject.toml`` did not carry :data:`STABLE` until commit
+    ``fb0f408``; the ``v2.0.0`` tag points at ``8aee010``, earlier the same day. So the
+    tree was tagged and uploaded while it still read :data:`BETA`, and the edit that
+    corrected it changed the repository and nothing else -- the distribution on the index
+    reads ``4 - Beta`` to this day. A classifier is a field of the build, fixed at
+    upload, so "correct the classifier after the release" is not a repair; it is a
+    comment.
+
+    **Why it is bound to :data:`RELEASE_VERSION` and not to the tag.** The tag is the
+    same fourth source :func:`test_the_tag_at_head_names_the_version_this_build_reports`
+    reads, and it is cut by a person's step outside the suite -- a guard keyed to it
+    fires after the tag, which is the moment the mistake stopped being cheap. Binding
+    this to the declaration puts it in the bump, which is before the tag: the window in
+    which the one-line edit still reaches the artefact.
+
+    **Why it cannot cry wolf.** Ordinary development does not trip it. The version
+    stands at the last release, which already carries :data:`STABLE`, so every commit
+    between releases is green; it goes red only on the commit that declares a new final
+    version without the classifier, which is exactly the commit that needs it. And
+    satisfying it early is free even when it does fire: an un-tagged classifier edit is
+    invisible outside the repository, so making this green before the tag is always
+    safe, and the tag is the only thing between the tree and the index.
+    """
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    classifiers = [str(c) for c in pyproject["project"]["classifiers"]]
+    assert classifier_may_ship(RELEASE_VERSION, classifiers), (
+        f"RELEASE_VERSION is {RELEASE_VERSION!r}, which is a final release, and a final "
+        f"release has to carry {STABLE!r} -- the tree declares "
+        f"{[c for c in classifiers if c.startswith('Development Status')]}. This is not "
+        "cosmetic: classifiers are baked into the uploaded metadata at publish time, so a "
+        "classifier fixed after the tag only fixes the repository. PyPI refuses to reuse "
+        "a version number, which is what makes this worth catching here, while the tag "
+        "has not been cut yet."
+    )
+
+
+#: The combinations the rule above has to accept, each with what it is. The 0.x cases
+#: are this repository's own history rather than a hypothetical -- it shipped ``3 -
+#: Alpha`` at a final spelling -- and a rule that refused those would be refusing
+#: something that actually happened here.
+ACCEPTED_CLASSIFIERS = [
+    pytest.param("2.0.0rc4", [BETA], id="candidate-as-beta"),
+    pytest.param("2.0.0rc1", [STABLE], id="candidate-as-stable-is-not-this-guards-business"),
+    pytest.param("0.9.0", ["Development Status :: 3 - Alpha"], id="zero-major-as-alpha"),
+    pytest.param("0.1.0", [BETA], id="zero-major-as-beta"),
+]
+
+
+@pytest.mark.parametrize(("version", "classifiers"), ACCEPTED_CLASSIFIERS)
+def test_the_states_a_final_release_may_still_ship_in(version: str, classifiers: list[str]) -> None:
+    """The rule has to be narrow, and this is what says it is.
+
+    A guard with one direction answers "Beta is wrong" and nothing else, which is a
+    guard that gets broadened the first time it is inconvenient. Each case here is a
+    shape the rule must leave alone; widening it to refuse one of them is the failure
+    this test exists to catch, and it is the same reason :data:`REFUSED_SPELLINGS` is
+    pinned as data rather than left to one assertion.
+    """
+    assert classifier_may_ship(version, classifiers), (
+        f"{version!r} carrying {classifiers!r} must stay allowed; if the rule now refuses "
+        "it, the refusal needs an argument this repository can make on its own history"
+    )
+
+
+#: The one refusal, and its neighbours.
+REFUSED_CLASSIFIERS = [
+    pytest.param("2.0.0", [BETA], id="the-published-2-0-0"),
+    pytest.param("2.0.1", [BETA], id="next-final-release"),
+    pytest.param("3.0.0", [BETA, "Typing :: Typed"], id="beta-among-other-classifiers"),
+]
+
+
+@pytest.mark.parametrize(("version", "classifiers"), REFUSED_CLASSIFIERS)
+def test_a_final_release_with_a_candidate_classifier_is_refused(
+    version: str, classifiers: list[str]
+) -> None:
+    """The refusal, proved rather than assumed.
+
+    Without this, the rule is a predicate nobody has watched return ``False``, and a
+    check that has never failed is indistinguishable from one that always passes.
+    """
+    assert not classifier_may_ship(version, classifiers), (
+        f"{version!r} is a final release and {classifiers!r} does not carry {STABLE!r}; "
+        "this rule exists for exactly that combination"
+    )
+
+
+def test_the_classifier_rule_would_have_refused_the_published_tag() -> None:
+    """The failure this guard exists for, read back out of the tag that carries it.
+
+    The rule is not a reconstruction of the accident; it is checked against it. Asking
+    git for ``v2.0.0``'s own ``pyproject.toml`` and refusing it proves two things at
+    once: that the rule would have gone red before that tag was cut, and that the tree
+    it refuses is the one that actually shipped.
+
+    It reads bytes rather than ``text=True`` because the blob carries this repository's
+    own comments, which contain a fullwidth character, and the default codec on a
+    Windows runner is not UTF-8 -- decoding here rather than in a reader thread is what
+    keeps this off a runner whose locale differs from the one it was written on. Skips
+    where the tag is absent, for the reason :func:`tags_at_head` gives.
+    """
+    if shutil.which("git") is None:  # pragma: no cover - git is present to run pytest
+        pytest.skip("git is not on PATH")
+    completed = subprocess.run(
+        ["git", "show", "v2.0.0:pyproject.toml"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode(errors="replace").strip()
+        pytest.skip(f"v2.0.0 is not in this checkout ({detail})")
+    tagged = tomllib.loads(completed.stdout.decode("utf-8"))["project"]
+    classifiers = [str(c) for c in tagged["classifiers"]]
+    assert tagged["version"] == "2.0.0"
+    assert BETA in classifiers, (
+        f"the v2.0.0 tag's pyproject.toml declares {classifiers!r} and no longer reads "
+        f"{BETA!r}. That is good news about the past and it means this test can no longer "
+        "reproduce the accident it was written for. The guard above does not depend on it, "
+        "and this one should be re-argued rather than deleted."
+    )
+    assert not classifier_may_ship(str(tagged["version"]), classifiers), (
+        "the rule accepted the tree that shipped, so it is not the check it claims to be"
+    )

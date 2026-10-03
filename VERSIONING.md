@@ -101,6 +101,21 @@ promises were waiting for, and its classifier now reads
 above: the classifier is not recomputed from the version, so a reader should treat it as a
 label someone maintains deliberately rather than as something derived from the number.
 
+**★ That hand-written step has to happen *before* the tag, and at `2.0.0` it did not.**
+A classifier is a field of the build rather than a note about it: it is baked into the
+uploaded metadata at publish time, and the page on the index is rendered from that
+metadata. So editing `pyproject.toml` after the tag fixes the repository and nothing
+else. `2.0.0` is the worked example: the tree was tagged and uploaded still reading
+`4 - Beta`, the edit to `5 - Production/Stable` landed an hour later, and the version on
+PyPI carries `4 - Beta` to this day — a mismatch no re-upload can repair, because a
+published version number is never reusable. Read "restore the classifier once 2.0 passes
+the release gate" as *before the tag*, not after it. That reading is now enforced:
+`tests/unit/test_version.py` requires a declared final release at 1.x or above to carry
+`5 - Production/Stable`, which is the version bump's own test and so runs before anyone
+cuts the tag. Candidates are exempt in both directions — an `rc` may be Beta, which is
+what a candidate is for — and so is the 0.x line, where Alpha is the honest label and is
+what this repository shipped through `v0.9.0`.
+
 `package.yml` takes its version from `pyproject.toml` rather than from the tag, so a tag
 builds the version in the tree. The tag itself, the merge, and the upload are a person's
 step and are not automated for that reason.
