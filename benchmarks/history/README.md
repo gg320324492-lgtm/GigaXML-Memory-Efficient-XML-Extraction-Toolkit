@@ -11,8 +11,8 @@ including — mostly — the measurements that were never taken.
 | `true` | A sweep ran. The entry carries the identity and the headline figures, and says which file holds the numbers. |
 | `false` | **No measurement was taken at this version.** The entry says so, with the evidence. |
 
-The `false` entries are the point. Eight of the nine versions in this repository have no
-benchmark record, and six of them shipped *after* the last measurement was taken:
+The `false` entries are the point. Nine of the ten versions in this repository have no
+benchmark record, and seven of them shipped *after* the last measurement was taken:
 
 ```
 0.9.0  2026-09-27   no record — no benchmark result existed yet
@@ -24,9 +24,20 @@ benchmark record, and six of them shipped *after* the last measurement was taken
 2.0.0rc2 2026-10-03   no record — the build succeeded on all three platforms, and no sweep was run at it
 2.0.0rc3 2026-10-03   no record — the build and the release assembly both completed, but the binary shipped under the previous version, and no sweep was run at it
 2.0.0rc4 2026-10-03   no record — this is the first candidate whose tree and tag name the same version, and no sweep is planned at it
+2.0.0    2026-10-03   no record — the first version published to PyPI, cut from rc4's tree, and no sweep was run at it
 ```
 
-The last row is dated now that its tag is cut, at `7ac99e9`. `2.0.0rc4.json` records
+The last row is the one release in the directory that is not a rehearsal. `2.0.0.json`
+records `released` as the tag's own creation date and `released_as` as the commit it points
+at, at `8aee010`, the same commit as rc4's tree. It is the first version in this repository
+that `Publish to PyPI` did not skip: that job runs only for a tag whose name carries no
+`rc`, so all four candidates were passed over and the tag-to-index path had never been
+walked until this one. A published version can be yanked but not deleted, which is why this
+tag cannot be re-cut the way a candidate can, and why the missing entry had to be written
+rather than the tag moved. See **Why there are more than three rc entries** below for what
+each candidate exposed.
+
+The rc4 row is dated now that its tag is cut, at `7ac99e9`. `2.0.0rc4.json` records
 `released` as the tag's own creation date and `released_as` as the commit it points at.
 That tag built on all three platforms and created a Release page, and the binary it
 shipped reported `2.0.0rc4` — the version agreement rc3 lacked, which is why rc4 exists;
@@ -81,9 +92,20 @@ entry that only said "no record" would let a reader assume the wrong one.
   the tag) reads `2.0.0rc4`, so the tag guard passes on the tree rather than catching it.
   The tag, cut at `7ac99e9`, built on all three platforms, created a Release page, and the
   binary it shipped reported `2.0.0rc4`. No measurement is planned here either.
+* `2.0.0` — **the release, and the first version published to PyPI.** Cut at `8aee010`,
+  the same tree as rc4, so no code changed between them; what changed is that the name
+  carries no `rc`, and `Publish to PyPI` therefore ran instead of skipping. That makes it
+  the first version a person can install from an index, and the first whose artifacts
+  cannot be withdrawn the way a candidate's can. No measurement was taken here either —
+  there is a `2.0.0.json` and it says so, rather than the figures being borrowed from
+  1.1.0 or the candidates.
 
 Nothing is measured at any candidate, for the reason `1.2.1.json` gives: the figures that
-belong in this directory are taken at a version somebody installs.
+belong in this directory are taken at a version somebody installs. `2.0.0` is the first
+entry here that *is* such a version rather than a rehearsal for one — and it still has no
+figures, because no sweep was run at it. The distinction between a rehearsal and a release
+is what the pipeline does (build, release, publish); it is not a measurement, and writing
+`recorded: true` for `2.0.0` would be the exact substitution this directory refuses.
 
 ## Nothing is copied
 
@@ -109,3 +131,15 @@ retrospective reconstruction. What is *not* automated, and should not be: decidi
 released version a sweep belongs to. That is a judgement about whether the tree at
 `82e31eb` is "1.1.0" or "1.1.0 plus six commits", and the honest answer — recorded in the
 file — is that it is the latter.
+
+**A bump is not finished until the entry exists.** `tests/unit/test_version.py` binds
+`RELEASE_VERSION` to a file in this directory, so the "move the version" step and the
+"write the entry" step are one action: bump the number without adding the entry and that
+test goes red on the pull request, before the tag is cut. It is satisfied by *an* entry,
+never by a particular one — a version with no measurement gets a `recorded: false` stub
+with its reason, and the completeness check in
+`tests/integration/test_benchmark_provenance.py` still holds the whole directory against
+the tags. The obligation exists at the bump rather than the tag because a tag is the last
+moment it is cheap: `2.0.0rc3`, `2.0.0rc4` and `2.0.0` each bumped the version and skipped
+the entry, and for `2.0.0` the omission was only discovered by a red CI run on an
+already-published PyPI version.

@@ -31,6 +31,12 @@ from gigaxml import __version__
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+#: The benchmark history directory. ``tests/integration/test_benchmark_provenance.py``
+#: owns the completeness check -- every released tag has an entry -- and this file owns
+#: the half that file cannot see: the entry has to exist by the time the version is
+#: declared, not by the time the tag is cut.
+BENCHMARK_HISTORY = REPO_ROOT / "benchmarks" / "history"
+
 #: This release's version, spelled the way the tag spells it. The tag itself is pushed by
 #: a human step outside the test suite, but everything the tag names has to match this
 #: string, and this constant is where "what are we releasing" is written down once.
@@ -232,6 +238,83 @@ def test_the_tag_check_would_not_have_looked_at_a_lightweight_tag(tmp_path: path
         f"git describe --exact-match found {describe.stdout.strip()!r}; if lightweight "
         "tags are now found by default this comment -- and the choice of --points-at -- "
         "is stale and should be re-argued"
+    )
+
+
+# --------------------------------------------------------------------------
+# The bump carries the history entry. The obligation with three teeth marks.
+# --------------------------------------------------------------------------
+
+
+def benchmark_history_versions() -> set[str]:
+    """The versions `benchmarks/history/` has an entry for, by filename."""
+    return {path.stem for path in BENCHMARK_HISTORY.glob("*.json")}
+
+
+def test_declaring_a_release_version_carries_its_benchmark_history_entry() -> None:
+    """A bump is two things at once: the number, and the entry that answers "was it measured?".
+
+    **The gap this closes, and why the existing check could not.** The completeness check
+    in ``tests/integration/test_benchmark_provenance.py`` compares the tags in the
+    repository against the files in ``benchmarks/history/``, and it catches both
+    directions -- a tag with no entry, an entry with no tag. But it can only fire *after
+    the tag exists*, and by then the release has shipped: a published PyPI version can be
+    yanked, never deleted, so a tag cut without its entry cannot be repaired by re-cutting
+    the tag, only by writing the missing file and moving on. That is the same shape as the
+    version guard above, one step further along: the tag guard catches a tag cut without a
+    bump, and this catches a bump without its entry -- both before the tag, which is the
+    only moment either is still cheap to fix.
+
+    **Measured three times.** ``2.0.0rc3``, ``2.0.0rc4`` and ``2.0.0`` each went through a
+    "move the version" step and a separate "write the history entry" step, and the second
+    was forgotten each time; at ``v2.0.0`` all five legs of ``test.yml`` went red with
+    ``history covers [0.9.0 … 2.0.0rc4] but the repository has released [0.9.0 … 2.0.0,
+    2.0.0rc1 … 2.0.0rc4]`` -- after the package was already on the index. The defect is not
+    that the entry was forgotten; it is that forgetting it was invisible until the tag
+    made it expensive. This test makes it visible at the bump.
+
+    **Why here and not in `benchmarks/history/README.md` or `VERSIONING.md`.** A rule in a
+    document is a rule the busy person skips. ``RELEASE_VERSION`` above is the one place
+    "what are we releasing" is written down, so binding it to the directory that answers
+    "was it measured" makes the two a single act rather than two a reviewer has to
+    remember to check. It runs on every push and pull request because ``test.yml`` does,
+    which is *before* the tag -- the point of moving the check earlier.
+
+    **What it does and does not assert.** It asserts only that *some* entry exists for the
+    declared version; whether that entry is ``recorded: true`` or a ``recorded: false``
+    stub with its reason is the other file's question, and nothing a version bump can
+    answer. So this cannot be satisfied by writing a wrong entry: it is satisfied by
+    writing *an* entry, and the completeness and no-fabricated-numbers checks then hold it
+    to the rest.
+    """
+    assert RELEASE_VERSION in benchmark_history_versions(), (
+        f"RELEASE_VERSION is {RELEASE_VERSION!r} but benchmarks/history/ has no entry for "
+        f"it (it has {sorted(benchmark_history_versions())}). A version bump and the "
+        f"history entry that answers 'was this measured?' are one step, not two: write "
+        f"benchmarks/history/{RELEASE_VERSION}.json before cutting the tag. If nothing was "
+        f"measured at this version -- the usual case -- the entry is a stub with "
+        f"recorded: false and a why_there_is_no_record, not a copy of another version's "
+        f"figures."
+    )
+
+
+def test_the_history_entry_check_would_notice_a_missing_entry() -> None:
+    """The mutation, run every time: the check above must fail on a version with no entry.
+
+    ``test_declaring_a_release_version_carries_its_benchmark_history_entry`` passes on the
+    current tree by finding ``2.0.0``, and a check that passes is indistinguishable from
+    one that returns True unconditionally until something makes it fail. This supplies the
+    failure: the versions the directory *does* hold must all be present, and a version it
+    does not hold must be absent -- so a ``benchmark_history_versions`` that had stopped
+    reading the directory, or that matched any string, goes red here rather than quietly
+    agreeing.
+    """
+    known = benchmark_history_versions()
+    assert known, "the history directory is empty, so the check above would pass on nothing"
+    assert "2.0.0" in known
+    assert "999.999.999" not in known, (
+        "benchmark_history_versions matched a version no entry exists for, so the check it "
+        "feeds proves nothing"
     )
 
 
