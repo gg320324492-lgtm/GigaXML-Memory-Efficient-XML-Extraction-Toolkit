@@ -22,7 +22,7 @@
     "memory_method": "peak_wset (self-read in child) -- as recorded, and it was TRUE for this sweep, which is decidable rather than assumed: results.json records os 'Windows 11' and on win32 psutil's memory_info() has peak_wset, so the wrapper took the peak branch and not its 'or info.rss' fallback. It was still a hardcoded string at the time, so nothing in the code guaranteed it; run_comparison.py now has the child report which counter answered and the recorder store that instead of asserting it."
   },
   "numbers_live_in": "benchmarks/compare/results.json",
-  "numbers_live_in_note": "Not copied here. One file holding the numbers is one thing to keep correct; a 32 KB duplicate in benchmarks/history/ is a second thing that can drift. This entry carries the identity and the headline figures, and tests/integration/test_benchmark_provenance.py asserts those figures still match the file they came from.",
+  "numbers_live_in_note": "Not copied here when this entry was written, and THIS IS THE ONE PLACE THAT CHANGED. On 2026-10-04 the comparison sweep was re-recorded at 2.0.0 and the single-slot benchmarks/compare/results.json was overwritten with 2.0.0's numbers; 1.1.0's no longer live in that file. The headline below is therefore now the frozen record of the 1.1.0 sweep -- the only copy in the repository -- rather than a pointer at a live file, which is the exact drift this key used to warn against and which the reuse of a shared slot has now forced. The live file and the entry that claims it are 2.0.0's; tests/integration/test_benchmark_provenance.py derives which entry to check from the commit the file records rather than naming it, so it follows the slot to 2.0.0 and leaves this entry as history.",
   "sizes": [
     "100MB",
     "1GB",

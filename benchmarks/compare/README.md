@@ -68,3 +68,47 @@ any reading that is below it — or, less obviously, on any reading that is only
 above it. A value sitting on the floor usually means the sampled process never did the
 work, and a flat curve across input sizes is the tell, because a real extraction's
 curve is not perfectly level. It exits non-zero either way, so it can gate a run.
+
+## The guard is red on raw_lxml, and that is a fact about the data, not the guard
+
+As of the 2026-10-04 re-recording (`results.json`, the 2.0.0 sweep), `verify_peaks.py`
+exits **rc=1** and flags **15 of the 55** peak readings it checks — every one of them
+`raw_lxml` (100 MB, 1 GB and 4 GB, five each, 23.4–24.6 MiB). The fifteen are *not* a
+harness failure and the numbers are not wrong. The evidence is measured, not asserted:
+when the payload inside a single record is varied while the record *count* is held at
+2,000 — 50 bytes per record against about 1 MiB, a 5,000-fold change in document length —
+`raw_lxml`'s peak moves from 23.0 to 25.8 MiB, +2.8 MiB. A streaming parser holds one
+record at a time and releases it (`clear()` plus unlink) before the next, so its peak is
+the interpreter plus one record and does not grow with the document; `xmltodict`, which is
+not streaming, moves 40 → 189 → 705 MiB across the same three sizes. So the near-floor
+reading is the correct signature of a correct streaming implementation, and the guard’s
+3 MiB discrimination band is simply larger than the ~1.1–2.1 MiB that implementation
+actually costs over an idle interpreter.
+
+**The intended repair, not yet implemented.** The guard conflates two jobs with different
+failure modes and should report them with different severities:
+
+1. *A physical-possibility check* — a peak **below** the idle floor is impossible and means
+   the sampler is broken. This stays a hard failure (rc 1). It did not fire here.
+2. *A heuristic near-floor warning* — a peak **within** the band is a heuristic, not a
+   proof, and it produces a false positive as soon as a correct streaming implementation’s
+   marginal cost falls under the band. It should be **downgraded to a notice when the same
+   run wrote the whole document** (`rows_written == rows_in_document`, which the runner
+   already records in `results.json` and the guard currently throws away), and kept a
+   failure when the row count is missing, short, or the run exited non-zero. That second
+   axis — rows written — is what separates a correct streaming parser from a dead sampler;
+   the memory axis alone cannot, which is the finding.
+
+**Explicitly rejected: raising `MIN_MEANINGFUL_GAP_MIB`.** That would make the guard blind
+to any implementation whose real cost is between 1.7 and 3.0 MiB — the very class of
+streaming implementations the guard exists to protect — and it contradicts the guard’s own
+docstring (“the answer to a reading it flags is to re-measure it, never to move the
+number”).
+
+**Why it is not done yet.** This is a change to the guard’s contract (two verdicts where
+there is now one, and a new input read from `results.json`), and it is deliberately kept
+out of the re-recording task so the re-recorded numbers and the guard change can be
+reviewed separately — a red guard that is then edited in the same change is exactly the
+kind of “moved the threshold until it went green” the guard is meant to prevent. Until the
+split lands, the guard stays out of CI and stays red on unchanged code; that is the honest
+state, and the state is visible here rather than in a green build that measured nothing.

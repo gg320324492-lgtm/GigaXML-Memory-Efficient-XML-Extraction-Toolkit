@@ -11,8 +11,10 @@ including — mostly — the measurements that were never taken.
 | `true` | A sweep ran. The entry carries the identity and the headline figures, and says which file holds the numbers. |
 | `false` | **No measurement was taken at this version.** The entry says so, with the evidence. |
 
-The `false` entries are the point. Nine of the ten versions in this repository have no
-benchmark record, and seven of them shipped *after* the last measurement was taken:
+The `false` entries are the point. Eight of the ten versions in this repository have no
+benchmark record, and six of them shipped *after* the last measurement was taken; the two
+that are recorded are `1.1.0`, recovered after the fact, and `2.0.0`, swept directly
+(see below):
 
 ```
 0.9.0  2026-09-27   no record — no benchmark result existed yet
@@ -24,7 +26,7 @@ benchmark record, and seven of them shipped *after* the last measurement was tak
 2.0.0rc2 2026-10-03   no record — the build succeeded on all three platforms, and no sweep was run at it
 2.0.0rc3 2026-10-03   no record — the build and the release assembly both completed, but the binary shipped under the previous version, and no sweep was run at it
 2.0.0rc4 2026-10-03   no record — this is the first candidate whose tree and tag name the same version, and no sweep is planned at it
-2.0.0    2026-10-03   no record — the first version published to PyPI, cut from rc4's tree, and no sweep was run at it
+2.0.0    2026-10-03   RECORDED, 2026-10-04 — the first version published to PyPI, swept at a commit whose extraction code equals the tag's (see below)
 ```
 
 The last row is the one release in the directory that is not a rehearsal. `2.0.0.json`
@@ -33,9 +35,12 @@ at, at `8aee010`, the same commit as rc4's tree. It is the first version in this
 that `Publish to PyPI` did not skip: that job runs only for a tag whose name carries no
 `rc`, so all four candidates were passed over and the tag-to-index path had never been
 walked until this one. A published version can be yanked but not deleted, which is why this
-tag cannot be re-cut the way a candidate can, and why the missing entry had to be written
-rather than the tag moved. See **Why there are more than three rc entries** below for what
-each candidate exposed.
+tag cannot be re-cut the way a candidate can, and why the entry had to be written rather
+than the tag moved. It is also the only release here that was swept *after* it shipped:
+the sweep ran on 2026-10-04, one day past the tag, at a commit whose extraction code is
+identical to the tag's (`8aee010` and the sweep's commit differ by fifteen commits and by
+nothing under `src/`, which `2.0.0.json` records with the commands that establish it). See
+**Why there are more than three rc entries** below for what each candidate exposed.
 
 The rc4 row is dated now that its tag is cut, at `7ac99e9`. `2.0.0rc4.json` records
 `released` as the tag's own creation date and `released_as` as the commit it points at.
@@ -102,19 +107,39 @@ entry that only said "no record" would let a reader assume the wrong one.
 
 Nothing is measured at any candidate, for the reason `1.2.1.json` gives: the figures that
 belong in this directory are taken at a version somebody installs. `2.0.0` is the first
-entry here that *is* such a version rather than a rehearsal for one — and it still has no
-figures, because no sweep was run at it. The distinction between a rehearsal and a release
-is what the pipeline does (build, release, publish); it is not a measurement, and writing
-`recorded: true` for `2.0.0` would be the exact substitution this directory refuses.
+entry here that *is* such a version rather than a rehearsal for one, and it is `recorded`
+— a sweep ran on 2026-10-04 and its figures are in `benchmarks/compare/results.json`. The
+distinction between a rehearsal and a release is still what the pipeline does (build,
+release, publish) and it is still not a measurement; `2.0.0` is recorded because a
+measurement was taken, not because the pipeline ran on it. What made that measurement
+belong to the tag rather than to the fifteen commits above it is a fact about the code and
+not about the version string: `git diff --name-only v2.0.0 <sweep commit> -- src/` is
+empty, so the sweep measured the tag's own extraction code. `2.0.0.json` records the
+commit, the command that shows the source gap is empty, and the one line they change
+outside documentation (a packaging classifier), so the claim is checkable rather than
+asserted. Writing `recorded: true` for a version whose code had *changed* since the sweep
+would still be the substitution this directory refuses; this entry is the other case.
 
 ## Nothing is copied
 
-`1.1.0.json` does not duplicate `benchmarks/compare/results.json`. One file holding the
+A recorded entry does not duplicate `benchmarks/compare/results.json`. One file holding the
 numbers is one thing to keep correct; a 32 KB copy under `history/` is a second thing
 that can drift out of step without anybody noticing. The entry carries the identity and
 the headline figures, names the file the numbers live in, and
 `tests/integration/test_benchmark_provenance.py` asserts from the other side that those
 figures still match it.
+
+**`results.json` is a single slot, and the re-recording moved it.** It held `1.1.0`'s
+recovered numbers from 2026-09-29 until 2026-10-04, when the sweep was re-run at `2.0.0`
+and overwrote it. So the entry the checker derives to hold (the one whose
+`authoritative_key` commit equals the file's own recorded commit) is now `2.0.0`'s, and
+`1.1.0.json`'s headline has become the frozen copy the section above warns against —
+not by choice, but because the file it pointed at was reused. `1.1.0.json`'s
+`numbers_live_in_note` says so, and the checker picks the entry from the file's commit
+rather than from a name typed into the test, so it followed the slot to `2.0.0` instead of
+going red on a rename. A future sweep that overwrites the slot again moves it again by the
+same rule; what must *not* happen is a new entry claiming a file that holds some other
+sweep's numbers, which is the check that keeps this honest.
 
 ## How an entry gets written
 

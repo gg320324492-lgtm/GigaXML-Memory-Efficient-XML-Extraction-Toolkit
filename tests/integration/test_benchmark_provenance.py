@@ -259,25 +259,67 @@ def test_complete_output_is_not_recomputable_without_the_expected_count(results:
 
     ``complete_output`` compares ``rows_written`` against ``rows_in_document``, and the
     second is the generator's expected count -- an input to the check, not a measurement.
-    It is load-bearing rather than decorative: it is what caught pandas at 4 GB writing
-    10,485,760 of 11,915,264 rows and exiting 0, which a wall-clock check would have
-    scored as a slow success.
-    """
-    point = results["results"]["4GB"]["pandas"]
-    summary, runs = point["summary"], point["runs"]
-    assert summary["complete_output"] is False
-    assert summary["rows_in_document"] == 11_915_264
-    assert summary["rows_written_median"] == 10_485_760
-    assert all(run["exit_code"] == 0 for run in runs), "it exited 0 every time"
+    It is load-bearing rather than decorative: it is what caught the old 4 GB pandas point
+    writing 10,485,760 of 11,915,264 rows and exiting 0, which a wall-clock check would
+    have scored as a slow success.
 
+    **That particular shape is no longer in results.json, and the test changed with the
+    data rather than going green on nothing.** After the 2026-10-04 re-recording, pandas
+    at 4 GB is killed by a memory-safety watchdog before it writes a row: every repeat has
+    ``exit_code: 1``, ``rows_written: 0`` and ``peak_rss_mb: null``, so the summary is the
+    four-key failure shape (``ok_runs: 0``) and carries no ``complete_output`` at all --
+    "no successful run" and "an incomplete run" are different claims and the summary says
+    the first. The property under test is unchanged, so it is demonstrated on a synthetic
+    run list with the exit-0 partial write asserted as a *run*, plus the real check that
+    the field still flips with its input on the data the sweep actually produced.
+    """
     provenance = load_module("bench_provenance_c", BENCH / "provenance.py")
-    # The right count gives False; the wrong one would give a clean pass.
+
+    # The historical case as raw runs: five repeats, each exiting 0, each writing
+    # 10,485,760 of the document's 11,915,264 rows. Nothing but the expected count can
+    # tell this apart from a complete extraction, which is the whole point of the field.
+    partial = [
+        {
+            "repeat": repeat,
+            "exit_code": 0,
+            "peak_rss_mb": 26004.8,
+            "rows_written": 10_485_760,
+            "wall_s": 935.777,
+        }
+        for repeat in range(1, 6)
+    ]
+    assert all(run["exit_code"] == 0 for run in partial), "it exited 0 every time"
     assert (
-        provenance.recompute_summary(runs, rows_in_document=11_915_264)["complete_output"] is False
+        provenance.recompute_summary(partial, rows_in_document=11_915_264)["complete_output"]
+        is False
+    ), "a short write with exit 0 must not read as complete"
+    # The wrong expected count -- the number actually written -- would give a clean pass,
+    # which is why the count is an input the runs cannot supply.
+    assert (
+        provenance.recompute_summary(partial, rows_in_document=10_485_760)["complete_output"]
+        is True
+    )
+
+    # And on the real sweep: the field still follows its input, on a point that is
+    # complete. 2 GB of the condition is the generator's count; change it and the same
+    # runs read as short.
+    point = results["results"]["4GB"]["gigaxml"]
+    summary, runs = point["summary"], point["runs"]
+    assert summary["complete_output"] is True
+    assert summary["rows_in_document"] == 11_915_264
+    assert summary["rows_written_median"] == 11_915_264
+    assert (
+        provenance.recompute_summary(runs, rows_in_document=11_915_264)["complete_output"] is True
     )
     assert (
-        provenance.recompute_summary(runs, rows_in_document=10_485_760)["complete_output"] is True
+        provenance.recompute_summary(runs, rows_in_document=11_915_263)["complete_output"] is False
     )
+
+    # The pandas point is the other failure shape, stated so the difference from the one
+    # above is on the record: not "incomplete", but "no run succeeded".
+    pandas_4gb = results["results"]["4GB"]["pandas"]["summary"]
+    assert pandas_4gb["ok_runs"] == 0 and pandas_4gb["failed_runs"] == 5
+    assert "complete_output" not in pandas_4gb
 
 
 def test_the_perf_baseline_records_that_its_numbers_cannot_be_recomputed(
@@ -976,8 +1018,38 @@ def test_the_recorded_entry_points_at_a_file_that_still_agrees_with_it(
     If the numbers are ever re-recorded, the history entry has to be regenerated or this
     goes red -- which is the point. A history that silently describes a superseded
     measurement is worse than no history, because it is a history of the wrong thing.
+
+    **Which entry is checked is derived, not hardcoded.** ``results.json`` is a
+    single-slot file: a new sweep overwrites it. It used to hold 1.1.0's recovered
+    numbers, and a re-recording at 2.0.0 replaced them (2026-10-04). So the entry this
+    test must check is the one whose ``numbers_live_in`` is that file *and* whose
+    ``authoritative_key`` is the commit the file records -- 2.0.0's. Pinning the name
+    ``1.1.0`` here would go red the moment the slot was reused, which is correct but
+    names the wrong cause; the check is that the file and the entry that claims it agree,
+    whichever entry that is today. 1.1.0's own headline is still on disk, but it is now
+    a frozen historical record rather than the contents of the shared slot -- see
+    ``1.1.0.json``'s ``numbers_live_in``.
     """
-    entry = history_entries()["1.1.0"]
+    recorded = {
+        version: entry
+        for version, entry in history_entries().items()
+        if entry["recorded"] and entry["numbers_live_in"] == "benchmarks/compare/results.json"
+    }
+    assert recorded, "no recorded entry points at benchmarks/compare/results.json"
+    # The file records its own commit; the entry that claims the file must be the one
+    # for that commit. This is the assertion that keeps the choice derived rather than a
+    # name typed here.
+    commit = results["identity"]["git_commit"].split()[0]
+    agreeing = [
+        version
+        for version, entry in recorded.items()
+        if entry["authoritative_key"]["git_commit"] == commit
+    ]
+    assert len(agreeing) == 1, (
+        f"expected exactly one recorded entry whose commit is the results file's ({commit}), "
+        f"found {agreeing} among {sorted(recorded)}"
+    )
+    entry = recorded[agreeing[0]]
     assert entry["recorded"] is True
     assert entry["numbers_live_in"] == "benchmarks/compare/results.json"
     assert (REPO / entry["numbers_live_in"]).is_file()
@@ -1041,16 +1113,28 @@ def test_three_months_from_now_the_number_can_be_traced(results: dict, baseline:
     question "can this number be traced" deserves one answer that names every part:
     the commit, the machine, the config, the data, the raw runs, and the method the memory
     was measured with.
+
+    **"which tool" is derived, not the literal that was current the day this was written.**
+    The check is that the version the results file names is a version this repository
+    recorded and has a history entry for -- not that it is the particular string "1.1.0",
+    which stopped being true when the file was re-recorded at 2.0.0 (2026-10-04). A
+    hardcoded version here fails on the next sweep for a reason that has nothing to do
+    with traceability; deriving it keeps the question the same.
     """
     identity = results["identity"]
+    named = [version for version in history_entries() if version in identity["gigaxml"]]
+    assert len(named) == 1, (
+        f"results.json names a tool version ({identity['gigaxml']!r}) that no single history "
+        f"entry matches; matched {named}"
+    )
     traceable = {
         "which commit": identity["git_commit"].split()[0],
-        "which tool": "1.1.0" in identity["gigaxml"],
+        "which tool": bool(named),
         "which interpreter": bool(identity["python"]),
         "which lxml": bool(identity["lxml"]),
         "which machine": all(identity[f] for f in ("os", "cpu", "machine", "memory_total_gb")),
         "which config": len(str(identity["config_sha256"])) == 64,
-        "which data": identity["dataset_sha256"],  # honest about being unrecoverable
+        "which data": identity["dataset_sha256"],  # a map now, not a not-recorded string
         # Five recorded runs per data point, not five *successful* ones: the 1 GB pandas
         # point failed every repeat and its summary is a four-key failure shape, which is
         # still five raw runs on disk and still recomputes.
