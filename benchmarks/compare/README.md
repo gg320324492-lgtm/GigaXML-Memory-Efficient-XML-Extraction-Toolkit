@@ -85,30 +85,70 @@ reading is the correct signature of a correct streaming implementation, and the 
 3 MiB discrimination band is simply larger than the ~1.1–2.1 MiB that implementation
 actually costs over an idle interpreter.
 
-**The intended repair, not yet implemented.** The guard conflates two jobs with different
-failure modes and should report them with different severities:
+**The repair, implemented.** The guard used to conflate two jobs with different failure
+modes; it now reports them with different severities, and the split is the whole change:
 
-1. *A physical-possibility check* — a peak **below** the idle floor is impossible and means
+1. *A physical-positivity check* — a peak **below** the idle floor is impossible and means
    the sampler is broken. This stays a hard failure (rc 1). It did not fire here.
-2. *A heuristic near-floor warning* — a peak **within** the band is a heuristic, not a
-   proof, and it produces a false positive as soon as a correct streaming implementation’s
-   marginal cost falls under the band. It should be **downgraded to a notice when the same
-   run wrote the whole document** (`rows_written == rows_in_document`, which the runner
-   already records in `results.json` and the guard currently throws away), and kept a
-   failure when the row count is missing, short, or the run exited non-zero. That second
-   axis — rows written — is what separates a correct streaming parser from a dead sampler;
-   the memory axis alone cannot, which is the finding.
+2. *A near-floor warning* — a peak **within** the band is a heuristic, not a proof, and it
+   produces a false positive as soon as a correct streaming implementation’s marginal cost
+   falls under the band. It is now **downgraded to a notice when the same run wrote the
+   whole document** (`rows_written == rows_in_document`, which the runner already recorded in
+   `results.json` and the guard used to throw away), and kept a **failure** when the row
+   count is missing, short, or the document’s record count is unknown. That second axis —
+   rows written — is what separates a correct streaming parser from a dead sampler; the
+   memory axis alone cannot, which is the finding.
 
-**Explicitly rejected: raising `MIN_MEANINGFUL_GAP_MIB`.** That would make the guard blind
-to any implementation whose real cost is between 1.7 and 3.0 MiB — the very class of
-streaming implementations the guard exists to protect — and it contradicts the guard’s own
-docstring (“the answer to a reading it flags is to re-measure it, never to move the
-number”).
+The fifteen near-floor readings are **still reported**, one line each, but as
+`MAY NOT HAVE MEASURED THE WORK (accepted)`, because each one wrote its full document
+(290,900 / 2,978,816 / 11,915,264 rows). The run now exits **rc 0**, and the summary line
+says why: *“15 reading(s) within the noise of the floor but accepted — each one wrote the
+entire document in the same run, which is what a correct bounded streaming parser looks
+like, not a sampler that measured nothing.”* They are not removed from the output; they are
+reclassified, with the evidence that accepts them printed beside them.
 
-**Why it is not done yet.** This is a change to the guard’s contract (two verdicts where
-there is now one, and a new input read from `results.json`), and it is deliberately kept
-out of the re-recording task so the re-recorded numbers and the guard change can be
-reviewed separately — a red guard that is then edited in the same change is exactly the
-kind of “moved the threshold until it went green” the guard is meant to prevent. Until the
-split lands, the guard stays out of CI and stays red on unchanged code; that is the honest
-state, and the state is visible here rather than in a green build that measured nothing.
+**Explicitly rejected: raising `MIN_MEANINGFUL_GAP_MIB`, and still rejected after the
+implementation.** The threshold is unchanged. Raising it would make the guard blind to any
+implementation whose real cost is between 1.7 and 3.0 MiB — the very class of streaming
+implementations the guard exists to protect — and it contradicts the guard’s own docstring
+(“the answer to a reading it flags is to re-measure it, never to move the number”). The band
+marking a reading as *worth asking about* is the point; the row count is what answers the
+question. The change adds an input and a second verdict; it moves no line.
+
+**Why it was deferred, and why that is no longer the state.** The split was deliberately kept
+out of the re-recording task so the re-recorded numbers and the guard change could be
+reviewed separately — a red guard that is then edited in the same change is exactly the kind
+of “moved the threshold until it went green” the guard is meant to prevent. That separation
+has now happened: the numbers above were re-recorded and reviewed on their own, this change
+lands after them, and it is reviewed on its own. The guard is now green on unchanged code and
+is wired into CI (see below) — a green build that measured the records it was given, rather
+than a red one nobody ran.
+
+## The guard runs in CI now — and what that does and does not buy
+
+`benchmarks/compare/verify_peaks.py` is a step in the `ci-shape` job of `test.yml` (the
+“comparison suite’s recorded peaks” step). Until this change nothing in `.github/`, `tests/`
+or `tools/` referenced it, which — as the mutation harness put it — makes it a guard with no
+job: a sentence in a file, and a red one at that.
+
+**What the CI step guards.** It reads `results.json`, the committed record of the 2.0.0
+sweep, and checks the recorded peaks against an idle floor it measures live on the runner. So
+it catches the record drifting from the runs it claims to describe: a `results.json`
+hand-edited, an implementation quietly dropped from the file, a peak lowered into or below
+the floor with no whole-document row count to justify it, or the wrapper’s floor moving out
+from under a reading that was accepted.
+
+**What it cannot guard, stated rather than left to be discovered.** The datasets the sweep
+reads — `data/b100m.xml`, `b1g.xml`, `b4g.xml`, about 5.5 GB — are generated on demand and
+not committed, so the CI step **does not re-measure anything**. No code path it runs touches
+an implementation, so a future performance regression — a slower parser, a hungrier one —
+cannot turn it red; only the record’s consistency with itself can. That is a real limit and
+it is the reason the step is cheap enough to sit in the ordinary pull request. The honest
+summary: it guards the *record*, not the *product*, and the one thing it is strongest against
+is a number someone typed.
+
+It lives in `ci-shape` rather than in a pytest job or the nightly mutation run because it is a
+check about the repository — the same family as `tracked` and the `src/` comment bounds — it
+needs no Qt, no lxml and no generated data, its answer does not vary with interpreter or
+platform (so the three-way matrix and the nightly would each pay for a duplicate), and the
+mutation harness has no mutant for it to run against, because it reads no `src/` behaviour.

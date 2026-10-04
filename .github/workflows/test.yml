@@ -365,6 +365,43 @@ jobs:
         shell: bash
         run: python tools/check_comments.py
 
+      # ★ The comparison suite's peak guard, which had no job at all until now. It reads
+      # `benchmarks/compare/results.json` -- the committed record of the 2.0.0 sweep --
+      # and its `run: |` here doubles as the guard's own execution proof, so the line is
+      # the wiring *and* the evidence it did not drift out of this file.
+      #
+      # ★ **What this job can and cannot see.** The datasets it would need to re-measure
+      # (`data/b100m.xml`, `b1g.xml`, `b4g.xml`, 5.5 GB) are generated on demand and not
+      # committed, so this guard does NOT re-measure anything on a runner. It measures its
+      # own idle floor live -- running an empty script through the runner's wrapper three
+      # times, well under a second here -- and checks the *records* in `results.json`
+      # against it. A future measurement regression therefore cannot turn this red: no code
+      # path here touches an implementation, so a slower or hungrier parser changes nothing
+      # observable to it. What it does catch is the record drifting away from the runs it
+      # claims to be -- a `results.json` hand-edited, an implementation silently removed
+      # from the file, or a peak lowered into or below the floor with nothing to show for
+      # it. The last of those now needs the whole-document row count beside it
+      # (`rows_written == rows_in_document`), which is what tells a correct bounded
+      # streaming parser from a sampler that measured nothing. That the row-count split
+      # exists at all is the reason this guard is green on an unchanged tree; before it,
+      # it was red on code nobody had touched.
+      #
+      # It runs here rather than in `test.yml`'s pytest jobs or `nightly.yml`'s mutation
+      # job for three reasons. It is a check about the *repository*, like `tracked` and
+      # `comments` -- the same static-analysis family, on the same cheap runner, with no
+      # need for the product or its dependencies (it imports only `run_comparison`, which
+      # imports `psutil` from the runtime set `pip install -e .` in this job already
+      # provides). Second, its liveness is not a property that varies with the interpreter
+      # or the platform, so paying for it three times in the matrix or a fourth nightly
+      # would buy nothing. Third, the mutation harness asks whether the *test suites* can
+      # still catch a defect in `src/`, and this guard reads no `src/` behaviour, so it has
+      # no mutant to run against -- folding it in would spend a nightly minute on a
+      # question it cannot answer. It costs about a second and reaches conclusions the rest
+      # of this job does not, so it belongs here.
+      - name: The comparison suite's recorded peaks are what the guard says they are
+        shell: bash
+        run: python benchmarks/compare/verify_peaks.py
+
       # ★ The packaging job runs only on a tag, so a build input that does not parse was
       # invisible to every pull request in between. On the first tag whose tree actually
       # carried a pre-release -- nine tag builds had already gone green before it, four of
